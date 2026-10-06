@@ -1,0 +1,379 @@
+<title>研發助理實測紀錄</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@700;900&display=swap">
+<style>
+/* 版面:實驗紀錄本 —— 左側窄欄是邊註(章節名、日期),右側是正文與證據;窄螢幕疊成單欄 */
+:root {
+  --paper: #F3F5F6;
+  --sheet: #FFFFFF;
+  --ink: #16202A;
+  --muted: #586571;
+  --rule: #D2DAE0;
+  --accent: #1D5BB8;
+  --accent-soft: #E2EBF8;
+  --code: #E9EEF1;
+  --pass: #1B7553;
+  --pass-soft: #DFF1E8;
+  --fail: #AE3529;
+  --fail-soft: #F8E3E0;
+  --warn: #8F5E00;
+  --warn-soft: #F6EDD7;
+  --display: "Noto Serif TC", "Songti TC", "PMingLiU", serif;
+  --body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0F151A; --sheet: #151D24; --ink: #E2E8ED; --muted: #94A2AD; --rule: #2A3540;
+    --accent: #86ABEE; --accent-soft: #1C2A40; --code: #1B252E;
+    --pass: #62C79E; --pass-soft: #15302A; --fail: #F08C80; --fail-soft: #3A1E1C;
+    --warn: #E0B456; --warn-soft: #33290F; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0F151A; --sheet: #151D24; --ink: #E2E8ED; --muted: #94A2AD; --rule: #2A3540;
+  --accent: #86ABEE; --accent-soft: #1C2A40; --code: #1B252E;
+  --pass: #62C79E; --pass-soft: #15302A; --fail: #F08C80; --fail-soft: #3A1E1C;
+  --warn: #E0B456; --warn-soft: #33290F; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.75;
+  padding-inline: 20px;
+  padding-block: 0 64px;
+}
+.wrap { max-width: 1040px; margin: 0 auto; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+code, .mono { font-family: var(--mono); font-size: 0.88em; }
+p code, li code, td code { background: var(--code); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+
+/* ---------- 封面 ---------- */
+header.cover {
+  padding-block: 56px 40px;
+  border-bottom: 2px solid var(--ink);
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 32px;
+}
+.cover .margin { font-family: var(--mono); font-size: 13px; color: var(--muted); line-height: 1.6; padding-top: 10px; }
+.cover h1 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: clamp(2.3rem, 6vw, 3.6rem);
+  line-height: 1.15;
+  margin: 0 0 14px;
+  letter-spacing: 0.02em;
+  text-wrap: balance;
+}
+.cover .lede { font-size: 1.12rem; color: var(--ink); max-width: 38em; margin: 0 0 22px; }
+.byline { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 14px; color: var(--muted); }
+.byline strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.12em; }
+
+/* ---------- 章節 ---------- */
+section {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 32px;
+  padding-block: 44px;
+  border-bottom: 1px solid var(--rule);
+}
+.label { padding-top: 6px; }
+.label h2 {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.25rem;
+  line-height: 1.4;
+  margin: 0 0 6px;
+  text-wrap: balance;
+}
+.label .note { font-size: 13px; color: var(--muted); line-height: 1.6; }
+.body { min-width: 0; display: flex; flex-direction: column; gap: 20px; }
+.body > p { margin: 0; max-width: 40em; }
+
+/* ---------- 終端機紀錄 ---------- */
+.readout {
+  background: var(--code);
+  border-left: 3px solid var(--accent);
+  padding: 16px 18px;
+  font-family: var(--mono);
+  font-size: 13.5px;
+  line-height: 1.7;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0;
+}
+.readout .dim { color: var(--muted); }
+.readout .hl { color: var(--accent); font-weight: 600; }
+
+.figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+.figure { background: var(--sheet); padding: 14px 16px; }
+.figure .v { font-family: var(--mono); font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.3; }
+.figure .k { font-size: 13px; color: var(--muted); }
+
+/* ---------- 表格 ---------- */
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--rule); }
+th { font-size: 12px; letter-spacing: 0.08em; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--ink); white-space: nowrap; }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pill { display: inline-block; font-size: 12px; font-weight: 500; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+.pill.pass { color: var(--pass); background: var(--pass-soft); }
+.pill.warn { color: var(--warn); background: var(--warn-soft); }
+.pill.fail { color: var(--fail); background: var(--fail-soft); }
+
+/* ---------- 問題清單 ---------- */
+ol.findings { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--ink); }
+ol.findings li {
+  display: grid;
+  grid-template-columns: 2.4em minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px 20px;
+  padding-block: 14px;
+  border-bottom: 1px solid var(--rule);
+}
+.findings .n { font-family: var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 2px; }
+.findings .what { font-weight: 500; }
+.findings .how { display: block; margin-top: 4px; }
+.findings .fix { color: var(--muted); font-size: 15px; }
+.findings .fix::before { content: "處理 "; color: var(--pass); font-size: 12px; letter-spacing: 0.06em; }
+.tag { font-family: var(--mono); font-size: 11.5px; color: var(--accent); background: var(--accent-soft); padding: 1px 7px; border-radius: 3px; }
+
+/* ---------- 標本 ---------- */
+.specimens { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.specimen { background: var(--sheet); border: 1px solid var(--rule); padding: 18px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.specimen h3 { font-size: 15px; margin: 0; font-weight: 700; }
+.specimen .cap { font-size: 12px; letter-spacing: 0.06em; color: var(--muted); margin: 0; }
+.specimen pre {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+  border-radius: 3px;
+}
+.specimen pre.bad { background: var(--fail-soft); color: var(--ink); }
+.specimen pre.good { background: var(--pass-soft); color: var(--ink); }
+.specimen pre mark { background: none; color: var(--fail); font-weight: 600; text-decoration: underline wavy; text-underline-offset: 3px; }
+.specimen p { margin: 0; font-size: 14px; color: var(--muted); }
+
+/* ---------- KV cache 長條 ---------- */
+.bars { display: flex; flex-direction: column; gap: 14px; }
+.bar-row { display: grid; grid-template-columns: 13em minmax(0, 1fr); gap: 4px 16px; align-items: center; }
+.bar-row .name { font-size: 14px; }
+.bar-row .name small { display: block; color: var(--muted); font-size: 12px; }
+.track { position: relative; height: 26px; }
+.fill { height: 100%; background: var(--accent); min-width: 3px; }
+.bar-row .val { font-family: var(--mono); font-size: 13px; color: var(--muted); grid-column: 2; font-variant-numeric: tabular-nums; }
+
+.mermaid-box { background: var(--sheet); border: 1px solid var(--rule); padding: 16px; overflow-x: auto; }
+
+ul.plain { margin: 0; padding-left: 1.2em; max-width: 42em; display: flex; flex-direction: column; gap: 8px; }
+
+footer { padding-block: 28px; font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 8px 24px; }
+footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.12em; }
+
+@media (max-width: 760px) {
+  header.cover, section { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .cover .margin { padding-top: 0; }
+  .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .specimens { grid-template-columns: minmax(0, 1fr); }
+  ol.findings li { grid-template-columns: 2em minmax(0, 1fr); }
+  .findings .fix { grid-column: 2; }
+  .bar-row { grid-template-columns: minmax(0, 1fr); }
+  .bar-row .val { grid-column: 1; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .fill { transition: width 0.6s ease-out; }
+}
+</style>
+
+<div class="wrap">
+
+<header class="cover">
+  <div class="margin">作品集<br>2026-10-06</div>
+  <div>
+    <h1>對內研發助理<br>實測紀錄</h1>
+    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我怎麼用真模型把它測過一輪,以及測出來的 11 個問題。</p>
+    <div class="byline">
+      <span><strong>HSUAN</strong></span>
+      <span>Python · LangChain · NVIDIA NIM · Docker</span>
+      <span class="mono">github.com/inform199751-crypto/nvidia-dev-assistant(私人,面試時可開放)</span>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="label">
+    <h2>最重的一次測試</h2>
+    <div class="note">把整個客服專案丟進去,請它寫技術文件</div>
+  </div>
+  <div class="body">
+<pre class="readout"><span class="dim">$ agent.py "為這個專案寫一份技術文件" -f app/… -f tests/… -f docs/… --whole</span>
+附檔 57 個
+step 1  role=<span class="hl">long_context</span>  tokens=<span class="hl">191076</span>  (回答)
+結束碼 0 ,總耗時 <span class="hl">482</span> 秒</pre>
+    <div class="figures">
+      <div class="figure"><div class="v">191,076</div><div class="k">tokens 一次送進去</div></div>
+      <div class="figure"><div class="v">1 步</div><div class="k">自動升級到 Ultra 550B</div></div>
+      <div class="figure"><div class="v">482 秒</div><div class="k">所以這類任務要走背景佇列</div></div>
+      <div class="figure"><div class="v">14 / 14</div><div class="k">抽查的 path:line 引用全對</div></div>
+    </div>
+    <p>系統估算內容超過程式碼模型的上限(約 11 萬 tokens),自動改用 1M 上下文的 Nemotron 3 Ultra。修正前,同一個任務跑到第 3 步還在分段重讀 README,每步重送 18 萬 tokens。</p>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>架構</h2>
+    <div class="note">換模型改 YAML,換環境改一個環境變數</div>
+  </div>
+  <div class="body">
+    <div class="mermaid-box">
+<pre class="mermaid">
+flowchart LR
+    U[工程師] --> A[agent 迴圈]
+    A -->|每步送出前| G[token 檢查: 估算 / 清舊思考 / 瘦身 / 配額]
+    G --> R{路由}
+    R -->|放得下| S[code: Nemotron 3 Super 120B]
+    R -->|超過約 11 萬 tokens| L[long_context: Nemotron 3 Ultra 550B]
+    S -.失敗備援.-> D[code_deep: DeepSeek v4.1-flash]
+    L -.失敗備援.-> S2[Super 1M]
+    A --> T1[讀檔 / 搜尋: 擋 .env 與金鑰]
+    A --> T2[跑測試: Docker 沙箱, 無網路, 唯讀]
+    A --> T3[提修正: 複本套用並跑測試, 只產 .patch]
+</pre>
+    </div>
+    <p>agent 迴圈是自己寫的,沒有用現成的 create_agent,因為 token 檢查、歷史瘦身、模型升級都要插在「每一步送出之前」。工具只能讀、只能在沙箱裡跑測試、只能提 patch 等人審核,不會直接改任何檔案。</p>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>四條路徑的實測</h2>
+    <div class="note">NVIDIA API Catalog 免費層</div>
+  </div>
+  <div class="body">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>路徑</th><th>情境</th><th>結果</th><th>狀態</th></tr></thead>
+        <tbody>
+          <tr><td>模型冒煙測試</td><td>三顆模型 × 回應 / 開思考 / 關思考 / tool calling</td><td>Super 每次 0.4–2.6 秒;DeepSeek 18–27 秒;Ultra 偶爾回 503,已設備援</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>改 bug</td><td>玩具專案:加號寫成減號</td><td class="num">12 步 → 7 步 · 47,559 → 16,234 tokens</td><td><span class="pill pass">2 passed</span></td></tr>
+          <tr><td>長文本</td><td>客服專案 57 檔寫技術文件</td><td class="num">1 步 · 191,076 tokens · 482 秒</td><td><span class="pill pass">引用 14/14</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">33 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>地端 NIM</td><td>需要 GPU 伺服器</td><td>只對照過官方文件</td><td><span class="pill warn">未實測</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>測出來的 11 個問題</h2>
+    <div class="note">依發現順序。每一個都是跑過才知道,不是事先想到的</div>
+  </div>
+  <div class="body">
+    <ol class="findings">
+      <li><span class="n">01</span><div><span class="what">指定的 deepseek-v3、qwen2.5-coder-32b 已經從 catalog 下架</span><span class="how"><span class="tag">探測 API</span></span></div><div class="fix">改用現役版本,Qwen 標為只能地端</div></li>
+      <li><span class="n">02</span><div><span class="what">套件預設輸出上限只有 1024 tokens,寫程式會被截斷</span><span class="how"><span class="tag">讀套件原始碼</span></span></div><div class="fix">每個模型角色明確設定上限</div></li>
+      <li><span class="n">03</span><div><span class="what">套件把推理內容原樣回送伺服器,多步 agent 每步重送全部思考</span><span class="how"><span class="tag">讀套件原始碼</span></span></div><div class="fix">每步清掉上一輪以前的推理</div></li>
+      <li><span class="n">04</span><div><span class="what">Ultra 收到 force_nonempty_content 會把推理混進回答</span><span class="how"><span class="tag">冒煙測試</span> <span class="tag">對照實驗</span></span></div><div class="fix">Ultra 不送這個參數,另外清除孤立的 &lt;/think&gt;</div></li>
+      <li><span class="n">05</span><div><span class="what">DeepSeek 連回一句「收到」都要 20 秒</span><span class="how"><span class="tag">冒煙測試</span></span></div><div class="fix">日常改用 Super,DeepSeek 留給難題</div></li>
+      <li><span class="n">06</span><div><span class="what">agent 沒辦法驗證自己的修正,最後自己編了測試結果</span><span class="how"><span class="tag">端到端實測</span></span></div><div class="fix">提修正時在複本上套用並真的跑測試,回傳實際結果</div></li>
+      <li><span class="n">07</span><div><span class="what">.env 裡設定的工作目錄被忽略</span><span class="how"><span class="tag">端到端實測</span></span></div><div class="fix">讀完 .env 之後再設定工具</div></li>
+      <li><span class="n">08</span><div><span class="what">讀檔工具擋不住 .env,金鑰可能被送出去</span><span class="how"><span class="tag">接真實專案前檢查</span></span></div><div class="fix">封鎖 .env、金鑰、憑證與 .git</div></li>
+      <li><span class="n">09</span><div><span class="what">檔案都附上了,模型還分段重讀,每步重送 18 萬 tokens</span><span class="how"><span class="tag">長文本實測</span></span></div><div class="fix">整檔模式不給工具,一次回答</div></li>
+      <li><span class="n">10</span><div><span class="what">token 估算低估約 20%(估 15.3 萬,實際 18.3 萬)</span><span class="how"><span class="tag">長文本實測</span></span></div><div class="fix">用實測重新校準,執行中再依實際用量修正</div></li>
+      <li><span class="n">11</span><div><span class="what">配額只在開始時檢查,跑到一半可以遠超額度</span><span class="how"><span class="tag">長文本實測</span></span></div><div class="fix">每一步送出前都檢查</div></li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>兩個標本</h2>
+    <div class="note">模型的原始輸出,一字未改</div>
+  </div>
+  <div class="body">
+    <div class="specimens">
+      <div class="specimen">
+        <p class="cap">問題 06 · 自己編的測試結果</p>
+        <h3>修正前,agent 的最後回答</h3>
+<pre class="bad">$ pytest tests/test_calc.py::test_add
+.
+1 passed in <mark>0.0x</mark> s</pre>
+        <p>它根本沒跑。「0.0x」是它自己填的秒數。工具設計讓它無法驗證修正,它就用編的。</p>
+        <h3>修正後,沙箱回傳的真實輸出</h3>
+<pre class="good">exit code 0
+..                                       [100%]
+2 passed in 0.04s</pre>
+      </div>
+      <div class="specimen">
+        <p class="cap">問題 04 · 推理混進回答</p>
+        <h3>送了 force_nonempty_content</h3>
+<pre class="bad">回答 = 'The user wants a two-character response: "收到" (received/understood).<mark>&lt;/think&gt;</mark>收到'</pre>
+        <p>題目是「只回答兩個字:收到」。推理跑進回答欄位,而且開頭的 &lt;think&gt; 被伺服器吃掉,只剩結尾標籤。同一個參數送給 Super 就沒事。</p>
+        <h3>拿掉之後</h3>
+<pre class="good">回答 = '收到'</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>為什麼長文本選 Ultra</h2>
+    <div class="note">顯存會不會爆,看的是每個 token 佔多少 KV cache</div>
+  </div>
+  <div class="body">
+    <div class="bars" role="img" aria-label="每 token 的 KV cache:Qwen2.5-Coder-32B 256 KiB,DeepSeek V3 約 69 KiB,Nemotron 3 Ultra 12 KiB">
+      <div class="bar-row">
+        <div class="name">Qwen2.5-Coder-32B<small>一般 dense 架構</small></div>
+        <div class="track"><div class="fill" style="width:100%"></div></div>
+        <div class="val">256 KiB / token · 128K 對話約 32 GiB</div>
+      </div>
+      <div class="bar-row">
+        <div class="name">DeepSeek V3<small>MLA 壓縮注意力</small></div>
+        <div class="track"><div class="fill" style="width:26.95%"></div></div>
+        <div class="val">約 69 KiB / token · 約 8.6 GiB</div>
+      </div>
+      <div class="bar-row">
+        <div class="name">Nemotron 3 Ultra<small>108 層只有 12 層 attention</small></div>
+        <div class="track"><div class="fill" style="width:4.69%"></div></div>
+        <div class="val">12 KiB / token · 約 1.5 GiB(1M 約 11 GiB)</div>
+      </div>
+    </div>
+    <p>參數最少的 Qwen Coder 反而最容易在長對話把顯存吃光;Ultra 是 Mamba 混合架構,大部分層不存 KV cache,這是它能開到 1M 上下文的原因。數字由各模型公開的 config 換算(BF16)。</p>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>還沒做的</h2>
+    <div class="note">知道邊界在哪</div>
+  </div>
+  <div class="body">
+    <ul class="plain">
+      <li><strong>地端 NIM 沒有實際部署。</strong>需要 GPU 伺服器;Ultra 550B 要 8 張 B200 / H200 等級,建議第一階段先用 Super 120B(FP8 約 2 張 H100)。</li>
+      <li>配額目前是記憶體版,多台伺服器要改 Redis;整份文件這種 8 分鐘的任務要改走背景佇列。</li>
+      <li>PoC 期間不能送公司真實程式碼到 build.nvidia.com:試用條款允許 NVIDIA 收集輸入輸出改進模型。這次測試用的是我自己的專案。</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <span><strong>HSUAN</strong></span>
+  <span>2026-10-06</span>
+  <span>實測環境:NVIDIA API Catalog 免費層、Windows 10、Docker 29.7</span>
+</footer>
+
+</div>
