@@ -1,0 +1,95 @@
+# 模型註冊表 —— 換模型改這裡,不用改程式碼。
+# LLM_BACKEND=catalog → build.nvidia.com(PoC);LLM_BACKEND=nim → 地端 NIM 容器(每個模型一個容器)
+#
+# 2026-10-05 查證(catalog 汰換很快,上線前再對一次):
+#   deepseek-ai/deepseek-v3 系列(v3 / v3.1 / v3.2)  → 已從 catalog 移除(404)
+#   qwen/qwen2.5-coder-32b-instruct                   → catalog 2026-05-12 EOL,只剩地端 NIM 1.x
+#   nvidia/nemotron-3-ultra-550b-a55b / super-120b    → 可用,tool calling 2026-10-05 實測通過
+#   deepseek-ai/deepseek-v4.1-flash                   → 可用,2026-10-06 冒煙測試四項全過
+#
+# context_window 填「我們允許用到」的長度(地端 = NIM_MAX_MODEL_LEN),不是模型理論上限。
+# 這個數字決定 KV cache 要預留多少顯存,開越大、能同時服務的人越少。
+
+backends:
+  catalog:
+    base_url: https://integrate.api.nvidia.com/v1
+    api_key_env: NVIDIA_API_KEY
+  nim:
+    base_url: http://localhost:8000/v1   # 角色沒寫 nim_base_url 時用這個
+    api_key_env: null                    # NIM 本身不驗 key,驗證交給前面的 API Gateway
+
+routing:
+  default_role: code
+  long_context_role: long_context
+  safety_margin: 0.10   # 估算誤差 + 工具定義的 token,先扣掉 10%
+
+limits:
+  max_agent_steps: 15
+  tool_output_max_tokens: 4000      # 單次工具輸出上限(測試 log 很容易爆)
+  inline_file_max_tokens: 24000     # 超過就只給大綱,讓 agent 用工具分段讀
+  daily_tokens_per_user: 2000000
+  max_concurrent_per_user: 2
+
+roles:
+  # 寫程式、改 Bug、邏輯推理 —— agent 主腦,必須支援 tool calling
+  # 2026-10-06 冒煙測試:Super 每次 0.4–2.6 秒、DeepSeek 18–27 秒 → 日常用 Super,難題再指定 code_deep
+  code:
+    model: nvidia/nemotron-3-super-120b-a12b
+    nim_base_url: http://nim-nemotron-super:8000/v1
+    context_window: 131072                  # 模型支援 1M,刻意限制在 128K 控成本與延遲
+    max_output: 8192
+    timeout_s: 180
+    temperature: 1.0                        # Nemotron 3 模型卡建議值
+    top_p: 0.95
+    extra_body: {chat_template_kwargs: {force_nonempty_content: true}}  # 模型卡:思考 + tool call 時要加
+    thinking_on:  {chat_template_kwargs: {enable_thinking: true}}
+    thinking_off: {chat_template_kwargs: {enable_thinking: false}}
+    fallbacks: [code_deep]                  # 404 / 429 / 503 / 逾時 → 自動改用下一顆
+
+  # 難題用(跨檔推理、找不到 root cause 時):agent.py --role code_deep
+  code_deep:
+    model: deepseek-ai/deepseek-v4.1-flash  # DeepSeek 在 catalog 上僅存的版本
+    nim_base_url: http://nim-deepseek:8000/v1
+    context_window: 131072
+    max_output: 8192
+    timeout_s: 180
+    thinking_on:  {chat_template_kwargs: {thinking: true}}    # V4 系列用 thinking 這個鍵(10/6 實測有效)
+    thinking_off: {chat_template_kwargs: {thinking: false}}
+    fallbacks: [code]
+
+  # 純生成(補完、單檔重寫、解釋程式碼)。不支援 tool calling,不能當 agent 主腦
+  code_writer:
+    model: qwen/qwen2.5-coder-32b-instruct
+    nim_base_url: http://nim-qwen-coder:8000/v1
+    available_on: [nim]                     # catalog 已 EOL
+    context_window: 32768                   # 原生 32K;YaRN 可到 128K 但 KV cache 每 token 256 KiB
+    max_output: 4096
+    supports_tools: false
+    temperature: 0.2
+
+  # 大檔案、超長文本、整份技術文件
+  long_context:
+    model: nvidia/nemotron-3-ultra-550b-a55b
+    nim_base_url: http://nim-nemotron-ultra:8000/v1
+    context_window: 1048576                 # catalog 給 1M;地端預設 256K,要 1M 得另開 vLLM 參數
+    max_output: 16384
+    timeout_s: 900                          # 幾十萬 token 的 prefill 可能要好幾分鐘
+    temperature: 1.0
+    top_p: 0.95
+    # 不送 force_nonempty_content:10/6 實測 Ultra 收到它會把推理塞進回答(開頭的 <think> 還被吃掉)
+    thinking_on:  {chat_template_kwargs: {enable_thinking: true}}
+    thinking_off: {chat_template_kwargs: {enable_thinking: false}}
+    fallbacks: [long_context_backup]        # 10/6 實測 Ultra 免費層會間歇回 503 過載
+
+  # Ultra 的備援:Super 在 catalog 上也給 1M(地端要另開 vLLM 參數才有)
+  long_context_backup:
+    model: nvidia/nemotron-3-super-120b-a12b
+    nim_base_url: http://nim-nemotron-super:8000/v1
+    context_window: 1048576
+    max_output: 16384
+    timeout_s: 900
+    temperature: 1.0
+    top_p: 0.95
+    extra_body: {chat_template_kwargs: {force_nonempty_content: true}}
+    thinking_on:  {chat_template_kwargs: {enable_thinking: true}}
+    thinking_off: {chat_template_kwargs: {enable_thinking: false}}
