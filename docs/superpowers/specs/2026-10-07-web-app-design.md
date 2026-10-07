@@ -92,10 +92,11 @@ workspaces:
 | type | 欄位 | 畫面 |
 |---|---|---|
 | `start` | role, model, mode, est_tokens | 「Super 120B · 預估 1.2 萬 tokens」 |
+| `step` | step, role, model | 「第 2 步:等模型回應…」(附計時) |
 | `tool_call` | step, name, args | 「read_file calc.py」 |
 | `tool_result` | step, name, ok, preview(最多 4000 字) | 結果標籤;點開看全文 |
 | `model_switch` | from_role, to_role, reason | 「內容太長,改用 Ultra」 |
-| `patch` | path, diff, test_output, passed | 差異卡片與測試標籤 |
+| `patch` | path, diff, patch_file, test_output, passed | 差異卡片、測試標籤、`git apply` 指令 |
 | `answer` | text | 回答(Markdown) |
 | `error` | kind, message | 說明加「重試」 |
 | `end` | status, steps, tokens, seconds | 「4 步 · 18 秒」 |
@@ -141,7 +142,8 @@ workspaces:
   - 可收合的「工作過程 · N 步 · 秒數 · 模型」:執行中展開、完成後自動收合;每步可點開看完整輸出。
   - 回答本文(Markdown,經 DOMPurify 清理後才放進頁面)。
   - 修正卡片:差異、測試結果標籤、「複製 git apply 指令」。
-- **右側欄**:整份文件模式的回答、完整 diff、工具完整輸出,點開後在右側顯示;窄螢幕時改為覆蓋全畫面。
+- **右側欄**:整份文件模式的回答與超過 3000 字的長回答,點開後在右側顯示;窄螢幕時改為覆蓋全畫面。
+  diff 與工具完整輸出在原位展開(內容短,放側欄反而要來回切換)。
 - **底部輸入框**:資料夾選單、上傳、模式切換、「進階」(模型、思考開關、相關檔案,預設收起)、送出;
   執行中送出鍵變成「停止」。對話送出第一則後,資料夾選單鎖定。
 - **外觀**:沿用作品集網頁的配色與字體(冷灰底、鈷藍點綴、Noto Sans TC、IBM Plex Mono),支援深色模式。
