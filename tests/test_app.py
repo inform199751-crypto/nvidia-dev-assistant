@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import threading
 import zipfile
 
 from fastapi.testclient import TestClient
@@ -104,3 +105,41 @@ def test_upload_endpoint(tmp_path):
     assert r.json()["workspace"]["name"] == "上傳:proj.zip"
     bad = client.post("/api/uploads", files=[("files", ("x.zip", b"not zip", "application/zip"))])
     assert bad.status_code == 400 and "zip" in bad.json()["detail"]
+
+
+def test_estimate_reports_when_too_large(tmp_path, monkeypatch):
+    client, _ = build(tmp_path, [])
+    registry = client.app.state.manager.registry
+    monkeypatch.setattr(registry, "budget", lambda role: 10)  # 讓任何內容都超過上限
+    est = client.get("/api/estimate", params={"workspace": "demo"}).json()
+    assert est["ok"] is False and est["role"] is None and est["limit"] == 10 and est["tokens"] > 10
+
+
+def test_sse_pushes_events_that_arrive_after_connect(tmp_path):
+    client, _ = build(tmp_path, [ai("晚到的答案")], executor=ManualExecutor())
+    ids = client.post("/api/conversations", json={"workspace": "demo", "question": "q", "mode": "fix"}).json()
+    url = f"/api/conversations/{ids['conversation_id']}/turns/{ids['turn_id']}/events"
+    timer = threading.Timer(0.2, client.app.state.manager.executor.run_all)  # 連上之後才開始跑
+    timer.start()
+    try:
+        events = sse(client, url)
+    finally:
+        timer.join()
+    assert [e["type"] for e in events] == ["start", "step", "answer", "end"]
+    assert events[2]["text"] == "晚到的答案"
+
+
+def test_sse_after_param_and_204_when_finished(tmp_path):
+    client, _ = build(tmp_path, [ai("好")])
+    ids = client.post("/api/conversations", json={"workspace": "demo", "question": "q", "mode": "fix"}).json()
+    url = f"/api/conversations/{ids['conversation_id']}/turns/{ids['turn_id']}/events"
+    full = sse(client, url)
+    assert [e["seq"] for e in sse(client, url + "?after=1")] == [e["seq"] for e in full[2:]]
+    assert [e["seq"] for e in sse(client, url + "?after=-5")] == [e["seq"] for e in full]  # 負數不會從尾巴開始
+    finished = client.get(url, headers={"Last-Event-ID": str(full[-1]["seq"])})
+    assert finished.status_code == 204
+
+
+def test_untrusted_host_rejected(tmp_path):
+    client, _ = build(tmp_path, [])
+    assert client.get("/api/workspaces", headers={"host": "evil.example"}).status_code == 400

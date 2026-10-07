@@ -94,12 +94,12 @@ class WorkspaceRegistry:
         raise KeyError(workspace_id)
 
     def _load_upload(self, d: Path) -> Workspace | None:
-        meta = d / "meta.json"
-        if not meta.exists():
+        try:
+            m = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+            return Workspace(id=d.name, name=f"上傳:{m['name']}", path=d / "files", kind="upload",
+                             created_at=float(m["created_at"]))
+        except (OSError, ValueError, KeyError, TypeError):  # 沒有、沒寫完或損壞的 meta.json:當作不存在,cleanup 會清掉
             return None
-        m = json.loads(meta.read_text(encoding="utf-8"))
-        return Workspace(id=d.name, name=f"上傳:{m['name']}", path=d / "files", kind="upload",
-                         created_at=m["created_at"])
 
     # ---------- 上傳 ----------
     def add_upload(self, files: list[tuple[str, bytes]]) -> tuple[Workspace, list[str]]:

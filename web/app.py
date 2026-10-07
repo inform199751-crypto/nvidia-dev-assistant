@@ -10,6 +10,8 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from agent import SYSTEM_PROMPT, build_user_prompt
 from token_guard import ContextTooLarge, message_tokens
@@ -38,6 +40,8 @@ def create_app(manager: ConversationManager, workspaces: WorkspaceRegistry, regi
                poll_seconds: float = 0.3) -> FastAPI:
     app = FastAPI(title="研發助理")
     app.state.manager = manager
+    # 沒有登入:只接受本機網址,擋掉 DNS rebinding(testserver 是測試用 TestClient 的主機名)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
     app.mount("/static", StaticFiles(directory=STATIC, check_dir=False), name="static")
 
     def conversation_or_404(cid: str):
@@ -64,7 +68,7 @@ def create_app(manager: ConversationManager, workspaces: WorkspaceRegistry, regi
     async def upload(files: list[UploadFile] = File(...)) -> dict:
         blobs = [(f.filename or "file", await f.read()) for f in files]
         try:
-            ws, skipped = workspaces.add_upload(blobs)
+            ws, skipped = await run_in_threadpool(workspaces.add_upload, blobs)  # 解壓與寫檔不能卡住其他請求
         except UploadRejected as e:
             raise HTTPException(400, str(e)) from None
         return {"workspace": ws.to_dict(), "skipped": skipped}
@@ -128,7 +132,7 @@ def create_app(manager: ConversationManager, workspaces: WorkspaceRegistry, regi
         except KeyError:
             raise HTTPException(404, "沒有這一輪") from None
         last = request.headers.get("last-event-id", "")
-        start = int(last) + 1 if last.isdigit() else after + 1
+        start = max(0, int(last) + 1 if last.isascii() and last.isdigit() else after + 1)
         if turn.events and turn.events[-1]["type"] == "end" and start > turn.events[-1]["seq"]:
             return Response(status_code=204)  # 已經全部送完;回 204 瀏覽器的 EventSource 才不會一直自動重連
 
@@ -142,8 +146,6 @@ def create_app(manager: ConversationManager, workspaces: WorkspaceRegistry, regi
                     yield f"id: {event['seq']}\nevent: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
                     if event["type"] == "end":
                         return
-                if evs and evs[-1]["type"] == "end":  # 斷線重連時結束事件已經送過,不要空等
-                    return
                 if await request.is_disconnected():
                     return
                 await asyncio.sleep(poll_seconds)
