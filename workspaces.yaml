@@ -1,0 +1,6 @@
+# 網頁上可以選的資料夾。路徑相對於本專案資料夾,也可以寫絕對路徑;不存在的資料夾不會出現在清單裡。
+workspaces:
+  - name: demo
+    path: demo_workspace
+  - name: 客服專案
+    path: ../universal-ai-helpdesk
