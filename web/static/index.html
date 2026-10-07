@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>研發助理</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <button id="new-chat" class="primary" type="button">+ 新對話</button>
+    <nav id="history" aria-label="對話紀錄"></nav>
+  </aside>
+  <main class="main">
+    <div id="thread" class="thread"></div>
+    <form id="composer" class="composer" autocomplete="off">
+      <label class="sr-only" for="question">問題</label>
+      <textarea id="question" rows="2" placeholder="例如:test_add 失敗了,找出 bug 並提出修正"></textarea>
+      <div class="controls">
+        <label class="pill" title="資料夾"><span class="sr-only">資料夾</span><select id="workspace"></select></label>
+        <label class="pill upload">上傳 zip / 檔案<input id="upload" type="file" multiple hidden></label>
+        <div class="mode" role="radiogroup" aria-label="模式">
+          <label><input type="radio" name="mode" value="fix" checked> 問問題 / 修 bug</label>
+          <label><input type="radio" name="mode" value="whole"> 整份文件</label>
+        </div>
+        <details class="advanced">
+          <summary>進階</summary>
+          <div class="adv-body">
+            <label>模型
+              <select id="role">
+                <option value="">自動</option>
+                <option value="code">日常(Super)</option>
+                <option value="code_deep">難題(DeepSeek)</option>
+                <option value="long_context">長文本(Ultra)</option>
+              </select>
+            </label>
+            <label>思考
+              <select id="thinking">
+                <option value="">預設</option>
+                <option value="true">開</option>
+                <option value="false">關</option>
+              </select>
+            </label>
+            <label>相關檔案 <input id="files" type="text" placeholder="calc.py, tests/test_calc.py"></label>
+          </div>
+        </details>
+        <button id="send" type="submit" class="send">送出</button>
+      </div>
+      <div id="hint" class="hint" aria-live="polite"></div>
+    </form>
+  </main>
+  <aside id="panel" class="panel" hidden>
+    <header><span id="panel-title"></span><button id="panel-close" type="button" aria-label="關閉側欄">關閉</button></header>
+    <div id="panel-body" class="panel-body"></div>
+  </aside>
+</div>
+<script src="/static/vendor/marked.min.js"></script>
+<script src="/static/vendor/purify.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

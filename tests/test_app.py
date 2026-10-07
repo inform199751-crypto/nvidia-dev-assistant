@@ -143,3 +143,12 @@ def test_sse_after_param_and_204_when_finished(tmp_path):
 def test_untrusted_host_rejected(tmp_path):
     client, _ = build(tmp_path, [])
     assert client.get("/api/workspaces", headers={"host": "evil.example"}).status_code == 400
+
+
+def test_index_and_static_files_served(tmp_path):
+    client, _ = build(tmp_path, [])
+    page = client.get("/")
+    assert page.status_code == 200 and "<title>研發助理</title>" in page.text
+    for path in ["/static/app.js", "/static/style.css",
+                 "/static/vendor/marked.min.js", "/static/vendor/purify.min.js"]:
+        assert client.get(path).status_code == 200, path
