@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -18,12 +19,18 @@ from agent import run_agent
 from token_guard import ContextTooLarge, QuotaExceeded
 from web.workspaces import WorkspaceRegistry
 
+log = logging.getLogger("dev_assistant.web")
+
 FINISHED = {"done", "failed", "cancelled", "interrupted"}
 MODES = {"fix", "whole"}
 
 
 class Busy(Exception):
     """同一個對話已經有一輪在跑。"""
+
+
+class WorkspaceGone(Exception):
+    """對話綁定的資料夾已不存在(上傳的複本 24 小時後會刪除)。"""
 
 
 def _now() -> str:
@@ -83,7 +90,7 @@ def _error_event(exc: Exception) -> dict:
         return {"type": "error", "kind": "quota", "message": f"今天的額度不夠了:{first}"}
     if isinstance(exc, ContextTooLarge):
         return {"type": "error", "kind": "context", "message": f"內容太大:{first}"}
-    if isinstance(exc, KeyError):
+    if isinstance(exc, WorkspaceGone):
         return {"type": "error", "kind": "workspace",
                 "message": "這個對話的資料夾已不存在(上傳的複本 24 小時後會刪除),請開新對話。"}
     if isinstance(exc, PermissionError):
@@ -126,8 +133,11 @@ class ConversationManager:
     def _save(self, conv: Conversation) -> None:
         path = self.store_dir / f"{conv.id}.json"
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(asdict(conv), ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, path)  # 先寫暫存檔再取代,寫到一半當機也不會壞檔
+        try:
+            tmp.write_text(json.dumps(asdict(conv), ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, path)  # 先寫暫存檔再取代,寫到一半當機也不會壞檔
+        except OSError:  # 存檔失敗(防毒軟體鎖檔等)不能中斷正在跑的這一輪;記憶體裡的狀態照樣正確,下一個事件會再寫一次
+            log.exception("對話 %s 存檔失敗", conv.id)
 
     def list(self) -> list[dict]:
         with self.lock:
@@ -198,7 +208,10 @@ class ConversationManager:
             turn.status = "running"
             self._save(conv)
         try:
-            ws = self.workspaces.get(conv.workspace)
+            try:
+                ws = self.workspaces.get(conv.workspace)
+            except KeyError:
+                raise WorkspaceGone(conv.workspace) from None
             whole = turn.mode == "whole"
             history = messages_from_dict(conv.messages) if conv.messages else None
             result = self.agent_fn(
@@ -212,5 +225,6 @@ class ConversationManager:
             self._finish(conv, turn, "cancelled" if result.stopped else "done",
                          result.steps, result.tokens_used, started)
         except Exception as exc:  # 任何錯誤都要讓畫面知道,不能讓這一輪永遠停在「執行中」
+            log.exception("對話 %s 第 %s 輪執行失敗", cid, tid)
             self._emit(conv, turn, _error_event(exc))
             self._finish(conv, turn, "failed", 0, 0, started)

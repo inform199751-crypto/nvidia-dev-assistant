@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from agent import AgentResult
 from helpers import InlineExecutor, ManualExecutor, ai, scripted_registry
 from token_guard import TokenQuota
 from web.conversations import Busy, ConversationManager
@@ -91,7 +92,7 @@ def test_quota_error_becomes_error_event(tmp_path, workspaces):
     turn = mgr.get(cid).turn(tid)
     assert turn.status == "failed" and types(turn)[-2:] == ["error", "end"]
     err = next(e for e in turn.events if e["type"] == "error")
-    assert err["kind"] == "quota" and "額度" in err["message"]
+    assert err["kind"] == "quota" and "剩 10 tokens" in err["message"]  # 要告訴使用者還剩多少
 
 
 def test_whole_mode_attaches_every_text_file(tmp_path, workspaces):
@@ -122,3 +123,56 @@ def test_expired_upload_follow_up_reports_workspace_error(tmp_path, workspaces):
     tid = mgr.add_turn(cid, "再看一次", "fix")
     err = next(e for e in mgr.get(cid).turn(tid).events if e["type"] == "error")
     assert err["kind"] == "workspace"
+
+
+def test_cancel_while_running_stops_after_current_step(tmp_path, workspaces):
+    ex = ManualExecutor()
+    holder = {}
+
+    def fake_agent(question, *, on_event, should_stop, **kwargs):
+        on_event({"type": "step", "step": 1, "role": "code", "model": "m"})
+        holder["mgr"].cancel(holder["cid"], holder["tid"])  # 使用者在等模型回應時按了停止
+        assert should_stop()
+        return AgentResult("[已停止]", "code", 1, 50, [], stopped=True)
+
+    reg, _ = scripted_registry([])
+    mgr = ConversationManager(tmp_path / "conversations", workspaces, reg, TokenQuota(10**7, 2),
+                              executor=ex, agent_fn=fake_agent)
+    holder["mgr"] = mgr
+    holder["cid"], holder["tid"] = mgr.start("demo", "q", "fix")
+    ex.run_all()
+    turn = mgr.get(holder["cid"]).turn(holder["tid"])
+    assert turn.status == "cancelled" and types(turn) == ["step", "end"]
+    assert turn.events[-1]["steps"] == 1 and turn.events[-1]["tokens"] == 50
+
+
+def test_nvidia_overload_becomes_busy_error(tmp_path, workspaces):
+    def overloaded(question, **kwargs):
+        raise Exception("[503] {'message': 'Service temporarily overloaded'}")
+
+    reg, _ = scripted_registry([])
+    mgr = ConversationManager(tmp_path / "conversations", workspaces, reg, TokenQuota(10**7, 2),
+                              executor=InlineExecutor(), agent_fn=overloaded)
+    cid, tid = mgr.start("demo", "q", "fix")
+    turn = mgr.get(cid).turn(tid)
+    err = next(e for e in turn.events if e["type"] == "error")
+    assert turn.status == "failed" and err["kind"] == "busy" and "服務忙線" in err["message"]
+
+
+def test_unknown_role_is_not_reported_as_missing_folder(tmp_path, workspaces):
+    mgr, _ = make_manager(tmp_path, workspaces, [ai("x")])
+    cid, tid = mgr.start("demo", "q", "fix", {"role": "nope"})
+    err = next(e for e in mgr.get(cid).turn(tid).events if e["type"] == "error")
+    assert err["kind"] == "other" and "nope" in err["message"]
+
+
+def test_save_failure_does_not_abort_the_turn(tmp_path, workspaces, monkeypatch):
+    mgr, _ = make_manager(tmp_path, workspaces, [ai("好")])
+
+    def locked(*args, **kwargs):
+        raise PermissionError("檔案被防毒軟體鎖住")
+
+    monkeypatch.setattr("web.conversations.os.replace", locked)
+    cid, tid = mgr.start("demo", "q", "fix")
+    turn = mgr.get(cid).turn(tid)
+    assert turn.status == "done" and types(turn)[-1] == "end"
