@@ -11,6 +11,7 @@ import subprocess
 import time
 import uuid
 import zipfile
+import zlib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -28,7 +29,8 @@ TEXT_SUFFIXES = {
     ".txt", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".json", ".html", ".css", ".scss", ".j2",
     ".jinja", ".xml", ".gradle",
 }
-_SKIP_DIRS = {".git", "__MACOSX"}
+_SKIP_DIRS = {".git", "__macosx"}  # 比對時一律轉小寫:Windows 上 .GIT 就是 .git
+_BAD_CHARS = set(':<>"|?*\0')
 
 
 class UploadRejected(ValueError):
@@ -48,12 +50,17 @@ class Workspace:
 
 
 def _clean_rel(name: str) -> PurePosixPath | None:
-    """回傳安全的相對路徑;機密檔、.git、macOS 雜檔回 None(丟掉);危險路徑整包拒收。"""
+    """回傳安全的相對路徑;機密檔、.git、macOS 雜檔回 None(丟掉);危險路徑整包拒收。
+
+    Windows 上 `C:..` 這種片段會被 pathlib 當成磁碟機路徑而跳出資料夾,所以帶冒號、保留字元、
+    結尾是點或空白的片段一律拒收;寫入前還有一道 resolve 後的範圍檢查。
+    """
     name = name.replace("\\", "/")
     p = PurePosixPath(name)
-    if name.startswith("/") or (len(name) > 1 and name[1] == ":") or ".." in p.parts:
+    if (name.startswith("/") or ".." in p.parts
+            or any(set(part) & _BAD_CHARS or part.endswith((".", " ")) for part in p.parts)):
         raise UploadRejected(f"路徑可疑,整包拒收:{name}")
-    if not p.parts or any(part in _SKIP_DIRS for part in p.parts) or _is_secret(Path(p.name)):
+    if not p.parts or any(part.lower() in _SKIP_DIRS for part in p.parts) or _is_secret(Path(p.name)):
         return None
     return p
 
@@ -102,14 +109,36 @@ class WorkspaceRegistry:
         if sum(len(data) for _, data in files) > MAX_TOTAL_BYTES:
             raise UploadRejected("超過 20 MB 上限")
         if len(files) == 1 and files[0][0].lower().endswith(".zip"):
-            entries, label = self._zip_entries(files[0][1]), files[0][0]
+            keep, skipped = self._zip_entries(files[0][1])
+            label = files[0][0]
         else:
-            entries = files
+            keep, skipped = self._plain_entries(files)
             label = files[0][0] if len(files) == 1 else f"{len(files)} 個檔案"
-        if len(entries) > MAX_FILES:
-            raise UploadRejected(f"檔案數超過 {MAX_FILES} 個")
+        if not keep:
+            raise UploadRejected("過濾掉機密檔與系統檔之後,沒有可用的檔案")
+        root = self.uploads_dir / f"up-{uuid.uuid4().hex[:8]}"
+        files_dir = (root / "files").resolve()
+        try:
+            for rel, data in keep:
+                target = files_dir.joinpath(*rel.parts).resolve()
+                if not target.is_relative_to(files_dir):  # 最後一道防線:不管檔名怎麼寫,都只能落在這次上傳的資料夾裡
+                    raise UploadRejected(f"路徑可疑,整包拒收:{rel}")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+            (root / "meta.json").write_text(json.dumps({"name": label, "created_at": time.time()}, ensure_ascii=False),
+                                            encoding="utf-8")
+        except UploadRejected:
+            shutil.rmtree(root, ignore_errors=True)
+            raise
+        except (OSError, ValueError) as e:
+            shutil.rmtree(root, ignore_errors=True)
+            raise UploadRejected(f"檔名或內容無法寫入:{e}") from None
+        return self._load_upload(root), skipped
+
+    @staticmethod
+    def _plain_entries(files: list[tuple[str, bytes]]) -> tuple[list[tuple[PurePosixPath, bytes]], list[str]]:
         keep, skipped = [], []
-        for name, data in entries:
+        for name, data in files:
             rel = _clean_rel(name)
             if rel is None:
                 skipped.append(name)
@@ -117,37 +146,41 @@ class WorkspaceRegistry:
             if len(data) > MAX_FILE_BYTES:
                 raise UploadRejected(f"單檔超過 2 MB:{name}")
             keep.append((rel, data))
-        if not keep:
-            raise UploadRejected("過濾掉機密檔與系統檔之後,沒有可用的檔案")
-        root = self.uploads_dir / f"up-{uuid.uuid4().hex[:8]}"
-        for rel, data in keep:
-            target = (root / "files").joinpath(*rel.parts)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-        (root / "meta.json").write_text(json.dumps({"name": label, "created_at": time.time()}, ensure_ascii=False),
-                                        encoding="utf-8")
-        return self._load_upload(root), skipped
+        if len(keep) > MAX_FILES:
+            raise UploadRejected(f"檔案數超過 {MAX_FILES} 個")
+        return keep, skipped
 
     @staticmethod
-    def _zip_entries(blob: bytes) -> list[tuple[str, bytes]]:
+    def _zip_entries(blob: bytes) -> tuple[list[tuple[PurePosixPath, bytes]], list[str]]:
+        """先過濾再算上限(整個 repo 打包時,.git 不該把上傳擋掉);大小用實際解壓出來的位元組算,不信 zip 自報的大小。"""
         try:
             zf = zipfile.ZipFile(io.BytesIO(blob))
-        except zipfile.BadZipFile:
-            raise UploadRejected("不是有效的 zip 檔") from None
-        infos = [i for i in zf.infolist() if not i.is_dir()]
-        if len(infos) > MAX_FILES:
-            raise UploadRejected(f"檔案數超過 {MAX_FILES} 個")
-        total, out = 0, []
-        for info in infos:
-            if (info.external_attr >> 16) & 0o170000 == 0o120000:
-                raise UploadRejected(f"zip 裡有捷徑檔(符號連結),整包拒收:{info.filename}")
-            total += info.file_size
-            if total > MAX_TOTAL_BYTES:
-                raise UploadRejected("解壓後超過 20 MB 上限")
-            if info.file_size > MAX_FILE_BYTES:
-                raise UploadRejected(f"單檔超過 2 MB:{info.filename}")
-            out.append((info.filename, zf.read(info)))
-        return out
+            keep, skipped, total = [], [], 0
+            for info in zf.infolist():
+                if info.is_dir():
+                    continue
+                if (info.external_attr >> 16) & 0o170000 == 0o120000:
+                    raise UploadRejected(f"zip 裡有捷徑檔(符號連結),整包拒收:{info.filename}")
+                rel = _clean_rel(info.filename)
+                if rel is None:
+                    skipped.append(info.filename)
+                    continue
+                if len(keep) >= MAX_FILES:
+                    raise UploadRejected(f"檔案數超過 {MAX_FILES} 個")
+                with zf.open(info) as f:
+                    data = f.read(MAX_FILE_BYTES + 1)
+                if len(data) > MAX_FILE_BYTES:
+                    raise UploadRejected(f"單檔超過 2 MB:{info.filename}")
+                total += len(data)
+                if total > MAX_TOTAL_BYTES:
+                    raise UploadRejected("解壓後超過 20 MB 上限")
+                keep.append((rel, data))
+            return keep, skipped
+        except UploadRejected:
+            raise
+        except (zipfile.BadZipFile, zipfile.LargeZipFile, RuntimeError, NotImplementedError, EOFError,
+                zlib.error, OSError) as e:
+            raise UploadRejected(f"zip 檔損壞或格式不支援(例如加密):{e}") from None
 
     def cleanup(self, now: float | None = None) -> int:
         """刪掉過期或沒寫完的上傳;回傳刪了幾個。"""
@@ -164,13 +197,21 @@ class WorkspaceRegistry:
 
     # ---------- 整份文件模式 ----------
     def whole_files(self, ws: Workspace) -> list[str]:
-        """整份文件要附上的檔案:git 專案用 git ls-files,否則掃描;只留文字檔,排除機密檔與隱藏資料夾。"""
+        """整份文件要附上的檔案:設定清單裡的 git 專案用 git ls-files,其餘掃描;只留文字檔,排除機密檔與隱藏資料夾。
+
+        上傳的資料夾一律不跑 git:就算裡面有 .git,也是使用者給的,其中的設定(例如 fsmonitor)能執行指令。
+        """
         root = ws.path
-        if (root / ".git").exists():
-            r = subprocess.run(["git", "-c", "core.quotepath=off", "ls-files"], cwd=root,
-                               capture_output=True, text=True, encoding="utf-8")
-            names = r.stdout.splitlines()
-        else:
+        names = None
+        if ws.kind == "config" and (root / ".git").exists():
+            try:
+                r = subprocess.run(["git", "-c", "core.quotepath=off", "-c", "core.fsmonitor=false", "ls-files"],
+                                   cwd=root, capture_output=True, text=True, encoding="utf-8")
+                if r.returncode == 0:
+                    names = r.stdout.splitlines()
+            except FileNotFoundError:  # 沒裝 git 就改用掃描
+                names = None
+        if names is None:
             names = [p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()]
         out = []
         for name in sorted(names):
