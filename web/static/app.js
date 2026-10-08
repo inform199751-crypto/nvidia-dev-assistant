@@ -10,6 +10,7 @@ const MODEL_NAMES = {
 };
 const TOOL_LABEL = { read_file: "讀檔", search_code: "搜尋", run_tests: "跑測試", propose_patch: "提修正" };
 const STATUS_TEXT = { failed: "失敗", cancelled: "已停止", interrupted: "已中斷(伺服器曾重開)" };
+const STOP_HINT = "已要求停止:正在等模型回應的那一步回來後就會停。";
 const state = { workspaces: [], current: null, running: null, sending: false, streams: new Map(), views: [] };
 // 複製 git apply 指令前檢查路徑:檔名來自模型,含 $ ` " ; 等字元時貼到終端機會被當成指令執行
 const SAFE_SHELL_PATH = /^[\p{L}\p{N}_ .:\\\/-]+$/u;
@@ -345,6 +346,7 @@ function finishTurn(view, d) {
   if (state.running?.tid === view.turn.id) {
     state.running = null;
     setSending(false);
+    if ($("#hint").textContent === STOP_HINT) hint("");
   }
   loadHistory().catch(() => {});
 }
@@ -384,7 +386,7 @@ async function onSubmit(event) {
     const { cid, tid } = state.running;
     try {
       await api(`/api/conversations/${cid}/turns/${tid}/cancel`, { method: "POST" });
-      hint("已要求停止:正在等模型回應的那一步回來後就會停。");
+      hint(STOP_HINT);
     } catch (e) { hint(e.message, true); }
     return;
   }
