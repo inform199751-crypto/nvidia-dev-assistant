@@ -6,3 +6,4 @@ __pycache__/
 smoke_results.log
 output/
 vscode-extension/*.vsix
+deploy/auth.env

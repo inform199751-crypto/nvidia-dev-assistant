@@ -1,0 +1,13 @@
+# 建映像時不要送進去的東西:金鑰、虛擬環境、輸出、git 紀錄
+.env
+.env.*
+!.env.example
+deploy/auth.env
+.venv
+.git
+output
+**/.agent_patches
+**/__pycache__
+.pytest_cache
+smoke_results.log
+vscode-extension/*.vsix

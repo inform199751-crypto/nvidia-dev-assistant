@@ -215,3 +215,49 @@ class TokenQuota:
         finally:
             with self._lock:
                 self._usage[user].running -= 1
+
+
+class RedisTokenQuota:
+    """TokenQuota 的 Redis 版:API server 不只一台時,每人額度和同時請求數要放在共用的地方。
+
+    每人每天一個 key(INCRBY,兩天後過期);同時請求數一個 key(INCR / DECR,設過期時間:
+    伺服器當掉沒有 DECR 的話,最多卡一小時)。只用最基本的指令,換成其他相容 Redis 的服務也能用。
+    """
+
+    def __init__(self, client, daily_tokens: int, max_concurrent: int, prefix: str = "dev-assistant"):
+        self.r, self.daily_tokens, self.max_concurrent, self.prefix = client, daily_tokens, max_concurrent, prefix
+
+    def _day_key(self, user: str) -> str:
+        return f"{self.prefix}:tokens:{user}:{datetime.now(TAIPEI).date().isoformat()}"
+
+    def check(self, user: str, need: int) -> None:
+        used = int(self.r.get(self._day_key(user)) or 0)
+        if used + need > self.daily_tokens:
+            raise QuotaExceeded(f"{user} 今日額度剩 {self.daily_tokens - used} tokens,這次約需 {need}")
+
+    def charge(self, user: str, tokens: int) -> None:
+        if tokens:
+            key = self._day_key(user)
+            self.r.incrby(key, tokens)
+            self.r.expire(key, 2 * 86400)
+
+    @contextmanager
+    def slot(self, user: str):
+        key = f"{self.prefix}:running:{user}"
+        running = self.r.incr(key)
+        self.r.expire(key, 3600)
+        if running > self.max_concurrent:
+            self.r.decr(key)
+            raise QuotaExceeded(f"{user} 已有 {running - 1} 個請求在跑,請等前一個完成")
+        try:
+            yield
+        finally:
+            self.r.decr(key)
+
+
+def make_quota(daily_tokens: int, max_concurrent: int, redis_url: str | None = None):
+    """有 REDIS_URL 就用 Redis(多台伺服器共用額度),沒有就用記憶體版。"""
+    if not redis_url:
+        return TokenQuota(daily_tokens, max_concurrent)
+    import redis
+    return RedisTokenQuota(redis.Redis.from_url(redis_url, decode_responses=True), daily_tokens, max_concurrent)

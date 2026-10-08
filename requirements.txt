@@ -6,6 +6,7 @@ pyyaml==6.0.3
 python-dotenv==1.2.4
 pytest==9.1.1
 httpx==0.28.1             # 上網工具(web.py)
+redis==8.1.0              # 多人部署:REDIS_URL 有設才會用到(共用額度)
 # 讀辦公檔案(documents.py)
 pypdf==6.19.0
 python-docx==1.2.0

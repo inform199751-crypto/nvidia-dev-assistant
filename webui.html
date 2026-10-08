@@ -47,6 +47,7 @@
   }
   .side-btn:hover:not(:disabled) { background: var(--hover); }
   .side-btn:disabled { opacity: .45; }
+  .side-btn[hidden] { display: none; }
   .side-label { color: var(--faint); font-size: 12px; padding: 18px 10px 6px; }
   .status { padding: 4px 10px; color: var(--muted); overflow-wrap: anywhere; }
   .status b { color: var(--text); font-weight: 500; }
@@ -210,7 +211,7 @@
   </button>
   <div class="side-label">目前狀態</div>
   <div id="chips"></div>
-  <div class="side-foot">只在你的電腦上執行。<br>修改檔案、上網之前都會先問你。</div>
+  <div class="side-foot" id="side-foot">只在你的電腦上執行。<br>修改檔案、上網之前都會先問你。</div>
 </aside>
 <div class="scrim" id="scrim"></div>
 
@@ -260,7 +261,7 @@ function api(path, body) {
     method: body === undefined ? "GET" : "POST",
     headers: { "X-Token": TOKEN, "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
-  }).then(async (r) => ({ ok: r.ok, data: await r.json().catch(() => ({})) }));
+  }).then(async (r) => ({ ok: r.ok, status: r.status, data: await r.json().catch(() => ({})) }));
 }
 
 // ---------- 迷你 markdown(先跳脫 HTML,只轉常用語法) ----------
@@ -506,8 +507,13 @@ const handlers = {
         old.appendChild(el("div", "result", "已有更新的修改,請看下面"));
       }
     }
-    cardButtons(card, [["套用到工作區", e.passed ? "primary" : "", choose("apply")], ["先不要", "", choose("keep")],
-                       ["捨棄修改", "", choose("discard")]]);
+    const first = e.team  // 多人模式:共用的工作區不能直接改,下載 patch 回去自己套
+      ? ["下載 patch", e.passed ? "primary" : "", () => {
+          location.href = `/api/patch?token=${encodeURIComponent(TOKEN)}&i=${e.patch}`;
+          return false;  // 下載不改狀態,按鈕保持可以再按
+        }]
+      : ["套用到工作區", e.passed ? "primary" : "", choose("apply")];
+    cardButtons(card, [first, ["先不要", "", choose("keep")], ["捨棄修改", "", choose("discard")]]);
     cards["patch" + e.patch] = card;
     card.scrollIntoView({ block: "end", behavior: "smooth" });
   },
@@ -520,9 +526,16 @@ const handlers = {
   clear() { bot = null; tools.length = 0; showEmpty(); setBusy(false); loadState(); },
 };
 
+let checkedAt = 0;
 function connect() {
   const es = new EventSource(`/api/events?token=${encodeURIComponent(TOKEN)}`);
   es.onmessage = (m) => { const e = JSON.parse(m.data); (handlers[e.kind] || (() => {}))(e); };
+  // 伺服器重啟後 token 會換,舊頁面會一直用舊 token 重連、畫面默默卡住:確認是 403 就重新載入拿新的
+  es.onerror = async () => {
+    if (Date.now() - checkedAt < 5000) return;
+    checkedAt = Date.now();
+    try { if ((await api("/api/state")).status === 403) location.reload(); } catch (e) { /* 伺服器還沒起來,等下次 */ }
+  };
 }
 
 async function loadState() {
@@ -533,6 +546,9 @@ async function loadState() {
     const d = box.appendChild(el("div", "status")); d.title = title || value;
     d.append(label + " "); d.appendChild(el("b", "", value));
   };
+  if (r.data.user) row("登入", r.data.user);
+  $("remember").hidden = !!r.data.team;  // 多人模式的專案規則由管理者維護
+  if (r.data.team) $("side-foot").textContent = "團隊共用的小助理。修改只放在你自己的草稿,下載 patch 回去自己套用;上網前會先問你。";
   row("工作區", r.data.workspace.split(/[\\/]/).pop(), r.data.workspace);
   row("", r.data.status);
   row("專案規則", r.data.instructions ? "已讀取 ASSISTANT.md" : "沒有 ASSISTANT.md");

@@ -1,0 +1,66 @@
+# 小助理多人部署(範例)。使用前先看 deploy/README.md。
+#   docker compose -f deploy/docker-compose.yml up -d --build
+# 使用者只能從登入代理(auth,port 4180)進來;小助理本身不對外開 port,身分標頭才不會被偽造。
+services:
+  assistant:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file:
+      - path: ../.env          # NVIDIA_API_KEY;換地端 NIM 時設 LLM_BACKEND=nim
+        required: false
+    environment:
+      REDIS_URL: redis://redis:6379/0           # 每人額度記在 Redis
+      AGENT_WORKSPACE: /workspace
+      AGENT_OUTPUT: /data/output
+    command: ["python", "webui.py", "--team", "--port", "8765",
+              "--user-header", "X-Forwarded-Email", "--max-concurrent", "4"]
+    volumes:
+      - ${REPO_PATH:-../demo_workspace}:/workspace:ro   # 要分析的程式碼(唯讀,大家共用)
+      - assistant-data:/data                            # 每人的 patch、輸出的文件
+      # 要讓 run_tests / run_command 能用(沙箱)才打開下面兩行,並在 environment 加 TMPDIR(見 README):
+      # docker.sock 等同主機的 root 權限,沙箱複本的路徑在主機和容器裡也要一樣
+      # - /var/run/docker.sock:/var/run/docker.sock
+      # - /srv/dev-assistant/sandbox:/srv/dev-assistant/sandbox
+    expose: ["8765"]
+    depends_on: [redis]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4.1-alpine
+    command: ["redis-server", "--save", "60", "1"]     # 額度每分鐘存一次,重啟不會歸零
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  auth:
+    # 公司 SSO(OIDC)登入代理;設定放 deploy/auth.env(從 auth.env.example 複製)
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+    env_file:
+      - path: auth.env
+        required: false
+    environment:
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      OAUTH2_PROXY_UPSTREAMS: http://assistant:8765/
+      OAUTH2_PROXY_PASS_USER_HEADERS: "true"           # 把 X-Forwarded-Email 傳給小助理
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+      OAUTH2_PROXY_FLUSH_INTERVAL: 100ms               # 回答是串流(SSE),要馬上轉送
+    ports: ["4180:4180"]
+    depends_on: [assistant]
+    restart: unless-stopped
+
+  # 地端 NIM(要 GPU 主機和 NGC 金鑰;模型名稱、GPU 數量依 NVIDIA 文件調整)。
+  # 開了之後 .env 設 LLM_BACKEND=nim,models.yaml 的 nim_base_url 指到這裡。
+  # nim-nemotron-super:
+  #   image: nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b:latest
+  #   environment:
+  #     NGC_API_KEY: ${NGC_API_KEY}
+  #     NIM_MAX_MODEL_LEN: "262144"
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices: [{ driver: nvidia, count: 2, capabilities: [gpu] }]
+
+volumes:
+  assistant-data:
+  redis-data:

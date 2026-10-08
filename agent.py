@@ -20,7 +20,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.runnables import Runnable
 
 from llm_registry import ModelRegistry
-from token_guard import (TAIPEI, TokenQuota, compact_history, estimate_tokens, message_tokens,
+from token_guard import (TAIPEI, TokenQuota, compact_history, estimate_tokens, make_quota, message_tokens,
                          outline, strip_stale_reasoning, strip_think_text, tool_tokens, truncate_middle)
 import documents
 import tools as toolbox
@@ -475,7 +475,7 @@ def confirm_action(action: str, detail: str) -> bool:
 
 def _offer_apply(patch: Path, passed: bool) -> str:
     """問要不要把 patch 套用到工作區;套用了就回傳要告訴模型的通知(它讀過的檔案已經變了)。"""
-    name = patch.relative_to(toolbox.WORKSPACE).as_posix()
+    name = toolbox.patch_label(patch)
     warning = "" if passed else "(注意:套用後沙箱測試沒有通過)"
     files = "、".join(sorted(toolbox.DRAFT))
     if not ask_yes_no(f"\n要把草稿的修改({files})套用到工作區嗎?{warning}"):
@@ -586,7 +586,8 @@ def prepare() -> tuple[ModelRegistry, TokenQuota, list, bool]:
                       output if output.is_absolute() else here / output)
     logging.getLogger("httpx").setLevel(logging.WARNING)  # 不然每次上網都多印一行 HTTP Request
     registry = ModelRegistry.from_yaml()
-    quota = TokenQuota(registry.limits["daily_tokens_per_user"], registry.limits["max_concurrent_per_user"])
+    quota = make_quota(registry.limits["daily_tokens_per_user"], registry.limits["max_concurrent_per_user"],
+                       os.getenv("REDIS_URL"))  # 多台伺服器時用 Redis 共用額度
     allow_web = os.getenv("ALLOW_WEB", "").strip().lower() in ("1", "true", "yes")
     tools = ALL_TOOLS + (web.web_tools() if allow_web else [])  # 上網預設關閉
     return registry, quota, tools, allow_web

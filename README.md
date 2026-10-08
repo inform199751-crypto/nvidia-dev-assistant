@@ -4,7 +4,7 @@
 改走 NVIDIA 生態系:開發期接 API Catalog(build.nvidia.com),正式環境換成地端 NIM 容器,**程式碼不用改**。
 
 重點不在「接上了模型」,而在:**依任務與 token 數動態切換模型、控制 token 與顯存、讓 agent 只能在沙箱裡動手**,
-而且每個設計都用真模型實測過。實測與審查抓到 23 個問題,見下方。
+而且每個設計都用真模型實測過。實測與審查抓到 25 個問題,見下方。
 
 ## 架構
 
@@ -34,6 +34,7 @@ flowchart LR
 | `tools.py` | 列檔 / 讀檔 / 搜尋 / git 紀錄 / 沙箱測試與指令 / 提 patch / 存文件,含機密檔封鎖 |
 | `documents.py` | PDF / Word / Excel 轉文字,給 `read_document` 和 `@附檔` 用 |
 | `webui.py` + `webui.html` | 網頁介面:標準函式庫的 HTTP 伺服器 + Server-Sent Events,只聽 127.0.0.1,API 要帶啟動時產生的 token |
+| `deploy/` | 多人部署:Dockerfile + docker-compose(小助理 `--team` + Redis + oauth2-proxy),說明見 `deploy/README.md` |
 | `vscode-extension/` | VS Code 外掛:編輯器旁邊打開小助理、右鍵「問選取的程式碼」;`build_vsix.py` 打包成 .vsix(不需要 Node) |
 | `web.py` | 上網搜尋(Tavily)與讀網頁;`.env` 設 `ALLOW_WEB=true` 才啟用,每次上網都先問使用者 |
 | `smoke_test.py` | 對 catalog 上每個模型做冒煙測試(回應、思考開關、tool calling) |
@@ -45,9 +46,9 @@ flowchart LR
 | 模型冒煙測試 | 三顆模型 × 回應 / 開思考 / 關思考 / tool calling | 全過;Super 每次 0.4–2.6 秒,DeepSeek 18–27 秒 |
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
-| 離線測試 | 假模型,不需金鑰 | 73 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 76 個全過 |
 
-## 實測與審查抓到的 23 個問題
+## 實測與審查抓到的 25 個問題
 
 | # | 問題 | 怎麼發現 | 處理 |
 |---|---|---|---|
@@ -74,6 +75,8 @@ flowchart LR
 | 21 | 串流模式下套件只把工具呼叫放在 `tool_call_chunks`,送回伺服器時 AI 訊息沒有 tool call,下一步 ToolMessage 對不到 | 加串流前讀套件原始碼 | 串流結束後用 `as_complete_message` 補回 `additional_kwargs["tool_calls"]`;真模型 3 步工具呼叫正常 |
 | 22 | 照計畫一步一步改時,每個 patch 各自對原始檔案驗證,模型讀檔一直看到舊內容,原地打轉到步數上限 | 規劃模式實測(10/9) | 改成「草稿」:修改累積,讀檔 / 搜尋 / 沙箱都看草稿版本,patch 是累積的;使用者套用或捨棄才結束 |
 | 23 | 執行計畫時模型單獨呼叫 update_plan,15 步裡約 6 步只在更新進度,做到一半就停(13.2 萬 tokens) | 規劃模式實測(10/9) | 要求跟下一個動作一起呼叫、計畫限 3–6 步、執行模式上限 25 步;同一題重跑 12 步全部完成(9.4 萬 tokens) |
+| 24 | 草稿、patch 紀錄、上網確認都是全程式共用的變數:多人同時用會看到別人的草稿,上網確認也會跳到別人畫面 | 做多人模式前審查 | 改成每人一個 `Workbench`(ContextVar),每個使用者的執行緒各自設定;測試確認兩人互相看不到 |
+| 25 | 容器裡時區是 UTC,patch 檔名的時間差 8 小時;唯讀掛進來的 repo 擁有者不同,git 會拒絕(dubious ownership) | Docker 實測 | 映像設 `TZ=Asia/Taipei`(裝 tzdata)、`git config --system safe.directory '*'` |
 
 ## 執行
 
@@ -96,7 +99,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 ## 還沒做 / 限制
 
 - **地端 NIM 沒實際部署過**:需要 GPU 伺服器。Ultra 550B 要 8×B200/H200 等級,建議第一階段用 Super 120B(FP8 約 2×H100)。
-- 配額是記憶體版,多台 API server 要換 Redis;長任務(如整份文件 8 分鐘)應走背景佇列。
+- 多人部署(`deploy/`)已在本機 Docker 實測(兩個身分同時問、Redis 額度正確、唯讀工作區提 patch),但**還沒在公司 SSO 和 GPU 主機上實際跑過**;對話存在記憶體,重啟會清空。
 - 模型清單會汰換,上線前用 `ChatNVIDIA.get_available_models()` 或 `smoke_test.py` 再對一次。
 - `requirements.txt` 鎖在實測過的版本:程式依賴 langchain-nvidia-ai-endpoints 的內部行為,升版前先跑離線測試和 `smoke_test.py`。
 - 地端的 `nim_context_window`(Ultra / Super 備援 256K)是規劃值,部署時 `NIM_MAX_MODEL_LEN` 要設成一樣。

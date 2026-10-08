@@ -9,9 +9,11 @@ import subprocess
 import tempfile
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import TypedDict
+from typing import Callable, TypedDict
 
 from langchain_core.tools import tool
 
@@ -21,10 +23,54 @@ WORKSPACE = Path(os.getenv("AGENT_WORKSPACE", ".")).resolve()
 SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "dev-assistant-sandbox")  # sandbox/Dockerfile 建的(含 pytest)
 OUTPUT_DIR = Path(os.getenv("AGENT_OUTPUT", Path(__file__).with_name("output"))).resolve()  # save_document 存這裡
 MAX_READ_LINES = 400
-PATCHES: list[tuple[Path, bool]] = []  # 提出過的 patch(檔案, 沙箱測試是否通過);互動模式拿來問要不要套用
-# 小助理的草稿:工作區相對路徑 → 改過的完整內容。propose_patch 的修改疊在這裡,讀檔 / 搜尋 / 沙箱都看草稿版本;
-# 使用者套用(apply_patch)或捨棄(discard_draft)之前,真正的檔案都不會動
-DRAFT: dict[str, str] = {}
+
+
+@dataclass
+class Workbench:
+    """一個使用者(一段對話)的工作狀態。CLI 只有一個;多人網頁每人一個,彼此看不到對方的草稿。
+
+    draft:小助理的草稿,工作區相對路徑 → 改過的完整內容。propose_patch 的修改疊在這裡,讀檔 / 搜尋 / 沙箱都看草稿版本;
+          使用者套用(apply_patch)或捨棄(discard_draft)之前,真正的檔案都不會動。
+    patches:提出過的 patch(檔案, 沙箱測試是否通過),互動模式拿來問要不要套用。
+    patch_dir:patch 存哪裡;None = 工作區的 .agent_patches(多人模式工作區唯讀,改存輸出資料夾)。
+    confirm:上網前問使用者的函式;None = 用 web.CONFIRM。
+    """
+    draft: dict[str, str] = field(default_factory=dict)
+    patches: list[tuple[Path, bool]] = field(default_factory=list)
+    patch_dir: Path | None = None
+    confirm: Callable[[str, str], bool] | None = None
+
+
+_bench: ContextVar[Workbench] = ContextVar("workbench", default=Workbench())
+
+
+def bench() -> Workbench:
+    """目前這個執行緒在幫誰做事。沒設定就是預設的那一個(CLI、單人網頁)。"""
+    return _bench.get()
+
+
+@contextmanager
+def using(wb: Workbench):
+    """在這個區塊裡,工具都用 wb 的草稿 / patch(多人網頁:每個使用者的執行緒各自設定)。"""
+    token = _bench.set(wb)
+    try:
+        yield wb
+    finally:
+        _bench.reset(token)
+
+
+def __getattr__(name: str):
+    """tools.DRAFT / tools.PATCHES 讀的是目前使用者的(以前是模組變數,外面的程式照舊能用)。"""
+    if name == "DRAFT":
+        return bench().draft
+    if name == "PATCHES":
+        return bench().patches
+    raise AttributeError(name)
+
+
+def patch_label(p: Path) -> str:
+    """給人看的 patch 位置:在工作區裡就用相對路徑,不然用檔名。"""
+    return p.relative_to(WORKSPACE).as_posix() if p.is_relative_to(WORKSPACE) else p.name
 
 
 def configure(workspace: str | Path | None = None, sandbox_image: str | None = None,
@@ -66,8 +112,8 @@ def _rel(p: Path) -> str:
 
 def current_text(p: Path) -> str | None:
     """檔案「現在」的內容:草稿裡有就用草稿(小助理改過、還沒套用的版本),沒有就讀工作區;都沒有回傳 None。"""
-    if (rel := _rel(p)) in DRAFT:
-        return DRAFT[rel]
+    if (rel := _rel(p)) in (draft := bench().draft):
+        return draft[rel]
     return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else None
 
 
@@ -119,7 +165,7 @@ def list_files(glob: str = "*", max_entries: int = 200) -> str:
         if not _visible(f):
             continue
         rel = _rel(f)
-        mark = "  (草稿已修改)" if rel in DRAFT else ""
+        mark = "  (草稿已修改)" if rel in bench().draft else ""
         rows.append(f"{rel}/" if f.is_dir() else f"{rel}  ({f.stat().st_size:,} bytes){mark}")
         if len(rows) >= max_entries:
             return "\n".join(rows) + f"\n[已達 {max_entries} 筆上限,請把 glob 縮小]"
@@ -129,7 +175,7 @@ def list_files(glob: str = "*", max_entries: int = 200) -> str:
 
 def _draft_only(glob: str) -> list[str]:
     """草稿裡新增、工作區還沒有的檔案中,符合 glob 的。"""
-    return [rel for rel in DRAFT if not (WORKSPACE / rel).exists() and PurePosixPath(rel).full_match(glob)]
+    return [rel for rel in bench().draft if not (WORKSPACE / rel).exists() and PurePosixPath(rel).full_match(glob)]
 
 
 @tool
@@ -164,7 +210,7 @@ def _sandbox_copy():
     with tempfile.TemporaryDirectory(prefix="agent_sandbox_") as tmp:
         copy = Path(tmp) / "ws"
         shutil.copytree(WORKSPACE, copy, ignore=_copy_ignore)
-        for rel, text in DRAFT.items():  # 草稿的修改也放進去:沙箱測的是小助理改過的版本
+        for rel, text in bench().draft.items():  # 草稿的修改也放進去:沙箱測的是小助理改過的版本
             target = copy / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(text.encode("utf-8"))
@@ -295,13 +341,14 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
         return "錯誤:這台機器沒有 git,無法驗證 patch"
     if not edits:
         return "錯誤:edits 是空的"
+    wb = bench()
     before: dict[str, str | None] = {}  # 這次改到的檔案,改之前(草稿或原始)的內容
     changed: dict[str, str] = {}        # 這次改到的檔案 → 改後
     for i, e in enumerate(edits, 1):
         p = _safe_path(e["path"])
         rel = _rel(p)
         if rel not in changed:
-            before[rel] = DRAFT[rel] if rel in DRAFT else _original(rel)
+            before[rel] = wb.draft[rel] if rel in wb.draft else _original(rel)
         current = changed.get(rel, before[rel])
         if current is None:
             if e["old_string"] or p.exists():
@@ -317,13 +364,13 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
         return "錯誤:old_string 和 new_string 一樣,沒有任何變更"
 
     # 新的草稿:改回跟原始一模一樣的檔案就拿掉。存檔的是「原始 → 草稿」的完整修改,使用者套用這一份就拿到全部
-    draft = {rel: text for rel, text in {**DRAFT, **changed}.items() if text != _original(rel)}
+    draft = {rel: text for rel, text in {**wb.draft, **changed}.items() if text != _original(rel)}
     diff = "".join(_unified_diff(rel, _original(rel), draft[rel]) for rel in sorted(draft))
     if not diff:
-        DRAFT.clear()
+        wb.draft.clear()
         return "這次的修改讓檔案回到原本的樣子,草稿已經清空,沒有要套用的修改。"
-    out_dir = WORKSPACE / ".agent_patches"
-    out_dir.mkdir(exist_ok=True)
+    out_dir = wb.patch_dir or WORKSPACE / ".agent_patches"
+    out_dir.mkdir(parents=True, exist_ok=True)
     first = sorted(draft)[0]
     stem = f"{datetime.now():%Y%m%d_%H%M%S}_{Path(first).name}" + (f"+{len(draft) - 1}" if len(draft) > 1 else "")
     patch_file, n = out_dir / f"{stem}.patch", 2
@@ -335,13 +382,13 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
     if r.returncode != 0:  # diff 是從原檔算出來的,照理一定套得上;套不上多半是編碼或換行的怪狀況
         patch_file.unlink()
         return f"錯誤:產生的 diff 套不上去:\n{r.stderr.strip()}"
-    DRAFT.clear()
-    DRAFT.update(draft)
+    wb.draft.clear()
+    wb.draft.update(draft)
 
     with _sandbox_copy() as copy:  # 複本 = 工作區 + 草稿,就是套用這份 patch 之後的樣子
         result = _run_sandbox(copy, test_target)
-    PATCHES.append((patch_file, result.startswith("exit code 0")))
-    saved = patch_file.relative_to(WORKSPACE).as_posix()
+    wb.patches.append((patch_file, result.startswith("exit code 0")))
+    saved = patch_label(patch_file)
     # 10/9 實測:模型以為 patch 會疊加,一步一步送;以前每個 patch 各自對原始檔案驗證,它一直看不到自己的修改
     return (f"已改在草稿上,存成 {saved}(包含草稿裡全部 {len(draft)} 個檔案的修改,等使用者確認後套用)。\n"
             f"這次的修改:\n```diff\n{step_diff}```\n改完後的測試結果:\n{result}\n"
@@ -389,21 +436,23 @@ WRITE_TOOLS = {"propose_patch", "save_document"}  # 規劃模式不給:只能調
 
 def apply_patch(patch_file: Path) -> str:
     """把 patch 真的套用到工作區,成功就清空草稿。只給人在互動模式確認後呼叫,不是給模型的工具。"""
-    if PATCHES and patch_file != PATCHES[-1][0]:  # 每個 patch 都是累積的,套舊的會丟掉後面的修改
+    wb = bench()
+    if wb.patches and patch_file != wb.patches[-1][0]:  # 每個 patch 都是累積的,套舊的會丟掉後面的修改
         return "這不是最新的修改;最新的那一份已經包含全部修改,請套用最新的"
     # 關掉換行轉換:patch 是照檔案實際的位元組產生的,autocrlf 會把整個檔案的換行都改掉
     r = subprocess.run(["git", "-c", "core.autocrlf=false", "apply", str(patch_file)], cwd=WORKSPACE,
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         return f"套用失敗(工作區可能已經改過):{r.stderr.strip()}"
-    DRAFT.clear()  # 草稿的內容已經是工作區的內容了
+    wb.draft.clear()  # 草稿的內容已經是工作區的內容了
     return f"已套用 {patch_file.name} 到工作區"
 
 
 def discard_draft() -> str:
     """捨棄草稿:小助理改過、還沒套用的內容全部丟掉(.patch 檔留著)。只給人呼叫。"""
-    n = len(DRAFT)
-    DRAFT.clear()
+    draft = bench().draft
+    n = len(draft)
+    draft.clear()
     return f"已捨棄草稿裡 {n} 個檔案的修改(.patch 檔還留著)" if n else "草稿是空的,沒有要捨棄的修改"
 
 

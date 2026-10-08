@@ -16,7 +16,10 @@ import secrets
 import socket
 import threading
 import time
+import re
 import webbrowser
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, field
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -115,10 +118,15 @@ document.getElementById("f").onsubmit = async (e) => {
 class Hub:
     """一段對話的狀態 + 事件紀錄。agent 在背景執行緒跑,事件記下來給瀏覽器(重新整理時從頭重播這段對話)。"""
 
-    def __init__(self, new_session: Callable[[Callable], agent.AgentSession], status: str = "", model: str = ""):
+    def __init__(self, new_session: Callable[[Callable], agent.AgentSession], status: str = "", model: str = "",
+                 team: bool = False, gate: Gate | None = None, patch_dir: Path | None = None):
         self.new_session = new_session
         self.status = status
         self.model = model  # 頁面上方顯示的模型名稱
+        # team:多人共用伺服器。工作區是共用的(唯讀),所以不能套用修改、不能改 ASSISTANT.md,改成下載 patch
+        self.team = team
+        self.gate = gate  # 全部使用者共用的同時執行上限(保護 GPU);None = 不限
+        self.bench = toolbox.Workbench(patch_dir=patch_dir, confirm=self.confirm)  # 這個人自己的草稿 / patch
         self.cond = threading.Condition()
         self.events: list[dict] = []
         self.view_start = 0  # 最近一次「新對話」之後的第一個事件
@@ -159,18 +167,19 @@ class Hub:
         return self.ask(agent.EXECUTE_TASK, "execute", shown="照計畫執行") if go else True
 
     def _run(self, text: str, mode: str = "normal") -> None:
-        before, planned = len(toolbox.PATCHES), False
+        patches = self.bench.patches
+        before, planned = len(patches), False
         try:
-            r = self.session.ask(self.note + text, agent.file_mentions(text), mode)
+            with self.gate.turn(self.publish) if self.gate else nullcontext(), toolbox.using(self.bench):
+                r = self.session.ask(self.note + text, agent.file_mentions(text), mode)
             self.note = ""
             self.publish("done", {"role": r.role, "steps": r.steps, "tokens": r.tokens_used,
                                   "total": self.session.tokens_used, "answer": r.answer})
             planned = mode == "plan"
-            if len(toolbox.PATCHES) > before:  # 這一輪提了 patch:問要不要套用(沒通過測試也給看,但會警告)
-                index = len(toolbox.PATCHES) - 1
-                patch, passed = toolbox.PATCHES[index]
-                self.publish("offer_apply", {"patch": index, "passed": passed,
-                                             "name": patch.relative_to(toolbox.WORKSPACE).as_posix(),
+            if len(patches) > before:  # 這一輪提了 patch:問要不要套用(沒通過測試也給看,但會警告)
+                patch, passed = patches[-1]
+                self.publish("offer_apply", {"patch": len(patches) - 1, "passed": passed, "team": self.team,
+                                             "name": toolbox.patch_label(patch),
                                              "diff": patch.read_text(encoding="utf-8")[:MAX_DIFF_CHARS]})
         except Exception as e:  # 額度用完、模型全掛:這輪已經退掉,對話還能繼續
             self.publish("error", {"text": f"{type(e).__name__}: {e}"})
@@ -186,8 +195,7 @@ class Hub:
             if self.busy:
                 return False
             self.session, self.note = self.new_session(self.publish), ""
-        if toolbox.DRAFT:  # 新對話不記得草稿,留著會混淆
-            toolbox.discard_draft()
+        self.bench.draft.clear()  # 新對話不記得草稿,留著會混淆
         self.publish("clear")
         with self.cond:
             self.view_start = len(self.events)
@@ -206,10 +214,13 @@ class Hub:
             with self.cond:
                 self.busy = False
 
-    def remember(self, rule: str) -> None:
+    def remember(self, rule: str) -> str:
+        if self.team:
+            return "多人模式的專案規則由管理者維護(工作區的 ASSISTANT.md),不能從這裡改"
         path = agent.remember(rule)
         self.session.refresh_system_prompt()
         self.publish("notice", {"text": f"已記住,寫進 {path.name}:{rule}"})
+        return ""
 
     # ---------- 需要使用者確認的動作 ----------
 
@@ -245,25 +256,84 @@ class Hub:
         with self.cond:
             if self.busy:
                 return "小助理還在回答,等這一輪結束再處理"
-        if not 0 <= index < len(toolbox.PATCHES):
+        if not 0 <= index < len(self.bench.patches):
             return "找不到這個 patch"
-        patch, _ = toolbox.PATCHES[index]
-        name = patch.relative_to(toolbox.WORKSPACE).as_posix()
-        if action == "apply":
-            result = toolbox.apply_patch(patch)
-            if result.startswith("已套用"):
-                self.note += f"<note>使用者已把 {name} 套用到工作區,相關檔案內容已經改變,需要時請重讀。</note>\n"
-        elif action == "discard":
-            result = toolbox.discard_draft()
-            self.note += "<note>使用者已捨棄你草稿裡的所有修改,檔案回到原本的內容。</note>\n"
-        else:
-            result = "沒有套用。草稿留著,可以繼續請小助理改,之後再套用。"
+        patch, _ = self.bench.patches[index]
+        name = toolbox.patch_label(patch)
+        if action == "apply" and self.team:
+            return "多人模式不能直接改共用的工作區,請下載 patch 自己套用"
+        with toolbox.using(self.bench):
+            if action == "apply":
+                result = toolbox.apply_patch(patch)
+                if result.startswith("已套用"):
+                    self.note += f"<note>使用者已把 {name} 套用到工作區,相關檔案內容已經改變,需要時請重讀。</note>\n"
+            elif action == "discard":
+                result = toolbox.discard_draft()
+                self.note += "<note>使用者已捨棄你草稿裡的所有修改,檔案回到原本的內容。</note>\n"
+            else:
+                result = "沒有套用。草稿留著,可以繼續請小助理改,之後再套用。"
         self.publish("applied", {"patch": index, "text": result})
         return result
 
+    def patch_file(self, index: int) -> Path | None:
+        return self.bench.patches[index][0] if 0 <= index < len(self.bench.patches) else None
 
-def make_handler(hub: Hub, token: str, port: int, lan: LanAccess | None = None) -> type[BaseHTTPRequestHandler]:
+
+class Gate:
+    """全部使用者共用的同時執行上限:GPU 一次只能服務這麼多人,其他人排隊(畫面上會顯示排第幾)。"""
+
+    def __init__(self, limit: int):
+        self.sem = threading.BoundedSemaphore(limit)
+        self.lock = threading.Lock()
+        self.waiting = 0
+
+    @contextmanager
+    def turn(self, publish: Callable):
+        if not self.sem.acquire(blocking=False):
+            with self.lock:
+                self.waiting += 1
+                ahead = self.waiting
+            publish("notice", {"text": f"使用的人比較多,排隊中(前面約 {ahead} 位)…"})
+            self.sem.acquire()
+            with self.lock:
+                self.waiting -= 1
+        try:
+            yield
+        finally:
+            self.sem.release()
+
+
+class Hubs:
+    """每個使用者一個 Hub(各自的對話、草稿、確認、額度)。單人模式所有請求都是同一個。"""
+
+    def __init__(self, make: Callable[[str], Hub]):
+        self.make = make
+        self.lock = threading.Lock()
+        self.hubs: dict[str, Hub] = {}
+
+    def get(self, user: str) -> Hub:
+        with self.lock:
+            if user not in self.hubs:
+                self.hubs[user] = self.make(user)
+            return self.hubs[user]
+
+
+@dataclass
+class TeamAccess:
+    """多人模式:使用者身分由前面的登入代理(公司 SSO / oauth2-proxy)放進標頭,伺服器只認這個標頭。
+    一定要讓使用者只能經過代理連進來(容器不對外開 port),不然標頭可以自己偽造。"""
+    user_header: str = "X-Forwarded-Email"
+    allowed_hosts: set[str] = field(default_factory=set)  # 代理對外的網址(Host 標頭);空的 = 不檢查
+
+
+def make_handler(hubs: Hubs | Hub, token: str, port: int, lan: LanAccess | None = None,
+                 team: TeamAccess | None = None) -> type[BaseHTTPRequestHandler]:
+    if isinstance(hubs, Hub):  # 單人:不管誰連進來都是同一段對話
+        single = hubs
+        hubs = Hubs(lambda user: single)
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"} | {f"{ip}:{port}" for ip in (lan.ips if lan else [])}
+    if team:
+        allowed_hosts |= team.allowed_hosts
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args) -> None:  # 安靜一點,不要每個請求都印
@@ -283,7 +353,7 @@ def make_handler(hub: Hub, token: str, port: int, lan: LanAccess | None = None) 
             self._send(code, json.dumps(obj, ensure_ascii=False).encode(), "application/json; charset=utf-8", headers)
 
         def _host_ok(self) -> bool:
-            if self.headers.get("Host") in allowed_hosts:
+            if (team and not team.allowed_hosts) or self.headers.get("Host") in allowed_hosts:
                 return True
             self._json(403, {"error": "只接受本機連線"})
             return False
@@ -291,8 +361,18 @@ def make_handler(hub: Hub, token: str, port: int, lan: LanAccess | None = None) 
         def _local(self) -> bool:
             return self.client_address[0] in LOCAL_ADDRS
 
+        def _user(self) -> str | None:
+            if not team:
+                return "local"
+            return self.headers.get(team.user_header, "").strip() or None
+
+        def _hub(self) -> Hub:
+            return hubs.get(self._user())
+
         def _signed_in(self) -> bool:
-            """這台電腦自己連的直接過;手機等其他裝置要先用 PIN 登入(cookie)。"""
+            """多人模式看登入代理給的身分;單人模式這台電腦自己連的直接過,手機等其他裝置要先用 PIN 登入(cookie)。"""
+            if team:
+                return self._user() is not None
             if self._local():
                 return True
             morsel = SimpleCookie(self.headers.get("Cookie", "")).get(COOKIE)
@@ -311,23 +391,34 @@ def make_handler(hub: Hub, token: str, port: int, lan: LanAccess | None = None) 
             if not self._host_ok():
                 return
             url = urlsplit(self.path)
+            qs = parse_qs(url.query)
             if url.path == "/":
+                if team and not self._signed_in():
+                    return self._json(401, {"error": f"沒有登入身分(登入代理沒有送 {team.user_header})"})
                 if not self._signed_in():  # 不給頁面,就拿不到 token
                     return self._send(200, LOGIN_PAGE.encode(), "text/html; charset=utf-8")
                 page = PAGE.read_text(encoding="utf-8").replace("__TOKEN__", token)
                 self._send(200, page.encode(), "text/html; charset=utf-8")
             elif url.path == "/api/state":
                 if self._token_ok(self.headers.get("X-Token")):
+                    hub = self._hub()
                     state = {"workspace": str(toolbox.WORKSPACE), "status": hub.status, "busy": hub.busy,
-                             "model": hub.model, "draft": sorted(toolbox.DRAFT),
+                             "model": hub.model, "draft": sorted(hub.bench.draft), "team": hub.team,
+                             "user": self._user() if team else "",
                              "instructions": (toolbox.WORKSPACE / agent.INSTRUCTIONS_FILE).is_file()}
                     if lan and self._local():  # 手機連線方式只給這台電腦看
                         state["lan"] = {"urls": [f"http://{ip}:{port}" for ip in lan.ips], "pin": lan.pin}
                     self._json(200, state)
             elif url.path == "/api/events":
-                qs = parse_qs(url.query)
                 if self._token_ok((qs.get("token") or [None])[0]):  # EventSource 不能帶標頭,token 放網址
-                    self._stream(int(self.headers.get("Last-Event-ID") or 0))
+                    self._stream(self._hub(), int(self.headers.get("Last-Event-ID") or 0))
+            elif url.path == "/api/patch":  # 下載 patch(多人模式不能直接套用,自己下載回去套)
+                if self._token_ok((qs.get("token") or [None])[0]):
+                    p = self._hub().patch_file(int((qs.get("i") or ["-1"])[0]))
+                    if not p:
+                        return self._json(404, {"error": "找不到這個 patch"})
+                    self._send(200, p.read_bytes(), "text/x-diff; charset=utf-8",
+                               {"Content-Disposition": f'attachment; filename="{p.name}"'})
             else:
                 self._json(404, {"error": "沒有這個頁面"})
 
@@ -345,7 +436,7 @@ def make_handler(hub: Hub, token: str, port: int, lan: LanAccess | None = None) 
                 return self._json(403, {"error": "PIN 不對"})
             self._json(200, {}, {"Set-Cookie": f"{COOKIE}={sid}; HttpOnly; SameSite=Strict; Path=/"})
 
-        def _stream(self, since: int) -> None:
+        def _stream(self, hub: Hub, since: int) -> None:
             """Server-Sent Events:有新事件就送,沒有就每 15 秒送一次 ping 保持連線。"""
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -382,6 +473,7 @@ def make_handler(hub: Hub, token: str, port: int, lan: LanAccess | None = None) 
             except json.JSONDecodeError:
                 return self._json(400, {"error": "JSON 格式錯誤"})
             path = urlsplit(self.path).path
+            hub = self._hub()
             if path == "/api/ask":
                 text = str(body.get("text", "")).strip()
                 if not text:
@@ -406,21 +498,21 @@ def make_handler(hub: Hub, token: str, port: int, lan: LanAccess | None = None) 
                 rule = " ".join(str(body.get("rule", "")).split())
                 if not rule:
                     return self._json(400, {"error": "規則是空的"})
-                hub.remember(rule)
-                self._json(200, {})
+                msg = hub.remember(rule)
+                self._json(403 if msg else 200, {"error": msg} if msg else {})
             else:
                 self._json(404, {"error": "沒有這個 API"})
 
     return Handler
 
 
-def serve(hub: Hub, port: int = 8765, token: str | None = None, lan: LanAccess | None = None,
-          host: str = "127.0.0.1") -> ThreadingHTTPServer:
+def serve(hubs: Hubs | Hub, port: int = 8765, token: str | None = None, lan: LanAccess | None = None,
+          host: str = "127.0.0.1", team: TeamAccess | None = None) -> ThreadingHTTPServer:
     """建立伺服器(還沒開始跑);port=0 會自動挑一個空的(測試用)。"""
     token = token or secrets.token_urlsafe(24)
-    server = ThreadingHTTPServer((host, port), make_handler(hub, token, port, lan))
+    server = ThreadingHTTPServer((host, port), make_handler(hubs, token, port, lan, team))
     if port == 0:  # 實際的 port 要等綁定後才知道,Host 檢查要用它
-        server.RequestHandlerClass = make_handler(hub, token, server.server_address[1], lan)
+        server.RequestHandlerClass = make_handler(hubs, token, server.server_address[1], lan, team)
     server.daemon_threads = True
     return server
 
@@ -433,21 +525,48 @@ def main() -> None:
     ap.add_argument("--token", help="指定 API token(VS Code 外掛用:它自己產生,才能直接送問題);不給就隨機產生")
     ap.add_argument("--role", help="強制指定模型角色:code(日常)/ code_deep(難題)/ long_context")
     ap.add_argument("--think", choices=["on", "off"], help="思考模式;不給就用伺服器預設")
+    team_args = ap.add_argument_group("多人模式(部署在伺服器、前面接公司登入代理;見 deploy/README.md)")
+    team_args.add_argument("--team", action="store_true", help="每人各自的對話 / 草稿 / 額度;工作區唯讀,改成下載 patch")
+    team_args.add_argument("--user-header", default="X-Forwarded-Email", help="登入代理放使用者身分的標頭")
+    team_args.add_argument("--allowed-host", action="append", default=[],
+                           help="登入代理對外的網址(Host 標頭,可重複);不給就不檢查 Host")
+    team_args.add_argument("--max-concurrent", type=int, default=4, help="全部使用者同時執行的上限,其他人排隊")
+    team_args.add_argument("--host", help="監聽位址(多人模式預設 0.0.0.0,單人預設 127.0.0.1)")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.WARNING, format="%(message)s")
     registry, quota, tools, allow_web = agent.prepare()
     thinking = {"on": True, "off": False}.get(args.think)
-    hub = Hub(lambda on_event: agent.AgentSession(registry, quota, role=args.role, thinking=thinking, tools=tools,
-                                                  on_event=on_event),
-              status=agent.web_status(allow_web),
-              model=registry.spec(args.role or registry.routing["default_role"]).model.split("/")[-1])
-    web.CONFIRM = hub.confirm  # 上網前在網頁上跳確認
+    status = agent.web_status(allow_web)
+    model = registry.spec(args.role or registry.routing["default_role"]).model.split("/")[-1]
+
+    def new_hub(user: str, **kw) -> Hub:
+        return Hub(lambda on_event: agent.AgentSession(registry, quota, user=user, role=args.role, thinking=thinking,
+                                                       tools=tools, on_event=on_event),
+                   status=status, model=model, **kw)
+
+    if args.team:
+        if args.lan:
+            raise SystemExit("--team 和 --lan 不能一起用")
+        gate = Gate(args.max_concurrent)
+        hubs: Hubs | Hub = Hubs(lambda user: new_hub(
+            user, team=True, gate=gate,  # patch 存在輸出資料夾,每人一個子資料夾(共用的工作區是唯讀的)
+            patch_dir=toolbox.OUTPUT_DIR / "patches" / re.sub(r"[^\w.@-]", "_", user)[:80]))
+        team = TeamAccess(args.user_header, set(args.allowed_host))
+    else:
+        hubs, team = new_hub("local"), None
+        web.CONFIRM = hubs.confirm  # 上網前在網頁上跳確認
     lan = LanAccess(lan_ips()) if args.lan else None
     if lan and not lan.ips:
         raise SystemExit("找不到這台電腦的區域網路位址,請確認有連上 Wi-Fi 或網路線")
-    server = serve(hub, args.port, token=args.token, lan=lan, host="0.0.0.0" if lan else "127.0.0.1")
+    host = args.host or ("0.0.0.0" if lan or team else "127.0.0.1")
+    server = serve(hubs, args.port, token=args.token, lan=lan, host=host, team=team)
     url = f"http://127.0.0.1:{args.port}/"
+    if team:
+        print(f"小助理多人模式:{host}:{args.port}  (工作區 {toolbox.WORKSPACE},身分標頭 {team.user_header},"
+              f"同時執行上限 {args.max_concurrent})")
+        server.serve_forever()
+        return
     print(f"小助理網頁介面:{url}  (工作區 {toolbox.WORKSPACE};按 Ctrl+C 結束)")
     if lan:
         print("\n手機連線(手機要連同一個 Wi-Fi):")

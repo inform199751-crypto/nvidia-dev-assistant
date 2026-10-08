@@ -95,9 +95,8 @@ def ai(content="", tool_calls=(), tokens=100, reasoning=None):
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(tools, "WORKSPACE", tmp_path)
-    monkeypatch.setattr(tools, "PATCHES", [])
-    monkeypatch.setattr(tools, "DRAFT", {})
-    return tmp_path
+    with tools.using(tools.Workbench()):  # 每個測試自己的草稿 / patch,不會互相影響
+        yield tmp_path
 
 
 # ---------- 路由 / 動態切換 ----------
@@ -1141,3 +1140,134 @@ def test_vscode_extension_package(tmp_path, monkeypatch):
     assert f'Id="{pkg["name"]}" Version="{pkg["version"]}" Publisher="{pkg["publisher"]}"' in manifest
     registered = set(re.findall(r'registerCommand\("([^"]+)"', (root / "extension.js").read_text(encoding="utf-8")))
     assert registered == {c["command"] for c in pkg["contributes"]["commands"]}
+
+
+def test_webui_team_mode(workspace, fake_sandbox, tmp_path_factory):
+    """多人模式:身分看登入代理的標頭;每人各自的對話與草稿;不能直接套用(共用工作區),改成下載 patch;規則不能改。"""
+    import threading
+    import httpx
+    import webui
+    (workspace / "calc.py").write_bytes(b"def add(a, b):\n    return a - b\n")
+    fix = {"edits": [{"path": "calc.py", "old_string": "a - b", "new_string": "a + b"}], "reason": "修加法",
+           "test_target": "."}
+    scripts = {"amy@corp": [ai(tool_calls=[{"name": "propose_patch", "args": fix, "id": "c1"}]), ai("修好了")],
+               "bob@corp": [ai("你好 Bob")]}
+    seen: dict[str, list] = {}
+    out = tmp_path_factory.mktemp("out")
+
+    def make(user):
+        reg, seen[user] = scripted_registry(scripts[user])
+        return webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), user=user, on_event=on_event),
+                         team=True, gate=webui.Gate(2), patch_dir=out / user)
+
+    server = webui.serve(webui.Hubs(make), 0, token="t0k", team=webui.TeamAccess("X-Forwarded-Email"))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    as_user = lambda u: {"X-Token": "t0k", "X-Forwarded-Email": u}  # noqa: E731
+
+    def events(user, kind):
+        got = []
+        with httpx.stream("GET", f"{base}/api/events?token=t0k", headers={"X-Forwarded-Email": user},
+                          timeout=10) as r:
+            for line in r.iter_lines():
+                if line.startswith("data: "):
+                    got.append(json.loads(line[6:]))
+                    if got[-1]["kind"] == kind:
+                        return got
+        raise AssertionError(got)
+
+    try:
+        assert httpx.get(base + "/").status_code == 401  # 沒經過登入代理
+        assert 'const TOKEN = "t0k"' in httpx.get(base + "/", headers={"X-Forwarded-Email": "amy@corp"}).text
+        assert httpx.post(base + "/api/ask", json={"text": "hi"}, headers={"X-Token": "t0k"}).status_code == 403
+        assert httpx.post(base + "/api/ask", json={"text": "修 add"}, headers=as_user("amy@corp")).status_code == 202
+        assert httpx.post(base + "/api/ask", json={"text": "嗨"}, headers=as_user("bob@corp")).status_code == 202
+        offer = events("amy@corp", "offer_apply")[-1]
+        bob = events("bob@corp", "done")
+        assert offer["team"] and [e["text"] for e in bob if e["kind"] == "user"] == ["嗨"]  # Bob 看不到 Amy 的對話
+        state = lambda u: httpx.get(base + "/api/state", headers=as_user(u)).json()  # noqa: E731
+        assert state("amy@corp")["draft"] == ["calc.py"] and state("bob@corp")["draft"] == []
+        assert state("amy@corp")["user"] == "amy@corp" and state("amy@corp")["team"] is True
+        applied = httpx.post(base + "/api/apply", json={"patch": offer["patch"], "action": "apply"},
+                             headers=as_user("amy@corp")).json()["text"]
+        assert "下載 patch" in applied and (workspace / "calc.py").read_bytes().endswith(b"a - b\n")  # 工作區沒動
+        dl = httpx.get(f"{base}/api/patch?token=t0k&i={offer['patch']}", headers={"X-Forwarded-Email": "amy@corp"})
+        assert dl.status_code == 200 and "+    return a + b" in dl.text and "attachment" in dl.headers["content-disposition"]
+        assert httpx.get(f"{base}/api/patch?token=t0k&i=0", headers={"X-Forwarded-Email": "bob@corp"}).status_code == 404
+        assert list((out / "amy@corp").glob("*.patch")) and not (workspace / ".agent_patches").exists()
+        assert httpx.post(base + "/api/remember", json={"rule": "x"}, headers=as_user("amy@corp")).status_code == 403
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_gate_queues_beyond_limit():
+    import threading
+    import webui
+    gate, notices, order = webui.Gate(1), [], []
+    release = threading.Event()
+
+    def first():
+        with gate.turn(lambda kind, data: notices.append(data["text"])):
+            order.append("first")
+            release.wait(5)
+
+    def second():
+        with gate.turn(lambda kind, data: notices.append(data["text"])):
+            order.append("second")
+
+    t1 = threading.Thread(target=first)
+    t1.start()
+    while not order:
+        pass
+    t2 = threading.Thread(target=second)
+    t2.start()
+    t2.join(0.3)
+    assert order == ["first"] and notices == ["使用的人比較多,排隊中(前面約 1 位)…"]  # 第二個在排隊
+    release.set()
+    t1.join(5)
+    t2.join(5)
+    assert order == ["first", "second"]
+
+
+class _FakeRedis:
+    """測試用:只實作 RedisTokenQuota 用到的指令。"""
+
+    def __init__(self):
+        self.data, self.ttl = {}, {}
+
+    def get(self, key):
+        return self.data.get(key)
+
+    def incrby(self, key, n):
+        self.data[key] = int(self.data.get(key, 0)) + n
+        return self.data[key]
+
+    def incr(self, key):
+        return self.incrby(key, 1)
+
+    def decr(self, key):
+        return self.incrby(key, -1)
+
+    def expire(self, key, seconds):
+        self.ttl[key] = seconds
+
+
+def test_redis_quota_matches_memory_quota():
+    """多台伺服器共用的 Redis 額度:每日額度、同時請求數、key 會過期(當機也不會永遠卡住)。"""
+    from token_guard import RedisTokenQuota, make_quota
+    r = _FakeRedis()
+    q = RedisTokenQuota(r, daily_tokens=1000, max_concurrent=1)
+    q.charge("amy", 900)
+    with pytest.raises(QuotaExceeded):
+        q.check("amy", 200)
+    q.check("bob", 200)
+    with q.slot("amy"):
+        with pytest.raises(QuotaExceeded):
+            with q.slot("amy"):
+                pass
+    with q.slot("amy"):  # 前一個結束(含失敗的那次)都有釋放
+        pass
+    assert r.data["dev-assistant:running:amy"] == 0
+    assert all(seconds > 0 for seconds in r.ttl.values()) and len(r.ttl) == 2
+    assert isinstance(make_quota(10, 1, None), TokenQuota)
