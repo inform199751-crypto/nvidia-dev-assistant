@@ -24,7 +24,7 @@ def build(tmp_path, script, executor=None):
     reg, seen = scripted_registry(script)
     mgr = ConversationManager(tmp_path / "conversations", workspaces, reg, TokenQuota(10**7, 2),
                               executor=executor or InlineExecutor())
-    return TestClient(create_app(mgr, workspaces, reg, poll_seconds=0.01)), seen
+    return TestClient(create_app(mgr, workspaces, reg, poll_seconds=0.01, allowed_hosts=("testserver",))), seen
 
 
 def sse(client, url, headers=None):
@@ -152,3 +152,22 @@ def test_index_and_static_files_served(tmp_path):
     for path in ["/static/app.js", "/static/style.css",
                  "/static/vendor/marked.min.js", "/static/vendor/purify.min.js"]:
         assert client.get(path).status_code == 200, path
+
+
+def test_index_sends_content_security_policy(tmp_path):
+    client, _ = build(tmp_path, [])
+    csp = client.get("/").headers["content-security-policy"]
+    assert "default-src 'self'" in csp and "media-src 'none'" in csp
+
+
+def test_cross_site_writes_rejected(tmp_path):
+    client, _ = build(tmp_path, [])
+    body = {"workspace": "demo", "question": "q", "mode": "fix"}
+    assert client.post("/api/conversations", json=body, headers={"origin": "https://evil.example"}).status_code == 403
+    assert client.post("/api/conversations", json=body, headers={"sec-fetch-site": "cross-site"}).status_code == 403
+    assert client.get("/api/workspaces", headers={"origin": "https://evil.example"}).status_code == 200
+
+
+def test_static_files_not_cached(tmp_path):
+    client, _ = build(tmp_path, [])
+    assert client.get("/static/app.js").headers["cache-control"] == "no-cache"
