@@ -80,6 +80,7 @@ def ai(content="", tool_calls=(), tokens=100, reasoning=None):
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(tools, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(tools, "PATCHES", [])
     return tmp_path
 
 
@@ -573,6 +574,26 @@ def test_chat_repl(workspace, monkeypatch, capsys):
     assert "/clear" in out and "第一題的答案" in out and "新對話的答案" in out
     assert "return a - b" in seen[0][1][1].content
     assert [type(m).__name__ for m in seen[1][1]] == ["SystemMessage", "HumanMessage"]
+
+
+def test_chat_asks_before_applying_patch(workspace, fake_sandbox, monkeypatch, capsys):
+    """修改通過沙箱測試後先問;直接 Enter 不動工作區,回答 y 才套用,下一輪會告訴模型檔案已經變了。"""
+    (workspace / "calc.py").write_bytes(b"def add(a, b):\n    return a - b\n")
+    fix = {"edits": [{"path": "calc.py", "old_string": "a - b", "new_string": "a + b"}],
+           "reason": "修加法", "test_target": "."}
+    reg, seen = scripted_registry([
+        ai(tool_calls=[{"name": "propose_patch", "args": fix, "id": "c1"}]), ai("修好了"),
+        ai(tool_calls=[{"name": "propose_patch", "args": fix, "id": "c2"}]), ai("再提一次"),
+        ai("知道檔案變了"),
+    ])
+    inputs = iter(["修 add", "", "再修一次", "y", "接下來呢", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+    chat(lambda: AgentSession(reg, TokenQuota(10**6, 2)), [])
+    out = capsys.readouterr().out
+    assert "沒有套用" in out and "已套用" in out
+    assert (workspace / "calc.py").read_bytes() == b"def add(a, b):\n    return a + b\n"
+    last_question = seen[-1][1][-1].content
+    assert "使用者已把" in last_question and "接下來呢" in last_question
 
 
 def test_tool_definitions_do_not_inflate_estimate(workspace, caplog):

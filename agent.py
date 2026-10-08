@@ -184,16 +184,42 @@ def run_agent(task: str, *, registry: ModelRegistry, quota: TokenQuota, user: st
 
 
 HELP = """直接輸入問題,Enter 送出。用 @路徑 附上工作區的檔案,例如:看一下 @calc.py 的 add
+  AI 提出的修改通過沙箱測試後,會問你要不要套用到工作區(預設不套用)。
+  /apply  套用最近一個 patch(一樣會先問你)
   /clear  開始新對話(清掉前面的內容)
   /help   顯示這段說明
   /exit   離開(也可以按 Ctrl+C)"""
 
 
+def ask_yes_no(question: str) -> bool:
+    """像 Claude Code 的確認提示:預設是「否」,要明確回答 y 才算同意。"""
+    try:
+        return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+
+
+def _offer_apply(patch: Path, passed: bool) -> str:
+    """問要不要把 patch 套用到工作區;套用了就回傳要告訴模型的通知(它讀過的檔案已經變了)。"""
+    name = patch.relative_to(toolbox.WORKSPACE).as_posix()
+    warning = "" if passed else "(注意:套用後沙箱測試沒有通過)"
+    if not ask_yes_no(f"\n要把 {name} 套用到工作區嗎?{warning}"):
+        print("沒有套用,patch 留著給你之後審核。")
+        return ""
+    result = toolbox.apply_patch(patch)
+    print(result)
+    if not result.startswith("已套用"):
+        return ""
+    return f"<note>使用者已把 {name} 套用到工作區,相關檔案內容已經改變,需要時請重讀。</note>\n"
+
+
 def chat(session_factory, first_files: list[str]) -> None:
-    """互動模式:像 Claude Code 一樣一直聊,前面說過的內容都記得。"""
+    """互動模式:像 Claude Code 一樣一直聊,前面說過的內容都記得;動到工作區之前一定先問。"""
     session = session_factory()
     print(f"對內研發助理 · 工作區 {toolbox.WORKSPACE} · 輸入 /help 看用法、/exit 離開")
     pending = list(first_files)  # -f 給的檔案附在第一個問題
+    note = ""  # 下一個問題要先告訴模型的事
     while True:
         try:
             text = input("\n> ").strip()
@@ -208,20 +234,33 @@ def chat(session_factory, first_files: list[str]) -> None:
             print(HELP)
             continue
         if text == "/clear":
-            session = session_factory()
+            session, note = session_factory(), ""
             print("已開始新對話。")
             continue
+        if text == "/apply":
+            if toolbox.PATCHES:
+                note += _offer_apply(*toolbox.PATCHES[-1])
+            else:
+                print("還沒有提出任何 patch。")
+            continue
+        before = len(toolbox.PATCHES)
         try:
-            r = session.ask(text, pending + [f for f in file_mentions(text) if f not in pending])
+            r = session.ask(note + text, pending + [f for f in file_mentions(text) if f not in pending])
         except KeyboardInterrupt:
             print("\n(已中斷這一輪,對話保留在上一輪結束的狀態)")
             continue
         except Exception as e:  # 額度用完、模型全掛:這輪退掉,對話還能繼續
             print(f"\n錯誤:{type(e).__name__}: {e}")
             continue
-        pending = []
+        pending, note = [], ""
         print(f"\n{r.answer}\n\n— {r.role} · {r.steps} 步 · {r.tokens_used:,} tokens"
               f"(這段對話累計 {session.tokens_used:,})")
+        if new := toolbox.PATCHES[before:]:
+            patch, passed = new[-1]
+            if passed:
+                note = _offer_apply(patch, passed)
+            else:
+                print("(最後一個 patch 的沙箱測試沒過,先不問要不要套用;仍要套用請輸入 /apply)")
 
 
 def main() -> None:

@@ -49,7 +49,8 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 - `_safe_path` 擋工作區外、機密檔(`.env*`、金鑰、憑證)、`.git/`;`list_files` / `search_code` 走 `_visible`,另外用 resolve 後的實際位置檢查(symlink / Windows junction)。
 - `run_tests` / `run_command` 測的永遠是**原始碼**:都經過 `_sandbox_copy()`(排除機密檔、大型目錄、指到外面的連結的暫存複本)→ `_docker()`(無網路、唯讀掛載、限資源、逾時 `docker kill`)。沒有 Docker 就回錯誤,絕不在主機上直接跑。沙箱映像裡沒有 git。
 - `git_log` / `git_blame` 在主機上跑唯讀的 git 指令,路徑一樣過 `_safe_path`。
-- `propose_patch(edits, reason, test_target)`:每筆 edit 是 `path` / `old_string` / `new_string`(old_string 必須唯一;不存在的路徑 + 空 old_string = 新增檔案)。diff 由 difflib 產生 → `git apply --check` → 套到暫存複本(`git -c core.autocrlf=false apply`)→ 沙箱跑測試 → 存到 `WORKSPACE/.agent_patches/`。**工作區原檔永遠不改**;每個 patch 都是單獨套在原始檔案上驗證,不會疊加。
+- `propose_patch(edits, reason, test_target)`:每筆 edit 是 `path` / `old_string` / `new_string`(old_string 必須唯一;不存在的路徑 + 空 old_string = 新增檔案)。diff 由 difflib 產生 → `git apply --check` → 套到暫存複本(`git -c core.autocrlf=false apply`)→ 沙箱跑測試 → 存到 `WORKSPACE/.agent_patches/`,並記進 `tools.PATCHES`。**模型的工具永遠不改工作區**;每個 patch 都是單獨套在原始檔案上驗證,不會疊加。
+- 唯一會改工作區的是 `tools.apply_patch()`,不是工具、模型叫不到:只有互動模式(`agent.chat`)在 patch 通過測試、使用者回答 y(或 `/apply`)之後才呼叫,下一輪問題前面會加 `<note>` 告訴模型檔案已經變了。
 
 **`--whole` 模式**:附檔全部內嵌、不綁工具、一次回答,交給路由決定要不要升級到 Ultra。給工具的話模型會分段重讀,每步重送全部內容。
 

@@ -18,6 +18,7 @@ from langchain_core.tools import tool
 WORKSPACE = Path(os.getenv("AGENT_WORKSPACE", ".")).resolve()
 SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "dev-assistant-sandbox")  # sandbox/Dockerfile 建的(含 pytest)
 MAX_READ_LINES = 400
+PATCHES: list[tuple[Path, bool]] = []  # 提出過的 patch(檔案, 沙箱測試是否通過);互動模式拿來問要不要套用
 
 
 def configure(workspace: str | Path | None = None, sandbox_image: str | None = None) -> None:
@@ -279,11 +280,22 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
         subprocess.run(["git", "-c", "core.autocrlf=false", "apply", str(patch_file)],
                        cwd=copy, check=True, capture_output=True)
         result = _run_sandbox(copy, test_target)
+    PATCHES.append((patch_file, result.startswith("exit code 0")))
     saved = patch_file.relative_to(WORKSPACE).as_posix()
     # 10/9 實測:模型先單獨修 bug、再單獨送新測試檔,以為會疊加,結果測試失敗多繞好幾步
     return (f"已存成 {saved},等工程師審核後套用。\n```diff\n{diff}```\n套用此 patch 後的測試結果:\n{result}\n"
             "<note>給你的內部提醒,不要轉述給使用者:每個 patch 都是單獨套在原始檔案上驗證,"
             "之前的 patch 不會一起套用;要調整就重送包含全部修改的 edits。</note>")
+
+
+def apply_patch(patch_file: Path) -> str:
+    """把 patch 真的套用到工作區。只給人在互動模式確認後呼叫,不是給模型的工具。"""
+    # 關掉換行轉換:patch 是照檔案實際的位元組產生的,autocrlf 會把整個檔案的換行都改掉
+    r = subprocess.run(["git", "-c", "core.autocrlf=false", "apply", str(patch_file)], cwd=WORKSPACE,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if r.returncode != 0:
+        return f"套用失敗(工作區可能已經改過):{r.stderr.strip()}"
+    return f"已套用 {patch_file.name} 到工作區"
 
 
 ALL_TOOLS = [list_files, read_file, search_code, git_log, git_blame, run_tests, run_command, propose_patch]
