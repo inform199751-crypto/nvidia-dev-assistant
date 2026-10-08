@@ -136,8 +136,9 @@ def make_tools(workspace: str | Path | None = None, sandbox_image: str | None = 
         out_dir = base / ".agent_patches"
         out_dir.mkdir(exist_ok=True)
         patch_file = out_dir / f"{datetime.now():%Y%m%d_%H%M%S}_{Path(path).name}.patch"
-        patch_file.write_text(f"# {reason}\n{unified_diff.rstrip()}\n", encoding="utf-8", newline="\n")
-        r = subprocess.run(["git", "apply", "--check", str(patch_file)],
+        # 只去掉結尾換行:diff 最後一行常是「只有一個空白」的空行 context,rstrip() 會把它刪掉,git 就判定 corrupt patch
+        patch_file.write_text(f"# {reason}\n{unified_diff.rstrip(chr(10))}\n", encoding="utf-8", newline="\n")
+        r = subprocess.run(["git", "apply", "--check", "--recount", str(patch_file)],  # --recount:模型常數錯 hunk 行數
                            cwd=base, capture_output=True, text=True)
         if r.returncode != 0:
             patch_file.unlink()
@@ -147,7 +148,7 @@ def make_tools(workspace: str | Path | None = None, sandbox_image: str | None = 
         with tempfile.TemporaryDirectory(prefix="agent_verify_") as tmp:
             copy = Path(tmp) / "ws"
             shutil.copytree(base, copy, ignore=_COPY_IGNORE)
-            subprocess.run(["git", "apply", str(patch_file)], cwd=copy, check=True, capture_output=True)
+            subprocess.run(["git", "apply", "--recount", str(patch_file)], cwd=copy, check=True, capture_output=True)
             result = _run_sandbox(copy, test_target, image=sandbox_image)
         saved = patch_file.relative_to(base).as_posix()
         return f"已存成 {saved},等工程師審核後套用。\n套用此 patch 後的測試結果:\n{result}"

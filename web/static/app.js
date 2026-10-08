@@ -293,7 +293,7 @@ function addPatchCard(conv, view, d) {
   const ws = workspaceById(conv.workspace);
   if (ws && ws.kind === "config" && d.patch_file) {
     if (SAFE_SHELL_PATH.test(ws.path) && SAFE_SHELL_PATH.test(d.patch_file)) {
-      const cmd = `git -C "${ws.path}" apply "${d.patch_file}"`;
+      const cmd = `git -C "${ws.path}" apply --recount "${d.patch_file}"`;
       actions.append(el("button", { type: "button", text: "複製 git apply 指令",
         onclick: (e) => copyText(cmd, e.currentTarget) }));
     } else {

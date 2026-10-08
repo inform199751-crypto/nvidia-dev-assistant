@@ -60,3 +60,26 @@ def test_fixed_toolset_blocks_secrets_and_escape(tmp_path):
 def test_safe_path_resolves_under_root(tmp_path):
     (tmp_path / "pkg").mkdir()
     assert tools.safe_path(tmp_path, "pkg/a.py") == (tmp_path / "pkg" / "a.py").resolve()
+
+
+CALC = "def add(a, b):\n    return a - b\n\n\ndef average(values):\n    return add(sum(values), 0) / len(values)\n"
+
+
+def test_propose_patch_keeps_trailing_blank_context_line(tmp_path, monkeypatch):
+    """模型的 diff 最後一行常是只有一個空白的空行 context;以前 rstrip() 把它刪掉,git 判定 corrupt patch(10/8 實測)。"""
+    (tmp_path / "calc.py").write_text(CALC, encoding="utf-8", newline="\n")
+    monkeypatch.setattr(tools, "_run_sandbox", lambda root, target, **kw: "exit code 0\n2 passed")
+    t = by_name(tools.make_tools(tmp_path))
+    diff = "--- a/calc.py\n+++ b/calc.py\n@@ -1,4 +1,4 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n \n "
+    out = t["propose_patch"].invoke({"path": "calc.py", "unified_diff": diff, "reason": "修加法", "test_target": "."})
+    assert out.startswith("已存成"), out
+
+
+def test_propose_patch_tolerates_miscounted_hunk_header(tmp_path, monkeypatch):
+    (tmp_path / "calc.py").write_text(CALC, encoding="utf-8", newline="\n")
+    monkeypatch.setattr(tools, "_run_sandbox", lambda root, target, **kw: "exit code 0\n2 passed")
+    t = by_name(tools.make_tools(tmp_path))
+    diff = "--- a/calc.py\n+++ b/calc.py\n@@ -1,9 +1,9 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n \n"  # 標頭寫 9 行,實際 4 行
+    out = t["propose_patch"].invoke({"path": "calc.py", "unified_diff": diff, "reason": "修加法", "test_target": "."})
+    assert out.startswith("已存成"), out
+    assert (tmp_path / "calc.py").read_text(encoding="utf-8") == CALC  # 原檔沒被改
