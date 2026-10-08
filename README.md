@@ -69,6 +69,24 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python -m pytest -q                 # 離線測試,不需金鑰
 ```
 
+## 網頁版
+
+```bash
+.venv/Scripts/python -m web                       # 在專案根目錄執行,打開 http://127.0.0.1:8765
+```
+
+- 類 ChatGPT / Claude 的對話介面:左側紀錄、中間對話串(可收合的「工作過程」即時顯示每一步)、底部輸入框、長文件開在右側欄;可以追問。
+- 可選資料夾寫在 `workspaces.yaml`;也可以上傳 zip 或檔案(20 MB / 2000 檔 / 單檔 2 MB 上限,24 小時後刪除;
+  `.env`、金鑰、`.git` 會被丟掉,路徑穿越與符號連結整包拒收)。
+- 對話與每一步的紀錄存在 `conversations/`,重新整理或伺服器重開都看得到;跑到一半被關掉的會標成「已中斷」。
+- 只聽本機 `127.0.0.1`、只接受本機網址,沒有登入;網頁不修改任何專案檔案,修正只存成 `.agent_patches/*.patch`,
+  頁面上提供 `git apply --recount` 指令讓工程師自己套用。
+
+2026-10-08 在瀏覽器用真模型實測(Nemotron 3 Super):demo 專案「找 bug → 追問」兩輪都在沙箱驗證通過
+(8 步 15.6 秒、5 步 22 秒),追問還自己找到 `average([])` 除以零;重新整理後完整還原、停止鍵在第 1 步後停下;
+客服專案整份文件模式預估 100 檔約 44.6 萬 tokens → Ultra。實測也抓到第 12 個問題:`propose_patch` 用 `rstrip()`
+把 diff 最後一行「只有空白」的 context 刪掉,模型給的正確修正被判 corrupt patch、白白浪費 3 步,已修正並加回歸測試。
+
 ## 還沒做 / 限制
 
 - **地端 NIM 沒實際部署過**:需要 GPU 伺服器。Ultra 550B 要 8×B200/H200 等級,建議第一階段用 Super 120B(FP8 約 2×H100)。
