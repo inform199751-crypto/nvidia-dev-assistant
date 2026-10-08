@@ -294,7 +294,7 @@ function addPatchCard(conv, view, d) {
   const ws = workspaceById(conv.workspace);
   if (ws && ws.kind === "config" && d.patch_file) {
     if (SAFE_SHELL_PATH.test(ws.path) && SAFE_SHELL_PATH.test(d.patch_file)) {
-      const cmd = `git -C "${ws.path}" apply --recount "${d.patch_file}"`;
+      const cmd = `git -C "${ws.path}" apply "${d.patch_file}"`;
       actions.append(el("button", { type: "button", text: "複製 git apply 指令",
         onclick: (e) => copyText(cmd, e.currentTarget) }));
     } else {
@@ -464,6 +464,10 @@ function closePanel() {
 async function init() {
   $("#new-chat").addEventListener("click", newChat);
   $("#composer").addEventListener("submit", onSubmit);
+  // 在「相關檔案」欄或模式選項上按 Enter 會觸發表單的隱式送出,執行中會被當成「停止」:一律擋掉
+  $("#composer").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.tagName === "INPUT") e.preventDefault();
+  });
   $("#question").addEventListener("keydown", (e) => {
     // isComposing / keyCode 229:注音、倉頡選字時按 Enter 是確認選字,不是送出(Safari 只看得到 229)
     if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.keyCode === 229) return;
