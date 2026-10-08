@@ -1,4 +1,4 @@
-# 對內研發助理 — NVIDIA NIM 多模型 Agent
+﻿# 對內研發助理 — NVIDIA NIM 多模型 Agent
 
 企業內部的程式碼助理(找 bug、提修正、寫技術文件)。考量程式碼隱私,不接雲端 Claude / GPT,
 改走 NVIDIA 生態系:開發期接 API Catalog(build.nvidia.com),正式環境換成地端 NIM 容器,**程式碼不用改**。
@@ -44,7 +44,7 @@ flowchart LR
 | 模型冒煙測試 | 三顆模型 × 回應 / 開思考 / 關思考 / tool calling | 全過;Super 每次 0.4–2.6 秒,DeepSeek 18–27 秒 |
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
-| 離線測試 | 假模型,不需金鑰 | 63 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 65 個全過 |
 
 ## 實測與審查抓到的 21 個問題
 

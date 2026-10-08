@@ -149,6 +149,24 @@ def remember(note: str) -> Path:
     return p
 
 
+SUMMARY_PROMPT = """You are compacting a long conversation between a user and an engineering assistant so the work can continue in a fresh context. Write a concise summary in Traditional Chinese (zh-TW) covering: the user's goals and requests; key findings with file paths and line numbers; decisions made; patches proposed (file names, whether tests passed, whether the user applied them); open questions and next steps. Keep code identifiers, paths and error messages verbatim. Do not invent anything that is not in the conversation. At most about 400 words."""
+
+
+def render_transcript(messages: list[BaseMessage]) -> str:
+    """對話轉成純文字給摘要用:工具輸出只留頭尾,推理不放。"""
+    out = []
+    for m in messages:
+        if isinstance(m, HumanMessage):
+            out.append(f"[使用者]\n{m.content}")
+        elif isinstance(m, AIMessage):
+            if text := strip_think_text(str(m.content)).strip():
+                out.append(f"[助理]\n{text}")
+            out += [f"[助理呼叫工具] {c['name']} {json.dumps(c['args'], ensure_ascii=False)[:500]}" for c in m.tool_calls]
+        elif isinstance(m, ToolMessage):
+            out.append(f"[工具結果]\n{truncate_middle(str(m.content), 600)}")
+    return "\n\n".join(out)
+
+
 def as_complete_message(msg: AIMessage) -> AIMessage:
     """把串流合併出來的訊息整理成可以送回伺服器的完整訊息。
 
@@ -223,8 +241,48 @@ class AgentSession:
     def sized(self) -> int:
         return int((message_tokens(self.messages) + self.overhead) * self.scale)
 
+    def compact(self) -> bool:
+        """把前面的對話整理成摘要,換掉原本的訊息(留系統提示 + 摘要)。沒有可整理的回傳 False。
+
+        compact_history 只能把舊工具輸出換成佔位字,對話一長還是會塞爆或被迫升級到 Ultra;
+        這裡請模型把重點(目標、發現、決定、提過的 patch、待辦)濃縮下來,像 Claude Code 的自動壓縮。
+        """
+        history = self.messages[1:]
+        if not any(isinstance(m, HumanMessage) for m in history):
+            return False
+        before = self.sized()
+        role = self.requested_role or self.registry.routing["default_role"]
+        spec = self.registry.spec(role)
+        transcript = truncate_middle(render_transcript(history), self.registry.budget(role) - 2000)
+        prompt = [SystemMessage(SUMMARY_PROMPT), HumanMessage(transcript)]
+        self.quota.check(self.user, message_tokens(prompt) + spec.max_output)
+        ai = self.registry.chat(role, thinking=False).invoke(prompt)  # 摘要不需要思考,省 token
+        tokens = (ai.usage_metadata or {}).get("total_tokens", 0)
+        self.tokens_used += tokens
+        self.quota.charge(self.user, tokens)
+        summary = strip_think_text(str(ai.content)).strip()
+        if not summary:
+            raise RuntimeError("模型沒有回傳摘要")
+        self.messages = [self.messages[0],  # 用「使用者給摘要 → 助理確認」維持一問一答的順序
+                         HumanMessage(f"<conversation_summary>\n(前面的對話太長,以下是整理過的摘要)\n{summary}\n"
+                                      "</conversation_summary>"),
+                         AIMessage("好,我已經掌握前面的內容,可以繼續。")]
+        self._notice("已把前面的對話整理成摘要(約 %s → %s tokens)", before, self.sized())
+        return True
+
+    def _maybe_compact(self) -> None:
+        """新的一輪開始前,對話超過預設模型預算的 summarize_at(預設 6 成)就先整理成摘要。"""
+        role = self.requested_role or self.registry.routing["default_role"]
+        if self.sized() <= self.registry.limits.get("summarize_at", 0.6) * self.registry.budget(role):
+            return
+        try:
+            self.compact()
+        except Exception as e:  # 摘要失敗不擋這一題:後面還有瘦身與升級模型兩道防線
+            self._notice("整理摘要失敗,先照常繼續:%s", f"{type(e).__name__}: {e}")
+
     def ask(self, task: str, attachments: list[str] = ()) -> AgentResult:
         """問一輪。中途出錯(額度、伺服器全掛)就把這一輪的訊息退掉,對話停在上一輪結束的狀態。"""
+        self._maybe_compact()  # 要在記下 start 之前:摘要會把訊息變短
         start = len(self.messages)
         try:
             return self._ask(task, list(attachments))
@@ -304,6 +362,7 @@ HELP = """直接輸入問題,Enter 送出。用 @路徑 附上工作區的檔案
   AI 提出的修改通過沙箱測試後,會問你要不要套用到工作區(預設不套用)。
   工作區的 ASSISTANT.md 是這個專案給小助理的規則,每段對話開始時自動讀取。
   /remember 規則  把一條規則寫進 ASSISTANT.md,馬上生效(例如:/remember 回答都要附檔案路徑)
+  對話太長時會自動把前面的內容整理成摘要;/compact 可以手動整理。
   /apply  套用最近一個 patch(一樣會先問你)
   /clear  開始新對話(清掉前面的內容)
   /help   顯示這段說明
@@ -422,6 +481,15 @@ def chat(session_factory, first_files: list[str], banner: str = "") -> None:
                 print(f"已記住,寫進 {path.name}(這段對話馬上生效)")
             else:
                 print("用法:/remember 規則,例如 /remember 回答都要附檔案路徑")
+            continue
+        if text == "/compact":
+            try:
+                if not session.compact():
+                    print("還沒有可以整理的對話。")
+                elif not session.on_event:
+                    print("已把前面的對話整理成摘要。")
+            except Exception as e:
+                print(f"整理失敗:{type(e).__name__}: {e}")
             continue
         if text == "/apply":
             if toolbox.PATCHES:

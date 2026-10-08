@@ -783,6 +783,38 @@ def test_project_instructions_and_remember(workspace, monkeypatch, capsys):
     assert "中間截斷" in agent.system_prompt() and message_tokens([SystemMessage(agent.system_prompt())]) < 4000
 
 
+def test_long_conversation_is_summarized(workspace):
+    """對話超過預算的 summarize_at,下一題開始前先請模型整理成摘要,換掉前面的訊息。"""
+    from agent import SUMMARY_PROMPT
+    cfg = copy.deepcopy(CONFIG)
+    cfg["roles"]["code"].update(context_window=20000, max_output=1000)  # 預算約 17000,summarize_at 0.5 → 8500
+    cfg["limits"]["summarize_at"] = 0.5
+    reg, seen = scripted_registry([ai("第一題的答案"), ai("摘要:使用者在修 calc.py:2 的 add"), ai("第二題的答案")], cfg)
+    events = []
+    s = AgentSession(reg, TokenQuota(10**6, 2), on_event=lambda kind, data: events.append((kind, data)))
+    s.ask("第一題:" + "很長的內容" * 1500)
+    assert s.ask("第二題").answer == "第二題的答案"
+    summarizer = seen[1][1]
+    assert summarizer[0].content == SUMMARY_PROMPT and "很長的內容" in summarizer[1].content
+    sent = seen[2][1]  # 第二題送出去的:系統提示 + 摘要 + 確認 + 第二題
+    assert [type(m).__name__ for m in sent] == ["SystemMessage", "HumanMessage", "AIMessage", "HumanMessage"]
+    assert "calc.py:2" in sent[1].content and "很長的內容" not in "".join(str(m.content) for m in sent)
+    assert any(kind == "notice" and "摘要" in data["text"] for kind, data in events)
+    assert s.tokens_used == 300  # 摘要那次也算進用量
+
+
+def test_compact_failure_does_not_block_the_question(workspace):
+    cfg = copy.deepcopy(CONFIG)
+    cfg["roles"]["code"].update(context_window=20000, max_output=1000)
+    cfg["limits"]["summarize_at"] = 0.5
+    reg, seen = scripted_registry([ai("一"), RuntimeError("503"), ai("二")], cfg)
+    s = AgentSession(reg, TokenQuota(10**6, 2))
+    s.ask("第一題:" + "很長的內容" * 1500)
+    assert s.ask("第二題").answer == "二"  # 摘要失敗(摘要不走備援),照常回答
+    assert not s.messages[1].content.startswith("<conversation_summary>")
+    assert AgentSession(reg, TokenQuota(10**6, 2)).compact() is False  # 沒有對話可整理
+
+
 def test_system_prompt_has_today(workspace):
     """10/9 實測:模型不知道今天幾號,把「下週三」算錯;系統提示要帶日期與星期。"""
     from agent import today_line

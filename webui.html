@@ -186,6 +186,10 @@
     <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8a1 1 0 011 1v13l-5-3-5 3V4a1 1 0 011-1z"/></svg>
     記住規則
   </button>
+  <button type="button" class="side-btn" id="compact" title="把前面的對話整理成摘要,省 token(太長時也會自動整理)">
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h12M4 10h8M4 15h5M14 13l2 2 2-2M16 9v6"/></svg>
+    整理對話
+  </button>
   <div class="side-label">目前狀態</div>
   <div id="chips"></div>
   <div class="side-foot">只在你的電腦上執行。<br>修改檔案、上網之前都會先問你。</div>
@@ -327,7 +331,7 @@ function showEmpty() {
 function updateSend() { send.disabled = busy || !input.value.trim(); }
 function setBusy(b) {
   busy = b;
-  $("clear").disabled = b;
+  $("clear").disabled = b; $("compact").disabled = b;
   send.classList.toggle("busy", b);
   send.innerHTML = b ? BUSY_ICON : SEND_ICON;
   send.setAttribute("aria-label", b ? "回答中" : "送出");
@@ -491,6 +495,13 @@ $("clear").onclick = async () => {
   const r = await api("/api/clear", {});
   if (!r.ok) alert(r.data.error || "開新對話失敗");
   input.focus();
+};
+$("compact").onclick = async () => {
+  closeSide();
+  const btn = $("compact"); btn.disabled = true;
+  const r = await api("/api/compact", {});
+  btn.disabled = false;
+  if (r.data.text) alert(r.data.text);
 };
 $("remember").onclick = async () => {
   closeSide();

@@ -34,6 +34,7 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 **網頁介面**(`webui.py` + `webui.html`):`Hub` 持有一個 `AgentSession`,在背景執行緒跑 `ask`,所有事件(含 `user` / `done` / `error` / `confirm` / `confirm_done` / `offer_apply` / `applied` / `clear`)記在 `events`,`/api/events` 用 Server-Sent Events 送出;重新整理頁面會從最近一次「新對話」重播。`web.CONFIRM = hub.confirm` 讓 agent 執行緒等網頁按鈕。安全:只綁 127.0.0.1、檢查 Host、API 要 `X-Token`(SSE 用 `?token=`)、POST 只收 JSON。頁面是純 HTML/JS,不載入外部資源;`webui.html` 每次請求重新讀,改完重新整理就生效。前端注意:文字重繪排在 requestAnimationFrame,但背景分頁不會跑,所以 `done` / `error` 要先 `flush()`。
 
 `agent.AgentSession` 保存一段對話(messages、估算倍率 `scale`、累計 tokens);`ask()` 是一輪,中途出錯會把這一輪的訊息退掉。`run_agent()` = 開新 session 只問一輪;`chat()` 是互動模式的 REPL,問題裡的 `@路徑` 由 `file_mentions` 轉成附檔。每輪開始重新 `pick_role`,之後每一步送出前依序做:
+0. (每輪開始前)`_maybe_compact`:對話超過預設模型預算的 `limits.summarize_at`(0.6)就呼叫 `compact()`,請模型照 `SUMMARY_PROMPT` 整理成摘要,換成「系統提示 + 摘要(Human)+ 確認(AI)」;失敗只發 notice 不擋這一題。要在 `ask()` 記下 `start` 之前做(摘要會讓訊息變短,不然出錯時退不回去)。`/compact` 與網頁「整理對話」手動觸發。
 1. `token_guard.strip_stale_reasoning`:只清「上一輪以前」的推理。同一輪內不清 —— 這是刻意的,模型接著 tool call 推理需要本輪的 reasoning。
 2. 超過預算 → `compact_history`(把舊 ToolMessage 內容換成佔位字)。
 3. 還放不下 → `registry.pick_role` 升級到 `long_context`;連它都放不下丟 `ContextTooLarge`。

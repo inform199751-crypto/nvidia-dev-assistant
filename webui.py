@@ -100,6 +100,19 @@ class Hub:
             self.view_start = len(self.events)
         return True
 
+    def compact(self) -> str:
+        with self.cond:
+            if self.busy:
+                return "小助理還在回答,等這一輪結束再整理"
+            self.busy = True  # 整理摘要要呼叫模型,期間不接新問題
+        try:
+            return "" if self.session.compact() else "還沒有可以整理的對話"
+        except Exception as e:
+            return f"整理失敗:{type(e).__name__}: {e}"
+        finally:
+            with self.cond:
+                self.busy = False
+
     def remember(self, rule: str) -> None:
         path = agent.remember(rule)
         self.session.refresh_system_prompt()
@@ -248,6 +261,9 @@ def make_handler(hub: Hub, token: str, port: int) -> type[BaseHTTPRequestHandler
             elif path == "/api/clear":
                 ok = hub.clear()
                 self._json(200 if ok else 409, {} if ok else {"error": "還在回答中,等結束再開新對話"})
+            elif path == "/api/compact":
+                msg = hub.compact()  # 成功時摘要通知會從事件串流送出
+                self._json(200, {"text": msg})
             elif path == "/api/remember":
                 rule = " ".join(str(body.get("rule", "")).split())
                 if not rule:
