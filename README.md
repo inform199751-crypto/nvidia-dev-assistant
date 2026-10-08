@@ -79,6 +79,7 @@ python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
 cp .env.example .env                              # 填 NVIDIA_API_KEY,AGENT_WORKSPACE 指向要分析的 repo
 docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python webui.py                     # 網頁介面(只開在本機):回答邊產生邊顯示,套用 / 上網前用按鈕確認
+.venv/Scripts/python webui.py --lan               # 同一個 Wi-Fi 的手機也能開:終端機印出網址和 6 位數 PIN
 .venv/Scripts/python agent.py                     # 互動模式:一直聊下去,記得前面的內容;@calc.py 附檔、/clear 新對話
                                                   # 修改通過沙箱測試後會問要不要套用,回答 y 才改工作區
                                                   # 工作區的 ASSISTANT.md 是專案規則(像 CLAUDE.md);/remember 規則 會寫進去

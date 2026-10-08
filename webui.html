@@ -469,6 +469,10 @@ async function loadState() {
   row("工作區", r.data.workspace.split(/[\\/]/).pop(), r.data.workspace);
   row("", r.data.status);
   row("專案規則", r.data.instructions ? "已讀取 ASSISTANT.md" : "沒有 ASSISTANT.md");
+  if (r.data.lan) {  // 只有這台電腦看得到:手機要開的網址和 PIN
+    for (const u of r.data.lan.urls) row("手機開", u.replace(/^http:\/\//, ""), u);
+    row("手機 PIN", r.data.lan.pin);
+  }
   $("model").textContent = r.data.model || "";
   setBusy(r.data.busy);
 }

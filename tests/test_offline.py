@@ -997,6 +997,37 @@ def test_webui_confirm_and_apply(webui_app, workspace, fake_sandbox):
     assert "使用者已把" in app.seen[-1][1][-1].content
 
 
+def test_webui_lan_requires_pin(workspace, monkeypatch):
+    """--lan:這台電腦以外的裝置要先輸入 PIN 才拿得到頁面(和 token);錯太多次會鎖住。"""
+    import threading
+    import httpx
+    import webui
+    monkeypatch.setattr(webui, "LOCAL_ADDRS", set())  # 把測試的本機連線當成手機
+    reg, _ = scripted_registry([ai("手機你好")])
+    hub = webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event))
+    lan = webui.LanAccess(["127.0.0.1"], pin="123456")
+    server = webui.serve(hub, 0, token="t0k", lan=lan)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        page = httpx.get(base + "/")
+        assert "輸入電腦上顯示的 6 位數 PIN" in page.text and "t0k" not in page.text  # 沒登入拿不到 token
+        assert httpx.post(base + "/api/ask", json={"text": "hi"}, headers={"X-Token": "t0k"}).status_code == 403
+        assert httpx.post(base + "/api/login", json={"pin": "000000"}).status_code == 403
+        ok = httpx.post(base + "/api/login", json={"pin": "123456"})
+        assert ok.status_code == 200 and "HttpOnly" in ok.headers["set-cookie"]
+        with httpx.Client(base_url=base, cookies=ok.cookies) as phone:
+            assert 'const TOKEN = "t0k"' in phone.get("/").text
+            assert phone.post("/api/ask", json={"text": "hi"}, headers={"X-Token": "t0k"}).status_code == 202
+            assert "lan" not in phone.get("/api/state", headers={"X-Token": "t0k"}).json()  # PIN 不給手機看
+        for _ in range(5):
+            httpx.post(base + "/api/login", json={"pin": "999999"})
+        assert httpx.post(base + "/api/login", json={"pin": "123456"}).status_code == 429  # 錯太多次:對的也先擋
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_webui_clear_and_remember(webui_app, workspace):
     app = webui_app([ai("一"), ai("二")])
     app.post("/api/ask", {"text": "第一題"})
