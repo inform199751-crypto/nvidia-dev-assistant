@@ -17,17 +17,21 @@ from langchain_core.tools import tool
 
 WORKSPACE = Path(os.getenv("AGENT_WORKSPACE", ".")).resolve()
 SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "dev-assistant-sandbox")  # sandbox/Dockerfile 建的(含 pytest)
+OUTPUT_DIR = Path(os.getenv("AGENT_OUTPUT", Path(__file__).with_name("output"))).resolve()  # save_document 存這裡
 MAX_READ_LINES = 400
 PATCHES: list[tuple[Path, bool]] = []  # 提出過的 patch(檔案, 沙箱測試是否通過);互動模式拿來問要不要套用
 
 
-def configure(workspace: str | Path | None = None, sandbox_image: str | None = None) -> None:
-    """讀完 .env 之後要再呼叫一次 —— 模組載入時 .env 還沒讀,上面兩個值會是預設值。"""
-    global WORKSPACE, SANDBOX_IMAGE
+def configure(workspace: str | Path | None = None, sandbox_image: str | None = None,
+              output_dir: str | Path | None = None) -> None:
+    """讀完 .env 之後要再呼叫一次 —— 模組載入時 .env 還沒讀,上面幾個值會是預設值。"""
+    global WORKSPACE, SANDBOX_IMAGE, OUTPUT_DIR
     if workspace is not None:
         WORKSPACE = Path(workspace).resolve()
     if sandbox_image:
         SANDBOX_IMAGE = sandbox_image
+    if output_dir:
+        OUTPUT_DIR = Path(output_dir).resolve()
 
 
 _SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"}
@@ -288,6 +292,26 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
             "之前的 patch 不會一起套用;要調整就重送包含全部修改的 edits。</note>")
 
 
+_DOC_SUFFIXES = {".md", ".txt", ".csv", ".json", ".html", ".yaml", ".yml"}
+
+
+@tool
+def save_document(filename: str, content: str) -> str:
+    """把寫好的文件、翻譯、摘要、信件草稿、表格存成檔案給使用者(存在輸出資料夾,不會動到工作區)。
+    filename 只給檔名,例如 "技術文件.md"、"摘要.txt"、"清單.csv";同名檔案不會被覆蓋,會自動加編號。"""
+    name = Path(filename.replace("\\", "/")).name  # 只取檔名:不能藉 ../ 寫到別的地方
+    suffix = Path(name).suffix.lower()
+    if not name or name.startswith(".") or suffix not in _DOC_SUFFIXES:
+        return f"錯誤:檔名要像「報告.md」,副檔名限 {' '.join(sorted(_DOC_SUFFIXES))}"
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    target, n = OUTPUT_DIR / name, 2
+    while target.exists():
+        target, n = OUTPUT_DIR / f"{Path(name).stem}_{n}{suffix}", n + 1
+    # CSV 加 BOM:Excel 開沒有 BOM 的 UTF-8 CSV,中文會變亂碼
+    target.write_text(content, encoding="utf-8-sig" if suffix == ".csv" else "utf-8", newline="\n")
+    return f"已存成 {target}"
+
+
 def apply_patch(patch_file: Path) -> str:
     """把 patch 真的套用到工作區。只給人在互動模式確認後呼叫,不是給模型的工具。"""
     # 關掉換行轉換:patch 是照檔案實際的位元組產生的,autocrlf 會把整個檔案的換行都改掉
@@ -298,4 +322,5 @@ def apply_patch(patch_file: Path) -> str:
     return f"已套用 {patch_file.name} 到工作區"
 
 
-ALL_TOOLS = [list_files, read_file, search_code, git_log, git_blame, run_tests, run_command, propose_patch]
+ALL_TOOLS = [list_files, read_file, search_code, git_log, git_blame, run_tests, run_command, propose_patch,
+             save_document]

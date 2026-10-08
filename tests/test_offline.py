@@ -474,6 +474,20 @@ def test_sandbox_runs_on_copy_without_secrets(workspace, tmp_path_factory, monke
     assert seen[0][1] == ["sh", "-c", "cat .env; ls -a"]
 
 
+def test_save_document_stays_in_output_dir(workspace, tmp_path_factory, monkeypatch):
+    """文件只存在輸出資料夾:../ 寫不出去、同名不覆蓋、CSV 加 BOM(Excel 才看得懂中文)、工作區不會多檔案。"""
+    out = tmp_path_factory.mktemp("output")
+    monkeypatch.setattr(tools, "OUTPUT_DIR", out)
+    save = lambda name, content="內容": tools.save_document.invoke({"filename": name, "content": content})  # noqa: E731
+    assert save("../../報告.md").endswith(str(out / "報告.md"))
+    assert save("報告.md").endswith(str(out / "報告_2.md"))
+    save("清單.csv", "名稱,數量\n蘋果,3\n")
+    assert (out / "清單.csv").read_bytes().startswith("﻿名稱".encode())
+    assert "錯誤" in save("run.sh") and "錯誤" in save(".bashrc.md") and "錯誤" in save("")
+    assert sorted(p.name for p in out.iterdir()) == ["報告.md", "報告_2.md", "清單.csv"]
+    assert list(workspace.iterdir()) == []
+
+
 def test_nim_backend_uses_nim_context_window():
     """catalog 給 Ultra 1M,地端預設 256K;切到 nim 時路由要照地端的長度算,不然送出去才被伺服器拒絕。"""
     catalog = ModelRegistry.from_yaml(backend="catalog")

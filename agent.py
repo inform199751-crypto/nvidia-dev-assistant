@@ -23,7 +23,7 @@ from tools import ALL_TOOLS
 log = logging.getLogger("dev_assistant")
 
 # 指令用英文寫(各家程式碼模型的指令微調資料以英文為主),回答語言另外指定。
-SYSTEM_PROMPT = """You are an internal senior software engineer assistant. Reply in Traditional Chinese (zh-TW); keep code, identifiers and error messages in their original language.
+SYSTEM_PROMPT = """You are an internal assistant for a software team: first of all a senior software engineer, but you also help with documents, translation, summaries, email drafts and reading office files. Reply in Traditional Chinese (zh-TW) unless asked otherwise; keep code, identifiers and error messages in their original language.
 
 ## Workflow for bugs and code changes
 1. Locate: use list_files / search_code / read_file to find the relevant lines (git_log / git_blame when history matters). Do not guess what code you have not read.
@@ -38,7 +38,11 @@ SYSTEM_PROMPT = """You are an internal senior software engineer assistant. Reply
 - Prefer small targeted reads over reading whole files. Large files come with an outline; read only the ranges you need.
 - Tool errors are feedback: read them and correct your call; do not repeat the same failing call.
 - run_command runs any shell command in the same sandbox as run_tests (read-only copy, no network, no git). Use it to run scripts or inspect the project; it cannot change files.
-- For documentation tasks: structure as Overview → Architecture → Key flows → API/Config → Known limitations."""
+- For documentation tasks: structure as Overview → Architecture → Key flows → API/Config → Known limitations.
+
+## Other tasks
+- Writing, translation, summaries, email drafts: answer directly in the chat. Ask a short clarifying question only if the request is truly ambiguous.
+- For a long or reusable deliverable (a document, report, translated file, table), also save it with save_document and tell the user where it was saved. Use .csv for tables the user will open in Excel."""
 
 
 @dataclass
@@ -269,7 +273,9 @@ def main() -> None:
     here = Path(__file__).parent
     load_dotenv(here / ".env")  # 只讀本專案的 .env,不往上層目錄找
     workspace = Path(os.getenv("AGENT_WORKSPACE", "."))
-    toolbox.configure(workspace if workspace.is_absolute() else here / workspace, os.getenv("SANDBOX_IMAGE"))
+    output = Path(os.getenv("AGENT_OUTPUT", "output"))
+    toolbox.configure(workspace if workspace.is_absolute() else here / workspace, os.getenv("SANDBOX_IMAGE"),
+                      output if output.is_absolute() else here / output)
     ap = argparse.ArgumentParser(description="對內研發助理(NVIDIA NIM / API Catalog)")
     ap.add_argument("task", nargs="?", help="要做的事;不給就進入互動模式,可以一直聊下去")
     ap.add_argument("-f", "--file", action="append", default=[], help="附檔(相對於 AGENT_WORKSPACE)")
