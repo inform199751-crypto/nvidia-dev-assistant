@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import subprocess
 from typing import Any
 
 import pytest
@@ -420,6 +421,56 @@ def test_search_code_does_not_follow_links_out_of_workspace(workspace, tmp_path_
     assert tools.search_code.invoke({"pattern": "nvapi-secret"}).splitlines() == ["ok.py:1: x = 'nvapi-secret'"]
     with pytest.raises(ValueError, match="超出工作區"):
         tools.read_file.invoke({"path": "vendor/leak.py"})
+
+
+def test_list_files_hides_secrets_and_outside_links(workspace, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "leak.py").write_text("x\n", encoding="utf-8")
+    (workspace / "src").mkdir()
+    (workspace / "src" / "app.py").write_bytes(b"print(1)\n")
+    for hidden in [".env", ".env.staging", "server.key"]:
+        (workspace / hidden).write_text("secret\n", encoding="utf-8")
+    (workspace / "node_modules").mkdir()
+    (workspace / "node_modules" / "big.js").write_text("x\n", encoding="utf-8")
+    _dir_link(workspace / "vendor", outside)
+    assert tools.list_files.invoke({"glob": "**/*"}).splitlines() == ["src/", "src/app.py  (9 bytes)"]
+
+
+def test_git_log_and_blame(workspace):
+    git = ["git", "-c", "user.name=Amy", "-c", "user.email=amy@example.com"]
+    subprocess.run([*git, "init", "-q"], cwd=workspace, check=True)
+    (workspace / "calc.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8", newline="\n")
+    subprocess.run([*git, "add", "."], cwd=workspace, check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "加入 add"], cwd=workspace, check=True)
+    log = tools.git_log.invoke({"path": "calc.py"})
+    assert "Amy" in log and "加入 add" in log and "calc.py" in log
+    blame = tools.git_blame.invoke({"path": "calc.py", "start_line": 2, "end_line": 2})
+    assert "Amy" in blame and "return a - b" in blame and "def add" not in blame
+    with pytest.raises(PermissionError):
+        tools.git_blame.invoke({"path": ".env", "start_line": 1, "end_line": 1})
+
+
+def test_sandbox_runs_on_copy_without_secrets(workspace, tmp_path_factory, monkeypatch):
+    """run_command / run_tests 一律掛排除機密檔的複本:沙箱裡 cat .env 也讀不到(舊版直接掛工作區)。"""
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "leak.py").write_text("x\n", encoding="utf-8")
+    (workspace / "app.py").write_text("print(1)\n", encoding="utf-8")
+    for secret in [".env", ".env.staging", "deploy.pem"]:
+        (workspace / secret).write_text("secret\n", encoding="utf-8")
+    (workspace / ".env.example").write_text("KEY=\n", encoding="utf-8")
+    _dir_link(workspace / "vendor", outside)
+    seen = []
+
+    def fake_docker(root, argv, timeout=180):
+        assert root.resolve() != workspace.resolve()
+        seen.append((sorted(p.relative_to(root).as_posix() for p in root.rglob("*")), argv))
+        return "exit code 0"
+
+    monkeypatch.setattr(tools, "_docker", fake_docker)
+    tools.run_command.invoke({"command": "cat .env; ls -a"})
+    tools.run_tests.invoke({"target": "."})
+    assert [files for files, _ in seen] == [[".env.example", "app.py"]] * 2
+    assert seen[0][1] == ["sh", "-c", "cat .env; ls -a"]
 
 
 def test_nim_backend_uses_nim_context_window():

@@ -4,7 +4,7 @@
 改走 NVIDIA 生態系:開發期接 API Catalog(build.nvidia.com),正式環境換成地端 NIM 容器,**程式碼不用改**。
 
 重點不在「接上了模型」,而在:**依任務與 token 數動態切換模型、控制 token 與顯存、讓 agent 只能在沙箱裡動手**,
-而且每個設計都用真模型實測過。實測與審查抓到 17 個問題,見下方。
+而且每個設計都用真模型實測過。實測與審查抓到 19 個問題,見下方。
 
 ## 架構
 
@@ -18,8 +18,8 @@ flowchart LR
     S -. 失敗備援 .-> D["code_deep<br/>DeepSeek v4.1-flash"]
     L -. 失敗備援 .-> S2["Super(1M)"]
     A --> T[工具]
-    T --> T1["read_file / search_code<br/>擋 .env · 金鑰 · .git"]
-    T --> T2["run_tests<br/>Docker 沙箱:無網路 · 唯讀"]
+    T --> T1["list_files / read_file / search_code<br/>git_log / git_blame<br/>擋 .env · 金鑰 · .git"]
+    T --> T2["run_tests / run_command<br/>Docker 沙箱:無網路 · 唯讀 · 不含機密檔的複本"]
     T --> T3["propose_patch<br/>舊字串→新字串 / 新增檔案,diff 由工具產生<br/>複本套用 + 跑測試<br/>只產 .patch,不改原檔"]
 ```
 
@@ -29,7 +29,7 @@ flowchart LR
 | `llm_registry.py` | 依角色建模型、備援鏈、依 token 數路由 |
 | `agent.py` | agent 迴圈:每步送出前清舊思考 → 瘦身 → 放不下就升級模型 → 檢查配額;`AgentSession` 支援多輪互動 |
 | `token_guard.py` | token 估算(實測校準)、截斷、歷史瘦身、大檔大綱、每人配額 |
-| `tools.py` | 讀檔 / 搜尋 / 沙箱測試 / 提 patch,含機密檔封鎖 |
+| `tools.py` | 列檔 / 讀檔 / 搜尋 / git 紀錄 / 沙箱測試與指令 / 提 patch,含機密檔封鎖 |
 | `smoke_test.py` | 對 catalog 上每個模型做冒煙測試(回應、思考開關、tool calling) |
 
 ## 實測結果(2026-10-06,NVIDIA API Catalog 免費層)
@@ -39,9 +39,9 @@ flowchart LR
 | 模型冒煙測試 | 三顆模型 × 回應 / 開思考 / 關思考 / tool calling | 全過;Super 每次 0.4–2.6 秒,DeepSeek 18–27 秒 |
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
-| 離線測試 | 假模型,不需金鑰 | 44 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 47 個全過 |
 
-## 實測與審查抓到的 17 個問題
+## 實測與審查抓到的 19 個問題
 
 | # | 問題 | 怎麼發現 | 處理 |
 |---|---|---|---|
@@ -62,6 +62,8 @@ flowchart LR
 | 15 | `models.yaml` 的上下文長度是 catalog 的值(Ultra 1M),地端預設 256K;切到 nim 時路由以為放得下,送出才被拒 | 程式碼審查 | 角色可另寫 `nim_context_window`,`LLM_BACKEND=nim` 時自動套用 |
 | 16 | `search_code` 會跟著 symlink / Windows junction 讀到工作區外的檔案(`read_file` 有擋) | 程式碼審查 + 本機重現(一般帳號就能建 junction) | 依實際位置檢查,工作區外與機密檔一律略過 |
 | 17 | 「修 bug + 新增回歸測試檔」時,模型以為 patch 會疊加,先單獨修 bug、再單獨送測試檔,測試失敗多繞好幾步(11 步、4.8 萬 tokens) | 新增檔案實測(10/9) | 工具回傳時明確提醒每個 patch 單獨驗證;同一題重跑變 7 步、2.2 萬 tokens |
+| 18 | `run_tests` 直接掛載整個工作區,`.env` 在沙箱裡讀得到;複本的排除清單也漏了 `.env.staging` 這類檔名 | 加 `run_command` 前審查 | 沙箱一律掛排除機密檔的複本,判斷跟 `read_file` 同一套;指到工作區外的連結也不複製 |
+| 19 | 沙箱逾時只停掉 docker CLI,容器在背景繼續跑;Windows 上沙箱輸出的中文變亂碼 | 程式碼審查 + 本機實測 | 容器加名字、逾時就 `docker kill`;輸出一律用 UTF-8 解碼 |
 
 ## 執行
 

@@ -7,6 +7,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import TypedDict
@@ -59,17 +61,39 @@ def read_file(path: str, start_line: int = 1, end_line: int | None = None) -> st
     return body + more
 
 
+_SKIP_DIRS = {".agent_patches", ".git", ".venv", "__pycache__", "node_modules"}
+
+
+def _visible(f: Path) -> bool:
+    """列檔 / 搜尋看得到的:不是隱藏路徑、不在大型目錄裡、不是機密檔、實際位置在工作區內。"""
+    rel = f.relative_to(WORKSPACE)
+    if any(part.startswith(".") or part in _SKIP_DIRS for part in rel.parts) or _is_secret(f):
+        return False
+    real = f.resolve()  # symlink / Windows junction 可能指到工作區外或機密檔,看實際位置
+    return real.is_relative_to(WORKSPACE) and not _is_secret(real)
+
+
+@tool
+def list_files(glob: str = "*", max_entries: int = 200) -> str:
+    """列出工作區的檔案與資料夾(資料夾結尾加 /,檔案附大小)。整個專案用 "**/*",某資料夾用 "src/*"。"""
+    rows: list[str] = []
+    for f in sorted(WORKSPACE.glob(glob)):
+        if not _visible(f):
+            continue
+        rel = f.relative_to(WORKSPACE).as_posix()
+        rows.append(f"{rel}/" if f.is_dir() else f"{rel}  ({f.stat().st_size:,} bytes)")
+        if len(rows) >= max_entries:
+            return "\n".join(rows) + f"\n[已達 {max_entries} 筆上限,請把 glob 縮小]"
+    return "\n".join(rows) or "沒有符合的檔案"
+
+
 @tool
 def search_code(pattern: str, glob: str = "**/*.py", max_hits: int = 50) -> str:
     """在工作區用正規表示式搜尋,回傳「檔案:行號: 內容」。先搜再讀,不要整檔讀。"""
     rx = re.compile(pattern)
     hits: list[str] = []
     for f in WORKSPACE.glob(glob):
-        if (not f.is_file() or _is_secret(f)
-                or any(part.startswith(".") for part in f.relative_to(WORKSPACE).parts)):
-            continue
-        real = f.resolve()  # symlink / Windows junction 可能指到工作區外或機密檔,看實際位置
-        if not real.is_relative_to(WORKSPACE) or _is_secret(real):
+        if not f.is_file() or not _visible(f):
             continue
         for n, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
             if rx.search(line):
@@ -79,26 +103,47 @@ def search_code(pattern: str, glob: str = "**/*.py", max_hits: int = 50) -> str:
     return "\n".join(hits) or "沒有符合的結果"
 
 
-# 暫存複本不帶 .env 和金鑰檔:沙箱裡的測試輸出會回到模型手上
-_COPY_IGNORE = shutil.ignore_patterns(".agent_patches", ".git", ".venv", "__pycache__", "node_modules",
-                                      ".env", ".env.local", ".env.prod*", "*.pem", "*.key", "id_rsa*")
+def _copy_ignore(directory: str, names: list[str]) -> list[str]:
+    """暫存複本不帶機密檔(跟 _safe_path 同一套判斷)、大型目錄、指到工作區外的連結:
+    沙箱裡的輸出會回到模型手上。"""
+    skipped = []
+    for n in names:
+        p = Path(directory) / n
+        if n in _SKIP_DIRS or _is_secret(p) or not p.resolve().is_relative_to(WORKSPACE):
+            skipped.append(n)
+    return skipped
+
+
+@contextmanager
+def _sandbox_copy():
+    """工作區的暫存複本,沙箱一律掛它而不是工作區本身;正式環境大 repo 改用 git worktree,不要整包複製。"""
+    with tempfile.TemporaryDirectory(prefix="agent_sandbox_") as tmp:
+        copy = Path(tmp) / "ws"
+        shutil.copytree(WORKSPACE, copy, ignore=_copy_ignore)
+        yield copy
+
+
+def _docker(root: Path, argv: list[str], timeout: int = 180) -> str:
+    """在隔離的 Docker 容器裡執行:無網路、唯讀掛載、限 CPU / 記憶體 / 行程數 / 時間。"""
+    if not shutil.which("docker"):
+        return "錯誤:這台機器沒有 Docker,沙箱無法啟動。為了安全,不會改在主機上直接執行程式碼。"
+    name = f"agent-sandbox-{uuid.uuid4().hex[:12]}"
+    cmd = [
+        "docker", "run", "--rm", "--name", name, "--network", "none", "--read-only", "--tmpfs", "/tmp",
+        "--memory", "1g", "--cpus", "1", "--pids-limit", "256",
+        "-e", "PYTHONDONTWRITEBYTECODE=1", "-v", f"{root}:/ws:ro", "-w", "/ws",
+        SANDBOX_IMAGE, *argv,
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired:
+        subprocess.run(["docker", "kill", name], capture_output=True)  # 只停掉 docker CLI 的話,容器會在背景繼續跑
+        return f"錯誤:超過 {timeout} 秒被中止(可能有無窮迴圈或死結)"
+    return f"exit code {r.returncode}\n{r.stdout}\n{r.stderr}".strip()
 
 
 def _run_sandbox(root: Path, target: str) -> str:
-    """在隔離的 Docker 容器裡跑 pytest:無網路、唯讀掛載、限 CPU / 記憶體 / 行程數 / 時間。"""
-    if not shutil.which("docker"):
-        return "錯誤:這台機器沒有 Docker,沙箱無法啟動。為了安全,不會改在主機上直接執行程式碼。"
-    cmd = [
-        "docker", "run", "--rm", "--network", "none", "--read-only", "--tmpfs", "/tmp",
-        "--memory", "1g", "--cpus", "1", "--pids-limit", "256",
-        "-e", "PYTHONDONTWRITEBYTECODE=1", "-v", f"{root}:/ws:ro", "-w", "/ws",
-        SANDBOX_IMAGE, "python", "-m", "pytest", "-q", "-p", "no:cacheprovider", target,
-    ]
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    except subprocess.TimeoutExpired:
-        return "錯誤:測試超過 180 秒被中止(可能有無窮迴圈或死結)"
-    return f"exit code {r.returncode}\n{r.stdout}\n{r.stderr}".strip()
+    return _docker(root, ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", target])
 
 
 def _check_target(target: str) -> str | None:
@@ -111,7 +156,46 @@ def _check_target(target: str) -> str | None:
 @tool
 def run_tests(target: str = "tests") -> str:
     """在 Docker 沙箱跑 pytest,測的是「目前的原始碼」(提出的 patch 不會套用)。改 bug 前先用它重現問題。"""
-    return _check_target(target) or _run_sandbox(WORKSPACE, target)
+    if err := _check_target(target):
+        return err
+    with _sandbox_copy() as copy:
+        return _run_sandbox(copy, target)
+
+
+@tool
+def run_command(command: str) -> str:
+    """在 Docker 沙箱用 sh 執行任意指令(例如 python script.py、ls -R、wc -l),看到的是「目前的原始碼」。
+    沙箱沒有網路、沒有 git、檔案唯讀(只有 /tmp 可寫)、看不到機密檔、180 秒上限;不能用來修改工作區。"""
+    with _sandbox_copy() as copy:
+        return _docker(copy, ["sh", "-c", command])
+
+
+def _git(*args: str) -> str:
+    if not shutil.which("git"):
+        return "錯誤:這台機器沒有 git"
+    r = subprocess.run(["git", "--no-pager", *args], cwd=WORKSPACE, capture_output=True,
+                       text=True, encoding="utf-8", errors="replace", timeout=30)
+    if r.returncode != 0:
+        return f"錯誤:{r.stderr.strip() or 'git 執行失敗'}"
+    return r.stdout.strip() or "(沒有輸出)"
+
+
+@tool
+def git_log(path: str = "", max_count: int = 10) -> str:
+    """看 git 提交紀錄:誰、哪天、為什麼改,附改了哪些檔案。給 path(檔案或資料夾)就只看跟它有關的提交。"""
+    args = ["log", f"--max-count={min(max(max_count, 1), 50)}", "--stat", "--date=short",
+            "--format=%h %ad %an%n    %s"]
+    if path:
+        _safe_path(path)
+        args += ["--", path]
+    return _git(*args)
+
+
+@tool
+def git_blame(path: str, start_line: int, end_line: int) -> str:
+    """看某段程式每一行最後是哪次提交、誰改的(追 bug 是什麼時候引入的)。一次最多 100 行。"""
+    _safe_path(path)
+    return _git("blame", "--date=short", "-L", f"{start_line},{min(end_line, start_line + 99)}", "--", path)
 
 
 class Edit(TypedDict):
@@ -190,10 +274,7 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
         patch_file.unlink()
         return f"錯誤:產生的 diff 套不上去:\n{r.stderr.strip()}"
 
-    # 套到暫存複本上驗證;正式環境大 repo 改用 git worktree,不要整包複製
-    with tempfile.TemporaryDirectory(prefix="agent_verify_") as tmp:
-        copy = Path(tmp) / "ws"
-        shutil.copytree(WORKSPACE, copy, ignore=_COPY_IGNORE)
+    with _sandbox_copy() as copy:
         # 關掉換行轉換:Git for Windows 預設 autocrlf=true,會把複本裡的 LF 檔改成 CRLF,測到的就不是原本的內容
         subprocess.run(["git", "-c", "core.autocrlf=false", "apply", str(patch_file)],
                        cwd=copy, check=True, capture_output=True)
@@ -205,4 +286,4 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
             "之前的 patch 不會一起套用;要調整就重送包含全部修改的 edits。</note>")
 
 
-ALL_TOOLS = [read_file, search_code, run_tests, propose_patch]
+ALL_TOOLS = [list_files, read_file, search_code, git_log, git_blame, run_tests, run_command, propose_patch]
