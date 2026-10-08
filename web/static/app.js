@@ -10,7 +10,10 @@ const MODEL_NAMES = {
 };
 const TOOL_LABEL = { read_file: "讀檔", search_code: "搜尋", run_tests: "跑測試", propose_patch: "提修正" };
 const STATUS_TEXT = { failed: "失敗", cancelled: "已停止", interrupted: "已中斷(伺服器曾重開)" };
-const state = { workspaces: [], current: null, running: null, streams: new Map(), views: [] };
+const state = { workspaces: [], current: null, running: null, sending: false, streams: new Map(), views: [] };
+// 複製 git apply 指令前檢查路徑:檔名來自模型,含 $ ` " ; 等字元時貼到終端機會被當成指令執行
+const SAFE_SHELL_PATH = /^[\p{L}\p{N}_ .:\\\/-]+$/u;
+let estimateSeq = 0;
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -35,7 +38,9 @@ async function api(path, options = {}) {
 
 const fmt = (n) => Number(n || 0).toLocaleString("zh-TW");
 const modelName = (id) => MODEL_NAMES[id] || (id || "").split("/").pop();
-const renderMarkdown = (text) => DOMPurify.sanitize(marked.parse(text || ""));
+// 模型輸出只留排版用的標籤:擋掉圖片(可把資料送到外部網址)、表單與 inline style(可偽造畫面)
+const PURIFY = { FORBID_TAGS: ["img", "form", "input", "button", "style", "iframe"], FORBID_ATTR: ["style"] };
+const renderMarkdown = (text) => DOMPurify.sanitize(marked.parse(text || ""), PURIFY);
 const currentMode = () => document.querySelector('input[name="mode"]:checked').value;
 const thinkingValue = () => ({ true: true, false: false })[$("#thinking").value] ?? null;
 const workspaceById = (id) => state.workspaces.find((w) => w.id === id);
@@ -96,6 +101,7 @@ function emptyState() {
 }
 
 function resetThread() {
+  closePanel();
   for (const source of state.streams.values()) source.close();
   state.streams.clear();
   for (const view of state.views) stopTimer(view);
@@ -116,7 +122,7 @@ function newChat() {
 }
 
 async function openConversation(cid, liveTurnId = null) {
-  const conv = await api(`/api/conversations/${cid}`);
+  const conv = await api(`/api/conversations/${encodeURIComponent(cid)}`);
   resetThread();
   state.current = conv;
   state.running = null;
@@ -192,6 +198,10 @@ function streamTurn(conv, turn, view, live) {
     if (source.readyState === EventSource.CLOSED) {
       stopTimer(view);
       view.meta.textContent = "連線中斷,重新整理頁面可以接續";
+      if (state.running?.tid === turn.id) {
+        state.running = null;
+        setSending(false);
+      }
     }
   };
 }
@@ -282,9 +292,13 @@ function addPatchCard(conv, view, d) {
   const actions = el("div", { class: "patch-actions" }, el("span", { class: `chip ${cls}`, text }));
   const ws = workspaceById(conv.workspace);
   if (ws && ws.kind === "config" && d.patch_file) {
-    const cmd = `git -C "${ws.path}" apply "${d.patch_file}"`;
-    actions.append(el("button", { type: "button", text: "複製 git apply 指令",
-      onclick: (e) => copyText(cmd, e.currentTarget) }));
+    if (SAFE_SHELL_PATH.test(ws.path) && SAFE_SHELL_PATH.test(d.patch_file)) {
+      const cmd = `git -C "${ws.path}" apply "${d.patch_file}"`;
+      actions.append(el("button", { type: "button", text: "複製 git apply 指令",
+        onclick: (e) => copyText(cmd, e.currentTarget) }));
+    } else {
+      actions.append(el("span", { class: "note", text: `檔名含特殊字元,請手動套用:${d.patch_file}` }));
+    }
   } else {
     actions.append(el("span", { class: "note", text: "這是上傳的複本,patch 不能直接套回你的專案" }));
   }
@@ -319,8 +333,7 @@ function showError(view, d) {
   view.answer.append(el("div", { class: "error-box" },
     el("span", { text: d.message }),
     el("button", { type: "button", text: "重試",
-      onclick: () => sendTurn({ question: view.turn.question, mode: view.turn.mode, ...(view.turn.options || {}) })
-        .catch((e) => hint(e.message, true)) })));
+      onclick: () => submitTurn({ ...(view.turn.options || {}), question: view.turn.question, mode: view.turn.mode }) })));
 }
 
 function finishTurn(view, d) {
@@ -349,6 +362,22 @@ async function sendTurn(body) {
   }
 }
 
+async function submitTurn(body) {
+  if (state.sending) return false;  // 連點或連按 Enter:前一次還沒送完就不再送
+  state.sending = true;
+  $("#send").disabled = true;
+  try {
+    await sendTurn(body);
+    return true;
+  } catch (e) {
+    hint(e.message, true);
+    return false;
+  } finally {
+    state.sending = false;
+    if (!state.running) $("#send").disabled = false;
+  }
+}
+
 async function onSubmit(event) {
   event.preventDefault();
   if (state.running) {
@@ -359,16 +388,16 @@ async function onSubmit(event) {
     } catch (e) { hint(e.message, true); }
     return;
   }
+  if ($("#send").disabled) return;  // 估算中或超過上限:按鈕停用時,Enter 也不能送
   const question = $("#question").value.trim();
   if (!question) { hint("先輸入問題", true); return; }
   if (!state.current && !$("#workspace").value) { hint("先選一個資料夾", true); return; }
   const body = { question, mode: currentMode(), role: $("#role").value || null,
                  thinking: thinkingValue(), files: $("#files").value.trim() || null };
-  try {
-    await sendTurn(body);
+  if (await submitTurn(body)) {
     $("#question").value = "";
     hint("");
-  } catch (e) { hint(e.message, true); }
+  }
 }
 
 async function onUpload(event) {
@@ -390,21 +419,28 @@ async function onUpload(event) {
 
 async function updateEstimate() {
   const send = $("#send");
+  const seq = ++estimateSeq;
   if (!state.running) send.disabled = false;
   if (currentMode() !== "whole") return;
   const ws = state.current ? state.current.workspace : $("#workspace").value;
   if (!ws) return;
+  if (!state.running) send.disabled = true;  // 估算回來之前先不能送
   hint("估算整份文件大小中…");
   try {
     const e = await api(`/api/estimate?workspace=${encodeURIComponent(ws)}`);
+    if (seq !== estimateSeq) return;  // 之後又觸發了新的估算,這個結果已經過時
     if (e.ok) {
       const wait = e.tokens > 100000 ? "可能要好幾分鐘,可以先去做別的事" : "大約一兩分鐘";
       hint(`整份文件:${fmt(e.files)} 個檔案,約 ${fmt(e.tokens)} tokens → 會用 ${modelName(e.model)},${wait}。`);
+      if (!state.running) send.disabled = false;
     } else {
       hint(`約 ${fmt(e.tokens)} tokens,超過上限 ${fmt(e.limit)},請改用較小的資料夾。`, true);
-      if (!state.running) send.disabled = true;
     }
-  } catch (err) { hint(err.message, true); }
+  } catch (err) {
+    if (seq !== estimateSeq) return;
+    hint(err.message, true);
+    if (!state.running) send.disabled = false;  // 估算失敗不擋送出,交給伺服器判斷
+  }
 }
 
 // ---------- 側欄 ----------
@@ -427,11 +463,14 @@ async function init() {
   $("#new-chat").addEventListener("click", newChat);
   $("#composer").addEventListener("submit", onSubmit);
   $("#question").addEventListener("keydown", (e) => {
-    // isComposing:注音 / 倉頡選字時按 Enter 是確認選字,不是送出
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-      e.preventDefault();
-      $("#composer").requestSubmit();
+    // isComposing / keyCode 229:注音、倉頡選字時按 Enter 是確認選字,不是送出(Safari 只看得到 229)
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    if (state.running) {  // Enter 不能拿來停止:只有「停止」按鈕會中止正在跑的一輪
+      hint("上一輪還在跑,等它結束再送出;要中止請按「停止」。");
+      return;
     }
+    $("#composer").requestSubmit();
   });
   $("#upload").addEventListener("change", onUpload);
   for (const radio of document.querySelectorAll('input[name="mode"]')) {
@@ -441,12 +480,19 @@ async function init() {
   $("#panel-close").addEventListener("click", closePanel);
   try {
     await loadWorkspaces();
-    const cid = location.hash.slice(1);
-    if (cid) await openConversation(cid);
-    else newChat();
   } catch (e) {
     hint(e.message, true);
   }
+  const cid = location.hash.slice(1);
+  if (cid) {
+    try {
+      await openConversation(decodeURIComponent(cid));
+      return;
+    } catch (e) {
+      hint(`打不開這個對話:${e.message}`, true);
+    }
+  }
+  newChat();
 }
 
 init();
