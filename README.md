@@ -34,6 +34,7 @@ flowchart LR
 | `tools.py` | 列檔 / 讀檔 / 搜尋 / git 紀錄 / 沙箱測試與指令 / 提 patch / 存文件,含機密檔封鎖 |
 | `documents.py` | PDF / Word / Excel 轉文字,給 `read_document` 和 `@附檔` 用 |
 | `webui.py` + `webui.html` | 網頁介面:標準函式庫的 HTTP 伺服器 + Server-Sent Events,只聽 127.0.0.1,API 要帶啟動時產生的 token |
+| `vscode-extension/` | VS Code 外掛:編輯器旁邊打開小助理、右鍵「問選取的程式碼」;`build_vsix.py` 打包成 .vsix(不需要 Node) |
 | `web.py` | 上網搜尋(Tavily)與讀網頁;`.env` 設 `ALLOW_WEB=true` 才啟用,每次上網都先問使用者 |
 | `smoke_test.py` | 對 catalog 上每個模型做冒煙測試(回應、思考開關、tool calling) |
 
@@ -44,7 +45,7 @@ flowchart LR
 | 模型冒煙測試 | 三顆模型 × 回應 / 開思考 / 關思考 / tool calling | 全過;Super 每次 0.4–2.6 秒,DeepSeek 18–27 秒 |
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
-| 離線測試 | 假模型,不需金鑰 | 72 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 73 個全過 |
 
 ## 實測與審查抓到的 23 個問題
 

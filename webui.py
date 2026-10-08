@@ -430,6 +430,7 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true", help="不要自動打開瀏覽器")
     ap.add_argument("--lan", action="store_true", help="讓同一個 Wi-Fi 的手機也能開(要輸入啟動時顯示的 PIN)")
+    ap.add_argument("--token", help="指定 API token(VS Code 外掛用:它自己產生,才能直接送問題);不給就隨機產生")
     ap.add_argument("--role", help="強制指定模型角色:code(日常)/ code_deep(難題)/ long_context")
     ap.add_argument("--think", choices=["on", "off"], help="思考模式;不給就用伺服器預設")
     args = ap.parse_args()
@@ -445,7 +446,7 @@ def main() -> None:
     lan = LanAccess(lan_ips()) if args.lan else None
     if lan and not lan.ips:
         raise SystemExit("找不到這台電腦的區域網路位址,請確認有連上 Wi-Fi 或網路線")
-    server = serve(hub, args.port, lan=lan, host="0.0.0.0" if lan else "127.0.0.1")
+    server = serve(hub, args.port, token=args.token, lan=lan, host="0.0.0.0" if lan else "127.0.0.1")
     url = f"http://127.0.0.1:{args.port}/"
     print(f"小助理網頁介面:{url}  (工作區 {toolbox.WORKSPACE};按 Ctrl+C 結束)")
     if lan:

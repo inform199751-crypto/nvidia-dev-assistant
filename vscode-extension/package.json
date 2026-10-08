@@ -1,0 +1,48 @@
+{
+  "name": "dev-assistant",
+  "displayName": "小助理",
+  "description": "在 VS Code 旁邊打開對內研發助理(NVIDIA NIM),也能把選取的程式碼直接拿去問",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "UNLICENSED",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      { "command": "devAssistant.open", "title": "打開", "category": "小助理" },
+      { "command": "devAssistant.askSelection", "title": "問選取的程式碼", "category": "小助理" },
+      { "command": "devAssistant.restart", "title": "重新啟動(換工作區後用)", "category": "小助理" },
+      { "command": "devAssistant.stop", "title": "停止", "category": "小助理" }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "devAssistant.askSelection", "when": "editorHasSelection", "group": "navigation@100" }
+      ]
+    },
+    "keybindings": [
+      { "command": "devAssistant.askSelection", "key": "ctrl+alt+a", "mac": "cmd+alt+a", "when": "editorHasSelection" }
+    ],
+    "configuration": {
+      "title": "小助理",
+      "properties": {
+        "devAssistant.projectPath": {
+          "type": "string",
+          "default": "",
+          "description": "小助理的資料夾(裡面有 webui.py 和 .venv)。留空的話,第一次使用時會請你選。"
+        },
+        "devAssistant.port": {
+          "type": "number",
+          "default": 8770,
+          "description": "小助理在本機使用的連接埠(跟自己開的 webui.py 錯開,預設 8770)。"
+        },
+        "devAssistant.useWorkspaceFolder": {
+          "type": "boolean",
+          "default": true,
+          "description": "讓小助理分析 VS Code 目前開著的資料夾(關掉的話照小助理 .env 的 AGENT_WORKSPACE)。"
+        }
+      }
+    }
+  }
+}

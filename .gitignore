@@ -5,3 +5,4 @@ __pycache__/
 .agent_patches/
 smoke_results.log
 output/
+vscode-extension/*.vsix

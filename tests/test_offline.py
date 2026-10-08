@@ -1121,3 +1121,23 @@ def test_webui_plan_mode(webui_app):
     assert later[0] == {"seq": events[-1]["seq"] + 1, "kind": "plan_answered", "go": True}
     assert later[1]["kind"] == "user" and later[1]["text"] == "照計畫執行" and later[1]["mode"] == "execute"
     assert "照上面的計畫執行" in app.seen[1][1][-1].content and "update_plan" in app.seen[1][2]
+
+
+def test_vscode_extension_package(tmp_path, monkeypatch):
+    """VS Code 外掛:.vsix 結構正確(manifest 的 id / 版本跟 package.json 一致),指令都有註冊在 package.json。"""
+    import importlib.util
+    import re
+    import zipfile
+    from pathlib import Path
+    root = Path(__file__).parent.parent / "vscode-extension"
+    spec = importlib.util.spec_from_file_location("build_vsix", root / "build_vsix.py")
+    build_vsix = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(build_vsix)
+    pkg = json.loads((root / "package.json").read_text(encoding="utf-8"))
+    with zipfile.ZipFile(build_vsix.build(tmp_path)) as z:
+        assert set(z.namelist()) == {"extension.vsixmanifest", "[Content_Types].xml", "extension/package.json",
+                                     "extension/extension.js", "extension/README.md"}
+        manifest = z.read("extension.vsixmanifest").decode()
+    assert f'Id="{pkg["name"]}" Version="{pkg["version"]}" Publisher="{pkg["publisher"]}"' in manifest
+    registered = set(re.findall(r'registerCommand\("([^"]+)"', (root / "extension.js").read_text(encoding="utf-8")))
+    assert registered == {c["command"] for c in pkg["contributes"]["commands"]}
