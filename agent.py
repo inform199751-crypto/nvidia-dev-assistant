@@ -17,6 +17,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, To
 from llm_registry import ModelRegistry
 from token_guard import (TokenQuota, compact_history, estimate_tokens, message_tokens,
                          outline, strip_stale_reasoning, strip_think_text, tool_tokens, truncate_middle)
+import documents
 import tools as toolbox
 from tools import ALL_TOOLS
 
@@ -65,9 +66,15 @@ def build_user_prompt(task: str, attachments: list[str], inline_limit: int, whol
     """
     parts = []
     for rel in attachments:
-        text = toolbox._safe_path(rel).read_text(encoding="utf-8", errors="replace")  # 附檔也要過機密檔檢查
+        path = toolbox._safe_path(rel)  # 附檔也要過機密檔檢查
+        text = documents.extract_text(path)  # PDF / Word / Excel 先轉文字,其他當純文字
         n_lines = text.count("\n") + 1
-        if whole or estimate_tokens(text) <= inline_limit:
+        tokens = estimate_tokens(text)
+        if path.suffix.lower() in documents.DOC_SUFFIXES:  # 文件不加行號
+            parts.append(f'<document path="{rel}">\n{text}\n</document>' if whole or tokens <= inline_limit else
+                         f'<document path="{rel}">(文件約 {tokens:,} tokens,太長未內嵌,'
+                         f"請用 read_document 分段讀)</document>")
+        elif whole or tokens <= inline_limit:
             parts.append(f'<file path="{rel}" lines="1-{n_lines}">\n{_numbered(text)}\n</file>')
         else:
             parts.append(f'<file_outline path="{rel}" total_lines="{n_lines}">\n{outline(text, rel)}\n'
@@ -80,15 +87,19 @@ def build_user_prompt(task: str, attachments: list[str], inline_limit: int, whol
 
 def file_mentions(text: str) -> list[str]:
     """問題裡的 @路徑(例如「看一下 @calc.py」)且確實是工作區檔案的,當成附檔;@decorator 之類的不算。
-    只認 ASCII 路徑字元:中文常不空格(「看@calc.py的add」),\\w 會把後面的中文也吃進去。"""
+    中文常不空格(「看@會議紀錄.docx然後摘要」),所以從最長往回試,取確實存在的最長檔名。"""
     found = []
-    for m in re.finditer(r"@([\w./\\-]+)", text, re.ASCII):
-        rel = m.group(1).rstrip(".,;:")
-        try:
-            if toolbox._safe_path(rel).is_file() and rel not in found:
-                found.append(rel)
-        except (ValueError, PermissionError):
-            pass
+    for m in re.finditer(r"@([^\s@,，。;；:：、()（）「」『』\"'`]+)", text):
+        candidate = m.group(1).rstrip(".")  # Windows 會忽略結尾的點,「calc.py.」也會被當成 calc.py
+        for end in range(len(candidate), 0, -1):
+            rel = candidate[:end]
+            try:
+                if toolbox._safe_path(rel).is_file():
+                    if rel not in found:
+                        found.append(rel)
+                    break
+            except (ValueError, PermissionError, OSError):
+                continue
     return found
 
 

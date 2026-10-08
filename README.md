@@ -30,6 +30,7 @@ flowchart LR
 | `agent.py` | agent 迴圈:每步送出前清舊思考 → 瘦身 → 放不下就升級模型 → 檢查配額;`AgentSession` 支援多輪互動 |
 | `token_guard.py` | token 估算(實測校準)、截斷、歷史瘦身、大檔大綱、每人配額 |
 | `tools.py` | 列檔 / 讀檔 / 搜尋 / git 紀錄 / 沙箱測試與指令 / 提 patch / 存文件,含機密檔封鎖 |
+| `documents.py` | PDF / Word / Excel 轉文字,給 `read_document` 和 `@附檔` 用 |
 | `smoke_test.py` | 對 catalog 上每個模型做冒煙測試(回應、思考開關、tool calling) |
 
 ## 實測結果(2026-10-06,NVIDIA API Catalog 免費層)
@@ -39,7 +40,7 @@ flowchart LR
 | 模型冒煙測試 | 三顆模型 × 回應 / 開思考 / 關思考 / tool calling | 全過;Super 每次 0.4–2.6 秒,DeepSeek 18–27 秒 |
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
-| 離線測試 | 假模型,不需金鑰 | 49 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 52 個全過 |
 
 ## 實測與審查抓到的 19 個問題
 

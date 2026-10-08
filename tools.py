@@ -15,6 +15,8 @@ from typing import TypedDict
 
 from langchain_core.tools import tool
 
+import documents
+
 WORKSPACE = Path(os.getenv("AGENT_WORKSPACE", ".")).resolve()
 SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "dev-assistant-sandbox")  # sandbox/Dockerfile 建的(含 pytest)
 OUTPUT_DIR = Path(os.getenv("AGENT_OUTPUT", Path(__file__).with_name("output"))).resolve()  # save_document 存這裡
@@ -64,6 +66,19 @@ def read_file(path: str, start_line: int = 1, end_line: int | None = None) -> st
     body = "\n".join(f"{n:>5}| {lines[n - 1]}" for n in range(start, end + 1))
     more = f"\n[檔案共 {len(lines)} 行,已顯示 {start}-{end}]" if end < len(lines) or start > 1 else ""
     return body + more
+
+
+DOC_PART_TOKENS = 3000  # read_document 每段的大小,要比 limits.tool_output_max_tokens 小才不會被截斷
+
+
+@tool
+def read_document(path: str, part: int = 1) -> str:
+    """讀 PDF、Word(.docx)、Excel(.xlsx)的文字內容(也能讀一般文字檔)。很長的檔案會分段,用 part=2、3… 讀後面。"""
+    parts = documents.split_parts(documents.extract_text(_safe_path(path)), DOC_PART_TOKENS)
+    if not 1 <= part <= len(parts):
+        return f"錯誤:{path} 只有 {len(parts)} 段"
+    more = f"\n[還有 {len(parts) - part} 段,用 part={part + 1} 繼續讀]" if part < len(parts) else ""
+    return f"[{path} 第 {part}/{len(parts)} 段]\n{parts[part - 1]}{more}"
 
 
 _SKIP_DIRS = {".agent_patches", ".git", ".venv", "__pycache__", "node_modules"}
@@ -323,4 +338,4 @@ def apply_patch(patch_file: Path) -> str:
 
 
 ALL_TOOLS = [list_files, read_file, search_code, git_log, git_blame, run_tests, run_command, propose_patch,
-             save_document]
+             read_document, save_document]

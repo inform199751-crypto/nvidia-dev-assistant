@@ -11,6 +11,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
+import documents
 import tools
 from agent import SYSTEM_PROMPT, AgentSession, build_user_prompt, chat, file_mentions, run_agent
 from llm_registry import ModelRegistry
@@ -205,8 +206,9 @@ def test_focused_mode_sends_outline_not_full_text(workspace):
 
 
 def test_agent_escalates_mid_run_when_history_grows(workspace):
+    # 預算約 6650:系統提示 + 工具定義約 2900,讀 100 行(約 1500)放得下,再讀 300 行就放不下
     cfg = copy.deepcopy(CONFIG)
-    cfg["roles"]["code"].update(context_window=6000, max_output=1000)
+    cfg["roles"]["code"].update(context_window=8500, max_output=1000)
     cfg["limits"]["tool_output_max_tokens"] = 5000
     (workspace / "a.py").write_text("y = 2  # padding padding padding\n" * 1500, encoding="utf-8")
     reg, seen = scripted_registry([
@@ -486,6 +488,83 @@ def test_save_document_stays_in_output_dir(workspace, tmp_path_factory, monkeypa
     assert "錯誤" in save("run.sh") and "錯誤" in save(".bashrc.md") and "錯誤" in save("")
     assert sorted(p.name for p in out.iterdir()) == ["報告.md", "報告_2.md", "清單.csv"]
     assert list(workspace.iterdir()) == []
+
+
+def _tiny_pdf(pages: list[str]) -> bytes:
+    """手工組一個最小的文字 PDF(標準字型、只放 ASCII),測試不用另外裝產生 PDF 的套件。"""
+    objs = ["<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    kids = []
+    for text in pages:
+        stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET"
+        objs.append(f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream")
+        objs.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                    f"/Resources << /Font << /F1 3 0 R >> >> /Contents {len(objs)} 0 R >>")
+        kids.append(f"{len(objs)} 0 R")
+    objs[1] = f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {len(pages)} >>"
+    out, offsets = b"%PDF-1.4\n", []
+    for i, body in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj\n{body}\nendobj\n".encode()
+    xref = len(out)
+    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
+    out += "".join(f"{o:010d} 00000 n \n" for o in offsets).encode()
+    return out + f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+
+
+def test_read_office_documents(workspace, monkeypatch):
+    from docx import Document
+    from openpyxl import Workbook
+
+    doc = Document()
+    doc.add_heading("會議紀錄", level=1)
+    doc.add_paragraph("決議:下週上線")
+    table = doc.add_table(rows=2, cols=2)
+    for (r, c), text in {(0, 0): "負責人", (0, 1): "項目", (1, 0): "小明", (1, 1): "測試"}.items():
+        table.cell(r, c).text = text
+    doc.add_paragraph("結尾")
+    doc.save(workspace / "會議紀錄.docx")
+    wb = Workbook()
+    wb.active.title = "銷售"
+    for row in [["月份", "金額"], ["1月", 100], [None, None], ["2月", 200.5]]:
+        wb.active.append(row)
+    wb.create_sheet("空白")
+    wb.save(workspace / "報表.xlsx")
+    (workspace / "spec.pdf").write_bytes(_tiny_pdf(["Hello page one", "Second page"]))
+    (workspace / "scan.pdf").write_bytes(_tiny_pdf([""]))
+    (workspace / "old.doc").write_bytes(b"\xd0\xcf")
+
+    read = lambda path, part=1: tools.read_document.invoke({"path": path, "part": part})  # noqa: E731
+    assert read("會議紀錄.docx").splitlines()[1:] == ["# 會議紀錄", "決議:下週上線", "負責人 | 項目", "小明 | 測試", "", "結尾"]
+    assert read("報表.xlsx").splitlines()[1:] == ["## 工作表:銷售", "月份 | 金額", "1月 | 100", "2月 | 200.5", "",
+                                                "## 工作表:空白"]
+    pdf = read("spec.pdf")
+    assert "--- 第 1 頁 ---\nHello page one" in pdf and "--- 第 2 頁 ---\nSecond page" in pdf
+    assert "沒有文字層" in read("scan.pdf")
+    with pytest.raises(ValueError, match="舊版 Office"):
+        read("old.doc")
+    monkeypatch.setattr(documents, "MAX_SHEET_ROWS", 1)
+    assert "只顯示前 1 列" in read("報表.xlsx")
+
+
+def test_read_document_in_parts(workspace, monkeypatch):
+    monkeypatch.setattr(tools, "DOC_PART_TOKENS", 50)
+    (workspace / "long.txt").write_text("\n".join(f"第 {i} 行內容" for i in range(60)), encoding="utf-8")
+    first = tools.read_document.invoke({"path": "long.txt"})
+    assert first.startswith("[long.txt 第 1/") and "用 part=2 繼續讀" in first and "第 0 行內容" in first
+    assert "只有" in tools.read_document.invoke({"path": "long.txt", "part": 99})
+
+
+def test_office_file_attached_by_chinese_name(workspace):
+    """@中文檔名、後面不空格也認得;文件附檔轉成文字、不加行號。"""
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("下週三上線")
+    doc.save(workspace / "會議紀錄.docx")
+    assert file_mentions("幫我看@會議紀錄.docx然後摘要") == ["會議紀錄.docx"]
+    reg, seen = scripted_registry([ai("摘要好了")])
+    run_agent("摘要", registry=reg, quota=TokenQuota(10**6, 2), attachments=["會議紀錄.docx"])
+    assert '<document path="會議紀錄.docx">\n下週三上線\n</document>' in seen[0][1][1].content
 
 
 def test_nim_backend_uses_nim_context_window():
