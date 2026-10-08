@@ -201,8 +201,8 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
     saved = patch_file.relative_to(WORKSPACE).as_posix()
     # 10/9 實測:模型先單獨修 bug、再單獨送新測試檔,以為會疊加,結果測試失敗多繞好幾步
     return (f"已存成 {saved},等工程師審核後套用。\n```diff\n{diff}```\n套用此 patch 後的測試結果:\n{result}\n"
-            "(提醒:每個 patch 都是單獨套在原始檔案上驗證,之前的 patch 不會一起套用;"
-            "要調整就重送包含全部修改的 edits)")
+            "<note>給你的內部提醒,不要轉述給使用者:每個 patch 都是單獨套在原始檔案上驗證,"
+            "之前的 patch 不會一起套用;要調整就重送包含全部修改的 edits。</note>")
 
 
 ALL_TOOLS = [read_file, search_code, run_tests, propose_patch]

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,72 +73,154 @@ def build_user_prompt(task: str, attachments: list[str], inline_limit: int, whol
     return "\n\n".join(parts)
 
 
+def file_mentions(text: str) -> list[str]:
+    """問題裡的 @路徑(例如「看一下 @calc.py」)且確實是工作區檔案的,當成附檔;@decorator 之類的不算。
+    只認 ASCII 路徑字元:中文常不空格(「看@calc.py的add」),\\w 會把後面的中文也吃進去。"""
+    found = []
+    for m in re.finditer(r"@([\w./\\-]+)", text, re.ASCII):
+        rel = m.group(1).rstrip(".,;:")
+        try:
+            if toolbox._safe_path(rel).is_file() and rel not in found:
+                found.append(rel)
+        except (ValueError, PermissionError):
+            pass
+    return found
+
+
+class AgentSession:
+    """一段對話:保留完整 messages,每一輪(每次 ask)都走同一套逐步檢查。CLI 單次任務就是只問一輪。
+
+    跨輪保留的:對話內容、估算倍率 scale。每輪重新決定模型(放得下就回到預設角色)。
+    """
+
+    def __init__(self, registry: ModelRegistry, quota: TokenQuota, *, user: str = "cli",
+                 role: str | None = None, thinking: bool | None = None, whole: bool = False,
+                 tools: list = ALL_TOOLS):
+        self.registry, self.quota, self.user = registry, quota, user
+        self.requested_role, self.thinking, self.whole = role, thinking, whole
+        self.tools = [] if whole else list(tools)
+        self.tool_map = {t.name: t for t in self.tools}
+        self.overhead = tool_tokens(self.tools)  # 工具定義每步都送,是固定成本;不算進來會被誤判成估算偏低
+        self.messages: list[BaseMessage] = [SystemMessage(SYSTEM_PROMPT)]
+        self.scale = 1.0  # 估算偏低時,用伺服器回報的實際 input tokens 往上修正
+        self.tokens_used = 0  # 整段對話累計
+
+    def sized(self) -> int:
+        return int((message_tokens(self.messages) + self.overhead) * self.scale)
+
+    def ask(self, task: str, attachments: list[str] = ()) -> AgentResult:
+        """問一輪。中途出錯(額度、伺服器全掛)就把這一輪的訊息退掉,對話停在上一輪結束的狀態。"""
+        start = len(self.messages)
+        try:
+            return self._ask(task, list(attachments))
+        except BaseException:
+            del self.messages[start:]
+            raise
+
+    def _ask(self, task: str, attachments: list[str]) -> AgentResult:
+        reg, limits, tools = self.registry, self.registry.limits, self.tools
+        self.messages.append(HumanMessage(
+            build_user_prompt(task, attachments, limits["inline_file_max_tokens"], self.whole)))
+        role = reg.pick_role(prompt_tokens=self.sized(), needs_tools=bool(tools), requested=self.requested_role)
+        llm = reg.agent_model(role, tools, thinking=self.thinking)
+        used = 0
+
+        with self.quota.slot(self.user):
+            for step in range(1, limits["max_agent_steps"] + 1):
+                # 每一步送出前的三道檢查:清掉舊思考 → 瘦身 → 還放不下就升級模型
+                self.messages = strip_stale_reasoning(self.messages)
+                budget = reg.budget(role)
+                if self.sized() > budget:
+                    self.messages = compact_history(self.messages, int(budget / self.scale) - self.overhead)
+                if (tokens := self.sized()) > budget:
+                    new_role = reg.pick_role(prompt_tokens=tokens, needs_tools=bool(tools))  # 放不下會丟 ContextTooLarge
+                    log.info("對話約 %s tokens 超過 %s 的預算,升級到 %s", tokens, role, new_role)
+                    role, llm = new_role, reg.agent_model(new_role, tools, thinking=self.thinking)
+                self.quota.check(self.user, self.sized() + reg.spec(role).max_output)  # 每步都檢查,不是只在開始
+
+                estimated = message_tokens(self.messages) + self.overhead
+                ai = llm.invoke(self.messages)
+                usage = ai.usage_metadata or {}
+                if usage.get("input_tokens") and usage["input_tokens"] / estimated > self.scale * 1.05:
+                    self.scale = usage["input_tokens"] / estimated
+                    log.info("估算偏低:實際 %s / 估算 %s,之後的預算按 %.2f 倍計",
+                             usage["input_tokens"], estimated, self.scale)
+                step_tokens = usage.get("total_tokens", 0)
+                used += step_tokens
+                self.tokens_used += step_tokens
+                self.quota.charge(self.user, step_tokens)
+                self.messages.append(ai)
+                calls = ", ".join([f"{c['name']}({str(c['args'])[:60]})" for c in ai.tool_calls]
+                                  + [f"{c.get('name')}(參數格式錯誤)" for c in ai.invalid_tool_calls]) or "(回答)"
+                log.info("step %d  role=%s  tokens=%d  %s", step, role, step_tokens, calls)
+
+                if not ai.tool_calls and not ai.invalid_tool_calls:
+                    return AgentResult(strip_think_text(str(ai.content)), role, step, used)
+                for call in ai.tool_calls:
+                    tool = self.tool_map.get(call["name"])
+                    try:
+                        out = tool.invoke(call["args"]) if tool else f"錯誤:沒有 {call['name']} 這個工具"
+                    except Exception as e:  # 錯誤回給模型自己修正,不讓整個流程掛掉
+                        out = f"工具執行錯誤:{type(e).__name__}: {e}"
+                    self.messages.append(ToolMessage(truncate_middle(str(out), limits["tool_output_max_tokens"]),
+                                                     tool_call_id=call["id"]))
+                # 參數不是合法 JSON 的呼叫會落在 invalid_tool_calls(tool_calls 是空的);
+                # 套件仍會把原始 tool call 送回伺服器,所以一樣要回一則 ToolMessage 讓模型修正重送
+                for bad in ai.invalid_tool_calls:
+                    out = f"錯誤:{bad.get('name')} 的參數不是合法 JSON,請修正後重送。\n{bad.get('error') or ''}"
+                    self.messages.append(ToolMessage(truncate_middle(out, limits["tool_output_max_tokens"]),
+                                                     tool_call_id=bad.get("id") or ""))
+        return AgentResult(f"[已達 {limits['max_agent_steps']} 步上限,停止。請把問題拆小再問]",
+                           role, limits["max_agent_steps"], used)
+
+
 def run_agent(task: str, *, registry: ModelRegistry, quota: TokenQuota, user: str = "cli",
               attachments: list[str] = (), role: str | None = None, thinking: bool | None = None,
               whole: bool = False, tools: list = ALL_TOOLS) -> AgentResult:
-    limits = registry.limits
-    if whole:
-        tools = []
-    messages: list[BaseMessage] = [
-        SystemMessage(SYSTEM_PROMPT),
-        HumanMessage(build_user_prompt(task, list(attachments), limits["inline_file_max_tokens"], whole)),
-    ]
-    overhead = tool_tokens(tools)  # 工具定義每步都送,是固定成本;不算進來會被誤判成估算偏低
-    role = registry.pick_role(prompt_tokens=message_tokens(messages) + overhead, needs_tools=bool(tools),
-                              requested=role)
-    llm = registry.agent_model(role, tools, thinking=thinking)
-    tool_map = {t.name: t for t in tools}
-    used = 0
-    scale = 1.0  # 估算偏低時,用伺服器回報的實際 input tokens 往上修正
+    """單次任務:開一段新對話、只問一輪。"""
+    session = AgentSession(registry, quota, user=user, role=role, thinking=thinking, whole=whole, tools=tools)
+    return session.ask(task, attachments)
 
-    def sized() -> int:
-        return int((message_tokens(messages) + overhead) * scale)
 
-    with quota.slot(user):
-        for step in range(1, limits["max_agent_steps"] + 1):
-            # 每一步送出前的三道檢查:清掉舊思考 → 瘦身 → 還放不下就升級模型
-            messages = strip_stale_reasoning(messages)
-            budget = registry.budget(role)
-            if sized() > budget:
-                messages = compact_history(messages, int(budget / scale) - overhead)
-            if (tokens := sized()) > budget:
-                new_role = registry.pick_role(prompt_tokens=tokens, needs_tools=bool(tools))  # 放不下會丟 ContextTooLarge
-                log.info("對話約 %s tokens 超過 %s 的預算,升級到 %s", tokens, role, new_role)
-                role, llm = new_role, registry.agent_model(new_role, tools, thinking=thinking)
-            quota.check(user, sized() + registry.spec(role).max_output)  # 每步都檢查,不是只在開始
+HELP = """直接輸入問題,Enter 送出。用 @路徑 附上工作區的檔案,例如:看一下 @calc.py 的 add
+  /clear  開始新對話(清掉前面的內容)
+  /help   顯示這段說明
+  /exit   離開(也可以按 Ctrl+C)"""
 
-            estimated = message_tokens(messages) + overhead
-            ai = llm.invoke(messages)
-            usage = ai.usage_metadata or {}
-            if usage.get("input_tokens") and estimated and usage["input_tokens"] / estimated > scale * 1.05:
-                scale = usage["input_tokens"] / estimated
-                log.info("估算偏低:實際 %s / 估算 %s,之後的預算按 %.2f 倍計", usage["input_tokens"], estimated, scale)
-            step_tokens = usage.get("total_tokens", 0)
-            used += step_tokens
-            quota.charge(user, step_tokens)
-            messages.append(ai)
-            calls = ", ".join([f"{c['name']}({str(c['args'])[:60]})" for c in ai.tool_calls]
-                              + [f"{c.get('name')}(參數格式錯誤)" for c in ai.invalid_tool_calls]) or "(回答)"
-            log.info("step %d  role=%s  tokens=%d  %s", step, role, step_tokens, calls)
 
-            if not ai.tool_calls and not ai.invalid_tool_calls:
-                return AgentResult(strip_think_text(str(ai.content)), role, step, used)
-            for call in ai.tool_calls:
-                tool = tool_map.get(call["name"])
-                try:
-                    out = tool.invoke(call["args"]) if tool else f"錯誤:沒有 {call['name']} 這個工具"
-                except Exception as e:  # 錯誤回給模型自己修正,不讓整個流程掛掉
-                    out = f"工具執行錯誤:{type(e).__name__}: {e}"
-                messages.append(ToolMessage(truncate_middle(str(out), limits["tool_output_max_tokens"]),
-                                            tool_call_id=call["id"]))
-            # 參數不是合法 JSON 的呼叫會落在 invalid_tool_calls(tool_calls 是空的);
-            # 套件仍會把原始 tool call 送回伺服器,所以一樣要回一則 ToolMessage 讓模型修正重送
-            for bad in ai.invalid_tool_calls:
-                out = f"錯誤:{bad.get('name')} 的參數不是合法 JSON,請修正後重送。\n{bad.get('error') or ''}"
-                messages.append(ToolMessage(truncate_middle(out, limits["tool_output_max_tokens"]),
-                                            tool_call_id=bad.get("id") or ""))
-    return AgentResult(f"[已達 {limits['max_agent_steps']} 步上限,停止。請把問題拆小再問]",
-                       role, limits["max_agent_steps"], used)
+def chat(session_factory, first_files: list[str]) -> None:
+    """互動模式:像 Claude Code 一樣一直聊,前面說過的內容都記得。"""
+    session = session_factory()
+    print(f"對內研發助理 · 工作區 {toolbox.WORKSPACE} · 輸入 /help 看用法、/exit 離開")
+    pending = list(first_files)  # -f 給的檔案附在第一個問題
+    while True:
+        try:
+            text = input("\n> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if not text:
+            continue
+        if text in ("/exit", "/quit"):
+            return
+        if text == "/help":
+            print(HELP)
+            continue
+        if text == "/clear":
+            session = session_factory()
+            print("已開始新對話。")
+            continue
+        try:
+            r = session.ask(text, pending + [f for f in file_mentions(text) if f not in pending])
+        except KeyboardInterrupt:
+            print("\n(已中斷這一輪,對話保留在上一輪結束的狀態)")
+            continue
+        except Exception as e:  # 額度用完、模型全掛:這輪退掉,對話還能繼續
+            print(f"\n錯誤:{type(e).__name__}: {e}")
+            continue
+        pending = []
+        print(f"\n{r.answer}\n\n— {r.role} · {r.steps} 步 · {r.tokens_used:,} tokens"
+              f"(這段對話累計 {session.tokens_used:,})")
 
 
 def main() -> None:
@@ -148,7 +231,7 @@ def main() -> None:
     workspace = Path(os.getenv("AGENT_WORKSPACE", "."))
     toolbox.configure(workspace if workspace.is_absolute() else here / workspace, os.getenv("SANDBOX_IMAGE"))
     ap = argparse.ArgumentParser(description="對內研發助理(NVIDIA NIM / API Catalog)")
-    ap.add_argument("task")
+    ap.add_argument("task", nargs="?", help="要做的事;不給就進入互動模式,可以一直聊下去")
     ap.add_argument("-f", "--file", action="append", default=[], help="附檔(相對於 AGENT_WORKSPACE)")
     ap.add_argument("--role", help="強制指定模型角色:code(日常)/ code_deep(難題)/ long_context")
     ap.add_argument("--think", choices=["on", "off"], help="思考模式;不給就用伺服器預設")
@@ -159,8 +242,14 @@ def main() -> None:
     registry = ModelRegistry.from_yaml()
     quota = TokenQuota(registry.limits["daily_tokens_per_user"], registry.limits["max_concurrent_per_user"])
     thinking = {"on": True, "off": False}.get(args.think)
-    r = run_agent(args.task, registry=registry, quota=quota, attachments=args.file,
-                  role=args.role, thinking=thinking, whole=args.whole)
+
+    def new_session() -> AgentSession:
+        return AgentSession(registry, quota, role=args.role, thinking=thinking, whole=args.whole)
+
+    if args.task is None:
+        chat(new_session, args.file)
+        return
+    r = new_session().ask(args.task, args.file)
     print(f"\n{r.answer}\n\n— {r.role} · {r.steps} 步 · {r.tokens_used:,} tokens")
 
 

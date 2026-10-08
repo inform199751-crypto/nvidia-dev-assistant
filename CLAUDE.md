@@ -15,6 +15,7 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 .venv/Scripts/python -m pytest -q tests/test_offline.py::test_propose_patch_can_add_new_file   # 單一測試
 .venv/Scripts/python smoke_test.py                       # 對 catalog 真模型做冒煙測試,結果附加到 smoke_results.log
 .venv/Scripts/python smoke_test.py --roles long_context --checks think_off tool   # 只重跑失敗的項目
+.venv/Scripts/python agent.py                            # 互動模式(@檔案 附檔、/clear、/exit)
 .venv/Scripts/python agent.py "test_add 失敗了,找出 bug 並提出修正" -f calc.py
 .venv/Scripts/python agent.py "寫技術文件" -f a.py -f b.py --whole      # 整檔模式
 .venv/Scripts/python agent.py "..." --role code_deep --think on
@@ -27,8 +28,8 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 
 ## 架構
 
-一次任務的流程(`agent.run_agent`):`[System, Human(附檔 + 任務)]` → 每一步送出前依序做:
-1. `token_guard.strip_stale_reasoning`:只清「上一輪以前」的推理。CLI 一次任務只有一個 HumanMessage,所以單次任務內不清 —— 這是刻意的,模型接著 tool call 推理需要本輪的 reasoning。
+`agent.AgentSession` 保存一段對話(messages、估算倍率 `scale`、累計 tokens);`ask()` 是一輪,中途出錯會把這一輪的訊息退掉。`run_agent()` = 開新 session 只問一輪;`chat()` 是互動模式的 REPL,問題裡的 `@路徑` 由 `file_mentions` 轉成附檔。每輪開始重新 `pick_role`,之後每一步送出前依序做:
+1. `token_guard.strip_stale_reasoning`:只清「上一輪以前」的推理。同一輪內不清 —— 這是刻意的,模型接著 tool call 推理需要本輪的 reasoning。
 2. 超過預算 → `compact_history`(把舊 ToolMessage 內容換成佔位字)。
 3. 還放不下 → `registry.pick_role` 升級到 `long_context`;連它都放不下丟 `ContextTooLarge`。
 4. `quota.check`(每一步都查,不是只在開始)。

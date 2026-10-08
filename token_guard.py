@@ -106,7 +106,8 @@ def strip_stale_reasoning(messages: list[BaseMessage]) -> list[BaseMessage]:
     多輪對話每一輪都重送全部思考過程,token 會滾雪球。
     本輪(最後一個 HumanMessage 之後)保留,因為有些模型的 tool calling
     要求同一輪內把 reasoning 帶回去才能接著想。
-    注意:CLI 一次任務只有一個 HumanMessage,整個任務都算本輪,這裡不會刪任何東西;
+    互動模式(AgentSession 多輪)每問一句,前面幾輪的思考就會被清掉。
+    單次任務只有一個 HumanMessage,整個任務都算本輪,這裡不會刪任何東西;
     本輪的思考仍會累積,但 message_tokens 有算進去,超過預算一樣會瘦身 / 升級。
     """
     last_human = max((i for i, m in enumerate(messages) if isinstance(m, HumanMessage)), default=-1)

@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 import tools
-from agent import SYSTEM_PROMPT, build_user_prompt, run_agent
+from agent import SYSTEM_PROMPT, AgentSession, build_user_prompt, chat, file_mentions, run_agent
 from llm_registry import ModelRegistry
 from token_guard import (ContextTooLarge, QuotaExceeded, TokenQuota, compact_history,
                          message_tokens, outline, strip_stale_reasoning, tool_tokens, truncate_middle)
@@ -48,7 +48,10 @@ class ScriptedChat(BaseChatModel):
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs: Any) -> ChatResult:
         self.seen.append((self.role, list(messages)))
-        return ChatResult(generations=[ChatGeneration(message=self.script.pop(0))])
+        reply = self.script.pop(0)
+        if isinstance(reply, Exception):  # 劇本裡放例外 = 模擬伺服器掛掉
+            raise reply
+        return ChatResult(generations=[ChatGeneration(message=reply)])
 
     def bind_tools(self, tools, **kwargs):
         return self
@@ -472,6 +475,53 @@ def test_quota_is_checked_every_step(workspace):
     with pytest.raises(QuotaExceeded):
         run_agent("看 a.py", registry=reg, quota=TokenQuota(10**6, 2))
     assert len(seen) == 1
+
+
+def test_session_keeps_history_across_turns(workspace):
+    """互動模式:第二輪看得到第一輪的問答;上一輪的思考內容在送出前清掉。"""
+    reg, seen = scripted_registry([ai("calc.py:2 寫成減號", reasoning="第一輪的思考"), ai("改成 a + b 就好")])
+    s = AgentSession(reg, TokenQuota(10**6, 2))
+    assert s.ask("add 哪裡錯").answer == "calc.py:2 寫成減號"
+    assert s.ask("那要怎麼改").answer == "改成 a + b 就好"
+    assert s.tokens_used == 200
+    sent = seen[1][1]  # 第二輪送給模型的完整對話
+    assert [type(m).__name__ for m in sent] == ["SystemMessage", "HumanMessage", "AIMessage", "HumanMessage"]
+    assert "add 哪裡錯" in sent[1].content and "那要怎麼改" in sent[3].content
+    assert sent[2].content == "calc.py:2 寫成減號" and "reasoning_content" not in sent[2].additional_kwargs
+
+
+def test_failed_turn_is_rolled_back(workspace):
+    """這一輪主模型和備援都掛 → 退回上一輪結束的狀態,對話還能繼續問。"""
+    reg, seen = scripted_registry([ai("第一輪"), RuntimeError("503"), RuntimeError("503"), ai("第三輪")])
+    s = AgentSession(reg, TokenQuota(10**6, 2))
+    s.ask("q1")
+    with pytest.raises(RuntimeError):
+        s.ask("q2")
+    assert [type(m).__name__ for m in s.messages] == ["SystemMessage", "HumanMessage", "AIMessage"]
+    assert s.ask("q3").answer == "第三輪"
+    assert "q2" not in "".join(str(m.content) for m in seen[-1][1])
+
+
+def test_file_mentions_attach_only_real_workspace_files(workspace):
+    (workspace / "calc.py").write_text("x = 1\n", encoding="utf-8")
+    (workspace / "pkg").mkdir()
+    (workspace / "pkg" / "m.py").write_text("y = 2\n", encoding="utf-8")
+    (workspace / ".env").write_text("K=1\n", encoding="utf-8")
+    text = "看@calc.py的add,還有 @pkg/m.py。@tool 裝飾器、寄信給 a@b.com、@.env、@../x.py、@pkg、再看一次 @calc.py."
+    assert file_mentions(text) == ["calc.py", "pkg/m.py"]
+
+
+def test_chat_repl(workspace, monkeypatch, capsys):
+    """互動模式:@檔案會附上;/clear 之後是全新的對話。"""
+    (workspace / "calc.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    reg, seen = scripted_registry([ai("第一題的答案"), ai("新對話的答案")])
+    inputs = iter(["/help", "看 @calc.py", "/clear", "第二題", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+    chat(lambda: AgentSession(reg, TokenQuota(10**6, 2)), [])
+    out = capsys.readouterr().out
+    assert "/clear" in out and "第一題的答案" in out and "新對話的答案" in out
+    assert "return a - b" in seen[0][1][1].content
+    assert [type(m).__name__ for m in seen[1][1]] == ["SystemMessage", "HumanMessage"]
 
 
 def test_tool_definitions_do_not_inflate_estimate(workspace, caplog):
