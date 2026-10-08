@@ -60,6 +60,48 @@ def _safe_path(rel: str) -> Path:
 _COPY_IGNORE = shutil.ignore_patterns(".agent_patches", ".git", ".venv", "__pycache__", "node_modules",
                                       ".env", ".env.local", ".env.prod*", "*.pem", "*.key", "id_rsa*")
 
+_HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$")
+_GIT_EXTENDED = ("diff --git ", "index ", "similarity index ", "dissimilarity index ", "rename from ", "rename to ",
+                 "copy from ", "copy to ", "new file mode ", "deleted file mode ", "old mode ", "new mode ")
+
+
+def normalize_diff(diff: str) -> str:
+    """把模型給的 diff 整理成穩定可套用的格式(驗證和工程師套用都用同一份,所以兩邊結果一致)。
+
+    - 去掉 git 擴充標頭(diff --git / index …):git 會把這種 patch 的路徑當成相對於「上層 repo 根目錄」,
+      工作區若巢狀在別的 repo 裡,patch 會被靜靜略過;傳統格式則一律相對於工作區資料夾。
+    - 重算每個 hunk 標頭的行數(模型常算錯)。不用 git apply --recount:它會把下一個檔的 ---/+++ 算進上一個 hunk。
+    - hunk 裡完全空的行補回開頭空格(模型常把空白 context 行的空格吃掉)。
+    """
+    lines = diff.rstrip("\n").split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith(_GIT_EXTENDED):
+            i += 1
+            continue
+        m = _HUNK_HEADER.match(line)
+        if not m:
+            out.append(line)
+            i += 1
+            continue
+        i += 1
+        body: list[str] = []
+        while i < len(lines):
+            nxt = lines[i]
+            if nxt.startswith("@@ ") or nxt.startswith(_GIT_EXTENDED):
+                break
+            if nxt.startswith("--- ") and i + 1 < len(lines) and lines[i + 1].startswith("+++ "):
+                break  # 下一個檔的標頭
+            body.append(nxt if nxt else " ")
+            i += 1
+        old = sum(1 for b in body if b[0] in " -")
+        new = sum(1 for b in body if b[0] in " +")
+        out.append(f"@@ -{m.group(1)},{old} +{m.group(2)},{new} @@{m.group(3)}")
+        out.extend(body)
+    return "\n".join(out) + "\n"
+
 
 def _run_sandbox(root: Path, target: str, image: str | None = None) -> str:
     """在隔離的 Docker 容器裡跑 pytest:無網路、唯讀掛載、限 CPU / 記憶體 / 行程數 / 時間。"""
@@ -135,20 +177,27 @@ def make_tools(workspace: str | Path | None = None, sandbox_image: str | None = 
             return "錯誤:這台機器沒有 git,無法驗證 patch"
         out_dir = base / ".agent_patches"
         out_dir.mkdir(exist_ok=True)
-        patch_file = out_dir / f"{datetime.now():%Y%m%d_%H%M%S}_{Path(path).name}.patch"
-        # 只去掉結尾換行:diff 最後一行常是「只有一個空白」的空行 context,rstrip() 會把它刪掉,git 就判定 corrupt patch
-        patch_file.write_text(f"# {reason}\n{unified_diff.rstrip(chr(10))}\n", encoding="utf-8", newline="\n")
-        r = subprocess.run(["git", "apply", "--check", "--recount", str(patch_file)],  # --recount:模型常數錯 hunk 行數
-                           cwd=base, capture_output=True, text=True)
+        patch_file = out_dir / f"{datetime.now():%Y%m%d_%H%M%S_%f}_{Path(path).name}.patch"
+        reason_line = " ".join(reason.split())[:200]  # 理由只准一行:多行的話可以夾帶審核畫面看不到的 hunk
+        patch_file.write_text(f"# {reason_line}\n{normalize_diff(unified_diff)}", encoding="utf-8", newline="\n")
+        r = subprocess.run(["git", "apply", "--check", str(patch_file)], cwd=base, capture_output=True, text=True)
         if r.returncode != 0:
             patch_file.unlink()
             return f"diff 套不上去,請依錯誤修正後重送:\n{r.stderr.strip()}"
+        stat = subprocess.run(["git", "apply", "--numstat", str(patch_file)], cwd=base, capture_output=True, text=True)
+        if stat.returncode != 0 or not stat.stdout.strip():
+            patch_file.unlink()
+            return "diff 沒有改到任何檔案(路徑可能不對,請用相對於工作區的路徑,a/ b/ 前綴),請修正後重送"
 
         # 套到暫存複本上驗證;正式環境大 repo 改用 git worktree,不要整包複製
         with tempfile.TemporaryDirectory(prefix="agent_verify_") as tmp:
             copy = Path(tmp) / "ws"
             shutil.copytree(base, copy, ignore=_COPY_IGNORE)
-            subprocess.run(["git", "apply", "--recount", str(patch_file)], cwd=copy, check=True, capture_output=True)
+            try:
+                subprocess.run(["git", "apply", str(patch_file)], cwd=copy, check=True, capture_output=True)
+            except subprocess.CalledProcessError as e:
+                patch_file.unlink()
+                return f"diff 套不上去,請依錯誤修正後重送:\n{(e.stderr or b'').decode('utf-8', 'replace').strip()}"
             result = _run_sandbox(copy, test_target, image=sandbox_image)
         saved = patch_file.relative_to(base).as_posix()
         return f"已存成 {saved},等工程師審核後套用。\n套用此 patch 後的測試結果:\n{result}"

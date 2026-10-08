@@ -83,3 +83,10 @@ def test_propose_patch_tolerates_miscounted_hunk_header(tmp_path, monkeypatch):
     out = t["propose_patch"].invoke({"path": "calc.py", "unified_diff": diff, "reason": "修加法", "test_target": "."})
     assert out.startswith("已存成"), out
     assert (tmp_path / "calc.py").read_text(encoding="utf-8") == CALC  # 原檔沒被改
+
+
+def test_normalize_diff_recounts_and_strips_git_headers():
+    raw = ("diff --git a/calc.py b/calc.py\nindex 1234567..89abcde 100644\n--- a/calc.py\n+++ b/calc.py\n"
+           "@@ -1,9 +1,9 @@ def add\n def add(a, b):\n-    return a - b\n+    return a + b\n\n")
+    assert tools.normalize_diff(raw) == ("--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@ def add\n"
+                                         " def add(a, b):\n-    return a - b\n+    return a + b\n")
