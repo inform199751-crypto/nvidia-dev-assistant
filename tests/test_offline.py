@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import subprocess
 from datetime import datetime
@@ -870,3 +871,108 @@ def test_malformed_tool_call_is_fed_back_not_final(workspace):
     feedback = seen[1][1][-1]
     assert isinstance(feedback, ToolMessage) and feedback.tool_call_id == "c1"
     assert "不是合法 JSON" in feedback.content and "delimiter" in feedback.content
+
+
+# ---------- 網頁介面 ----------
+
+class _Web:
+    """測試用的網頁介面:真的開 HTTP 伺服器(隨機 port),模型用照劇本回答的假模型。"""
+    TOKEN = "t0k"
+
+    def __init__(self, script):
+        import threading
+        import webui
+        reg, self.seen = scripted_registry(script)
+        self.hub = webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                             status="上網:關")
+        self.server = webui.serve(self.hub, 0, token=self.TOKEN)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def post(self, path, body, **headers):
+        import httpx
+        return httpx.post(self.base + path, json=body, headers={"X-Token": self.TOKEN, **headers})
+
+    def events_until(self, kind, since=0):
+        """讀 Server-Sent Events,直到出現 kind 這種事件。"""
+        import httpx
+        events = []
+        with httpx.stream("GET", f"{self.base}/api/events?token={self.TOKEN}",
+                          headers={"Last-Event-ID": str(since)}, timeout=10) as r:
+            for line in r.iter_lines():
+                if line.startswith("data: "):
+                    events.append(json.loads(line[6:]))
+                    if events[-1]["kind"] == kind:
+                        return events
+        raise AssertionError(f"沒有等到 {kind}:{events}")
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@pytest.fixture
+def webui_app(workspace):
+    apps = []
+    yield lambda script: apps.append(_Web(script)) or apps[-1]
+    for app in apps:
+        app.close()
+
+
+def test_webui_chat_and_security(webui_app):
+    """只接受帶 token、Host 是本機、內容是 JSON 的請求;問答透過事件串流回來。"""
+    import httpx
+    app = webui_app([ai("你好,我是小助理")])
+    page = httpx.get(app.base + "/")
+    assert page.status_code == 200 and f'const TOKEN = "{app.TOKEN}"' in page.text
+    assert httpx.post(app.base + "/api/ask", json={"text": "hi"}).status_code == 403  # 沒帶 token
+    assert app.post("/api/ask", {"text": "hi"}, Host="evil.example").status_code == 403  # DNS rebinding
+    assert httpx.post(app.base + "/api/ask", content=b"text=hi", headers={
+        "X-Token": app.TOKEN, "Content-Type": "application/x-www-form-urlencoded"}).status_code == 415
+    assert httpx.get(f"{app.base}/api/events?token=wrong").status_code == 403
+    assert app.post("/api/ask", {"text": "你好"}).status_code == 202
+    events = app.events_until("done")
+    assert events[0] == {"seq": 1, "kind": "user", "text": "你好"}
+    assert "text" in [e["kind"] for e in events] and events[-1]["answer"] == "你好,我是小助理"
+    app.hub.busy = True
+    assert app.post("/api/ask", {"text": "又一題"}).status_code == 409
+
+
+def test_webui_confirm_and_apply(webui_app, workspace, fake_sandbox):
+    """上網確認走網頁按鈕;修改通過測試後在網頁上問要不要套用,按了才改工作區。"""
+    import threading
+    (workspace / "calc.py").write_bytes(b"def add(a, b):\n    return a - b\n")
+    fix = {"edits": [{"path": "calc.py", "old_string": "a - b", "new_string": "a + b"}],
+           "reason": "修加法", "test_target": "."}
+    app = webui_app([ai(tool_calls=[{"name": "propose_patch", "args": fix, "id": "c1"}]), ai("修好了"), ai("知道了")])
+
+    results = []
+    worker = threading.Thread(target=lambda: results.append(app.hub.confirm("上網搜尋", "pypdf")))
+    worker.start()
+    asked = app.events_until("confirm")[-1]
+    assert asked["action"] == "上網搜尋" and asked["detail"] == "pypdf"
+    assert app.post("/api/confirm", {"id": asked["id"], "answer": "a"}).status_code == 200
+    worker.join(5)
+    assert results == [True] and app.hub.confirm("上網搜尋", "再一次") is True  # 之後都允許,不再問
+
+    app.post("/api/ask", {"text": "修 add"})
+    offer = app.events_until("offer_apply")[-1]
+    assert offer["passed"] and "+    return a + b" in offer["diff"]
+    assert app.post("/api/apply", {"patch": offer["patch"], "apply": True}).json()["text"].startswith("已套用")
+    assert (workspace / "calc.py").read_bytes() == b"def add(a, b):\n    return a + b\n"
+    app.post("/api/ask", {"text": "接下來"})
+    app.events_until("done", since=offer["seq"])
+    assert "使用者已把" in app.seen[-1][1][-1].content
+
+
+def test_webui_clear_and_remember(webui_app, workspace):
+    app = webui_app([ai("一"), ai("二")])
+    app.post("/api/ask", {"text": "第一題"})
+    app.events_until("done")
+    assert app.post("/api/remember", {"rule": "回答要簡短"}).status_code == 200
+    assert app.post("/api/clear", {}).status_code == 200
+    app.post("/api/ask", {"text": "第二題"})
+    events = app.events_until("done")  # 重新連線(像重新整理頁面):只重播新對話之後的事件
+    assert events[0]["kind"] == "user" and events[0]["text"] == "第二題"
+    sent = app.seen[-1][1]
+    assert len(sent) == 2 and "回答要簡短" in sent[0].content  # 新對話:系統提示(含新規則)+ 這一題

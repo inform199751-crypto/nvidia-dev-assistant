@@ -15,6 +15,7 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 .venv/Scripts/python -m pytest -q tests/test_offline.py::test_propose_patch_can_add_new_file   # 單一測試
 .venv/Scripts/python smoke_test.py                       # 對 catalog 真模型做冒煙測試,結果附加到 smoke_results.log
 .venv/Scripts/python smoke_test.py --roles long_context --checks think_off tool   # 只重跑失敗的項目
+.venv/Scripts/python webui.py                            # 網頁介面 http://127.0.0.1:8765(.claude/launch.json 有 "webui" 設定)
 .venv/Scripts/python agent.py                            # 互動模式(@檔案 附檔、/clear、/exit)
 .venv/Scripts/python agent.py "test_add 失敗了,找出 bug 並提出修正" -f calc.py
 .venv/Scripts/python agent.py "寫技術文件" -f a.py -f b.py --whole      # 整檔模式
@@ -29,6 +30,8 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 ## 架構
 
 **串流**:`AgentSession(on_event=...)` 有給就用 `llm.stream()`,送出 `thinking` / `text` / `tool` / `tool_done` / `step` / `notice` 事件;CLI 用 `ConsoleView` 顯示(step 紀錄改成 WARNING 不印)。串流合併的訊息**一定要經過 `as_complete_message`**:套件送回伺服器只看 `additional_kwargs["tool_calls"]`,串流時它是空的,少了它下一步的 ToolMessage 會對不到。
+
+**網頁介面**(`webui.py` + `webui.html`):`Hub` 持有一個 `AgentSession`,在背景執行緒跑 `ask`,所有事件(含 `user` / `done` / `error` / `confirm` / `confirm_done` / `offer_apply` / `applied` / `clear`)記在 `events`,`/api/events` 用 Server-Sent Events 送出;重新整理頁面會從最近一次「新對話」重播。`web.CONFIRM = hub.confirm` 讓 agent 執行緒等網頁按鈕。安全:只綁 127.0.0.1、檢查 Host、API 要 `X-Token`(SSE 用 `?token=`)、POST 只收 JSON。頁面是純 HTML/JS,不載入外部資源;`webui.html` 每次請求重新讀,改完重新整理就生效。前端注意:文字重繪排在 requestAnimationFrame,但背景分頁不會跑,所以 `done` / `error` 要先 `flush()`。
 
 `agent.AgentSession` 保存一段對話(messages、估算倍率 `scale`、累計 tokens);`ask()` 是一輪,中途出錯會把這一輪的訊息退掉。`run_agent()` = 開新 session 只問一輪;`chat()` 是互動模式的 REPL,問題裡的 `@路徑` 由 `file_mentions` 轉成附檔。每輪開始重新 `pick_role`,之後每一步送出前依序做:
 1. `token_guard.strip_stale_reasoning`:只清「上一輪以前」的推理。同一輪內不清 —— 這是刻意的,模型接著 tool call 推理需要本輪的 reasoning。

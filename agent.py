@@ -450,7 +450,8 @@ def chat(session_factory, first_files: list[str], banner: str = "") -> None:
                 print("(最後一個 patch 的沙箱測試沒過,先不問要不要套用;仍要套用請輸入 /apply)")
 
 
-def main() -> None:
+def prepare() -> tuple[ModelRegistry, TokenQuota, list, bool]:
+    """CLI 和網頁介面共用的啟動設定:讀 .env、設定工具、建模型註冊表與額度。回傳 (registry, quota, tools, allow_web)。"""
     from dotenv import load_dotenv
 
     here = Path(__file__).parent
@@ -459,6 +460,21 @@ def main() -> None:
     output = Path(os.getenv("AGENT_OUTPUT", "output"))
     toolbox.configure(workspace if workspace.is_absolute() else here / workspace, os.getenv("SANDBOX_IMAGE"),
                       output if output.is_absolute() else here / output)
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # 不然每次上網都多印一行 HTTP Request
+    registry = ModelRegistry.from_yaml()
+    quota = TokenQuota(registry.limits["daily_tokens_per_user"], registry.limits["max_concurrent_per_user"])
+    allow_web = os.getenv("ALLOW_WEB", "").strip().lower() in ("1", "true", "yes")
+    tools = ALL_TOOLS + (web.web_tools() if allow_web else [])  # 上網預設關閉
+    return registry, quota, tools, allow_web
+
+
+def web_status(allow_web: bool) -> str:
+    if not allow_web:
+        return "上網:關"
+    return "上網:開(每次會先問你" + ("" if os.getenv("TAVILY_API_KEY") else ";沒有搜尋金鑰,只能讀網址") + ")"
+
+
+def main() -> None:
     ap = argparse.ArgumentParser(description="對內研發助理(NVIDIA NIM / API Catalog)")
     ap.add_argument("task", nargs="?", help="要做的事;不給就進入互動模式,可以一直聊下去")
     ap.add_argument("-f", "--file", action="append", default=[], help="附檔(相對於 AGENT_WORKSPACE)")
@@ -468,12 +484,8 @@ def main() -> None:
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    logging.getLogger("httpx").setLevel(logging.WARNING)  # 不然每次上網都多印一行 HTTP Request
-    registry = ModelRegistry.from_yaml()
-    quota = TokenQuota(registry.limits["daily_tokens_per_user"], registry.limits["max_concurrent_per_user"])
+    registry, quota, tools, allow_web = prepare()
     thinking = {"on": True, "off": False}.get(args.think)
-    allow_web = os.getenv("ALLOW_WEB", "").strip().lower() in ("1", "true", "yes")
-    tools = ALL_TOOLS + (web.web_tools() if allow_web else [])  # 上網預設關閉
     web.CONFIRM = confirm_action  # 每次上網前都問使用者
 
     view = ConsoleView()
@@ -484,11 +496,7 @@ def main() -> None:
                             on_event=view)
 
     if args.task is None:
-        if not allow_web:
-            banner = " · 上網:關"
-        else:
-            banner = " · 上網:開(每次會先問你" + ("" if os.getenv("TAVILY_API_KEY") else ";沒有搜尋金鑰,只能讀網址") + ")"
-        chat(new_session, args.file, banner)
+        chat(new_session, args.file, f" · {web_status(allow_web)}")
         return
     r = new_session().ask(args.task, args.file)
     print(f"\n\n— {r.role} · {r.steps} 步 · {r.tokens_used:,} tokens")
