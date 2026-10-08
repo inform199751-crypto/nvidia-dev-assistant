@@ -158,3 +158,32 @@ def test_patch_files_unique_within_same_second(tmp_path, monkeypatch):
     for _ in range(2):
         t["propose_patch"].invoke({"path": "calc.py", "unified_diff": CALC_HUNK, "reason": "x", "test_target": "."})
     assert len(list((tmp_path / ".agent_patches").glob("*.patch"))) == 2
+
+
+def test_normalize_diff_drops_blank_separator_between_files():
+    """模型在兩個檔的 diff 之間空一行;以前被當成 context,第一個 hunk 多一行空白就套不上(10/8 實測卡滿 15 步)。"""
+    raw = ("--- a/calc.py\n+++ b/calc.py\n@@ -1,4 +1,4 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n \n \n\n"
+           "--- a/tests/test_calc.py\n+++ b/tests/test_calc.py\n@@ -6,4 +6,6 @@\n \n \n def test_average():\n"
+           "     assert average([2, 4, 6]) == 4\n+\n+def test_add_negative():\n")
+    out = tools.normalize_diff(raw)
+    assert "@@ -1,4 +1,4 @@" in out and "@@ -6,4 +6,6 @@" in out and "\n\n" not in out
+
+
+def test_propose_patch_two_files_with_blank_separator(tmp_path, monkeypatch):
+    """10/8 實測:Nemotron 給的兩檔 diff 中間空一行,內容正確卻被判套不上,卡滿 15 步、約 11 萬 tokens。"""
+    (tmp_path / "calc.py").write_text(CALC, encoding="utf-8", newline="\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_calc.py").write_text(
+        "from calc import add, average\n\n\ndef test_add():\n    assert add(2, 3) == 5\n\n\n"
+        "def test_average():\n    assert average([2, 4, 6]) == 4\n", encoding="utf-8", newline="\n")
+    monkeypatch.setattr(tools, "_run_sandbox", lambda root, target, **kw: "exit code 0\n3 passed")
+    t = by_name(tools.make_tools(tmp_path))
+    diff = ("--- a/calc.py\n+++ b/calc.py\n@@ -1,4 +1,4 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n \n \n\n"
+            "--- a/tests/test_calc.py\n+++ b/tests/test_calc.py\n@@ -6,4 +6,9 @@\n \n \n def test_average():\n"
+            "     assert average([2, 4, 6]) == 4\n+\n+def test_add_negative():\n+    assert add(-1, -1) == -2\n"
+            "+    assert add(-5, 3) == -2\n")
+    out = t["propose_patch"].invoke({"path": ".", "unified_diff": diff, "reason": "修加法並補測試", "test_target": "."})
+    assert out.startswith("已存成"), out
+    check = subprocess.run(["git", "apply", "--check", str(saved_patch(tmp_path, out))], cwd=tmp_path,
+                           capture_output=True, text=True)
+    assert check.returncode == 0, check.stderr

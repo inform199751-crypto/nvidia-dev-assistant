@@ -72,6 +72,7 @@ def normalize_diff(diff: str) -> str:
       工作區若巢狀在別的 repo 裡,patch 會被靜靜略過;傳統格式則一律相對於工作區資料夾。
     - 重算每個 hunk 標頭的行數(模型常算錯)。不用 git apply --recount:它會把下一個檔的 ---/+++ 算進上一個 hunk。
     - hunk 裡完全空的行補回開頭空格(模型常把空白 context 行的空格吃掉)。
+    - 兩個檔的 diff 之間的分隔空行直接丟掉,不當成 context。
     """
     lines = diff.rstrip("\n").split("\n")
     out: list[str] = []
@@ -94,6 +95,14 @@ def normalize_diff(diff: str) -> str:
                 break
             if nxt.startswith("--- ") and i + 1 < len(lines) and lines[i + 1].startswith("+++ "):
                 break  # 下一個檔的標頭
+            if not nxt:
+                j = i
+                while j < len(lines) and not lines[j]:
+                    j += 1
+                if j == len(lines) or lines[j].startswith(_GIT_EXTENDED) or (
+                        lines[j].startswith("--- ") and j + 1 < len(lines) and lines[j + 1].startswith("+++ ")):
+                    i = j  # 檔案之間的分隔空行(模型常在兩個檔的 diff 中間空一行),不是 context
+                    break
             body.append(nxt if nxt else " ")
             i += 1
         old = sum(1 for b in body if b[0] in " -")
