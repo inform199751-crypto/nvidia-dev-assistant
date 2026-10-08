@@ -104,6 +104,7 @@
   .tool summary::before { content: "›"; font-size: 16px; width: 12px; text-align: center; transition: transform .15s; }
   .tool[open] summary::before { transform: rotate(90deg); }
   .tool summary:hover { background: var(--hover); color: var(--text); }
+  .tool summary span { flex-shrink: 0; }  /* 窄螢幕時擠參數,不要把工具名稱擠斷 */
   .tool summary code { font: 13px ui-monospace, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .tool pre {
     max-height: 280px; overflow: auto; background: var(--code); border: 1px solid var(--line); border-radius: 12px;
@@ -139,7 +140,7 @@
   footer { padding: 0 16px 14px; }
   .composer {
     max-width: 768px; margin: 0 auto; display: flex; align-items: flex-end; gap: 8px;
-    background: var(--input); border: 1px solid var(--line); border-radius: 28px; padding: 8px 8px 8px 20px; box-shadow: var(--shadow);
+    background: var(--input); border: 1px solid var(--line); border-radius: 28px; padding: 8px 8px 8px 10px; box-shadow: var(--shadow);
   }
   textarea {
     flex: 1; resize: none; border: 0; outline: none; background: transparent; color: var(--text);
@@ -154,6 +155,23 @@
   .send.busy svg { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .hint { max-width: 768px; margin: 8px auto 0; text-align: center; color: var(--faint); font-size: 12px; }
+  .mode-btn {
+    flex-shrink: 0; align-self: center; display: inline-flex; align-items: center; gap: 4px;
+    border: 1px solid var(--line); background: transparent; border-radius: 999px; padding: 4px 12px 4px 9px;
+    font-size: 13px; color: var(--muted);
+  }
+  .mode-btn:hover { background: var(--hover); color: var(--text); }
+  .mode-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .msg.user .mode-tag { display: block; font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 2px; }
+  .plan { border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; margin: 8px 0; font-size: 15px; }
+  .plan .title { font-size: 13px; color: var(--faint); margin-bottom: 4px; }
+  .plan ol { list-style: none; margin: 0; padding: 0; }
+  .plan li { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
+  .plan li::before { content: "○"; color: var(--faint); width: 16px; flex-shrink: 0; text-align: center; }
+  .plan li.in_progress { font-weight: 600; }
+  .plan li.in_progress::before { content: "◐"; color: var(--accent); }
+  .plan li.done { color: var(--faint); text-decoration: line-through; }
+  .plan li.done::before { content: "✓"; color: var(--accent); text-decoration: none; }
 
   /* ---------- 手機:側邊欄改成抽屜 ---------- */
   .scrim { display: none; }
@@ -208,6 +226,10 @@
   </main>
   <footer>
     <form id="form" class="composer">
+      <button type="button" class="mode-btn" id="plan-mode" aria-pressed="false" title="開啟後,小助理先只讀不改、交出計畫,你同意才照計畫做">
+        <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5h10M7 10h10M7 15h10M3 5h.01M3 10h.01M3 15h.01"/></svg>
+        先規劃
+      </button>
       <textarea id="input" rows="1" placeholder="問小助理任何事…" aria-label="輸入問題"></textarea>
       <button type="submit" class="send" id="send" aria-label="送出" disabled>
         <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 16V4M5 9l5-5 5 5"/></svg>
@@ -230,7 +252,7 @@ const SUGGESTIONS = [
   ["找出 calc.py 的 bug 並修正", "讀程式、跑測試、提出修改"],
   ["列出專案檔案和最近的 git 紀錄", "看看這個專案有什麼"],
   ["上網查 Python 3.14 有哪些新功能", "上網前會先問你"],
-  ["幫我寫一份 calc.py 的說明文件並存檔", "存到 output 資料夾"],
+  ["幫 calc.py 加上除法函式和測試", "先規劃,你同意才動手", "plan"],
 ];
 
 function api(path, body) {
@@ -320,11 +342,11 @@ function showEmpty() {
   const box = el("div", "welcome");
   box.appendChild(el("h2", "", "今天想做什麼?"));
   const grid = box.appendChild(el("div", "suggest"));
-  for (const [text, sub] of SUGGESTIONS) {
+  for (const [text, sub, mode] of SUGGESTIONS) {
     const b = grid.appendChild(el("button", "", text));
     b.type = "button";
     b.appendChild(el("small", "", sub));
-    b.onclick = () => { input.value = text; autosize(); submit(); };
+    b.onclick = () => { input.value = text; autosize(); setPlanMode(mode === "plan"); submit(); };
   }
   log.appendChild(box);
 }
@@ -381,8 +403,44 @@ function cardButtons(card, specs) {
   }
 }
 
+function renderPlan(box, steps) {
+  box.innerHTML = "";
+  box.appendChild(el("div", "title", "計畫進度"));
+  const list = box.appendChild(el("ol"));
+  for (const s of steps) list.appendChild(el("li", ["pending", "in_progress", "done"].includes(s.status) ? s.status : "pending", s.step || ""));
+}
+
 const handlers = {
-  user(e) { bot = null; tools.length = 0; add(el("div", "msg user", e.text)).scrollIntoView({ block: "end" }); setBusy(true); },
+  user(e) {
+    bot = null; tools.length = 0;
+    const m = el("div", "msg user");
+    if (e.mode === "plan") m.appendChild(el("span", "mode-tag", "先規劃"));
+    m.append(e.text);
+    add(m).scrollIntoView({ block: "end" }); setBusy(true);
+  },
+  plan(e) {  // 照計畫執行時的進度清單:同一輪只有一份,每次更新就重畫
+    const b = ensureBot(); stopThinking(); b.textEl = null;
+    if (!b.planEl) b.planEl = b.appendChild(el("div", "plan"));
+    renderPlan(b.planEl, e.steps || []);
+  },
+  offer_plan() {
+    const card = add(el("div", "card"));
+    const q = card.appendChild(el("div", "q"));
+    q.append(el("span", "tag ok", "計畫"), "要照這個計畫執行嗎?執行時一樣會先問你才套用修改。");
+    const go = (yes) => async () => {
+      const r = await api("/api/execute", { go: yes });
+      if (!r.ok) { alert(r.data.error || "失敗"); return false; }
+    };
+    cardButtons(card, [["照計畫執行", "primary", go(true)], ["先不要", "", go(false)]]);
+    cards.plan = card;
+    card.scrollIntoView({ block: "end", behavior: "smooth" });
+  },
+  plan_answered(e) {
+    const card = cards.plan; if (!card) return;
+    card.querySelector(".actions")?.remove();
+    card.appendChild(el("div", "result", e.go ? "✓ 照計畫執行" : "沒有執行這個計畫"));
+    cards.plan = null;
+  },
   thinking() {
     const b = ensureBot();
     if (!b.thinkEl) b.thinkEl = b.appendChild(el("div", "thinking", "思考中"));
@@ -409,7 +467,7 @@ const handlers = {
     const b = ensureBot();
     if (!b.querySelector(".md")) { const t = b.appendChild(el("div", "md")); t.innerHTML = md(e.answer || ""); }
     b.appendChild(el("div", "foot", `${e.role} · ${e.steps} 步 · ${e.tokens.toLocaleString()} tokens(這段對話累計 ${e.total.toLocaleString()})`));
-    bot = null; setBusy(false);
+    bot = null; setBusy(false); loadState();
   },
   error(e) { stopThinking(); flush(); ensureBot().appendChild(el("div", "error", `錯誤:${e.text}`)); bot = null; setBusy(false); },
   confirm(e) {
@@ -434,23 +492,32 @@ const handlers = {
     const card = add(el("div", "card"));
     const q = card.appendChild(el("div", "q"));
     q.append(el("span", e.passed ? "tag ok" : "tag warn", e.passed ? "測試通過" : "測試沒過"),
-             e.passed ? "要把這個修改套用到工作區嗎?" : "注意:套用後沙箱測試沒有通過。仍要套用嗎?");
-    q.appendChild(el("div", "notice", e.name));
+             e.passed ? "要把草稿的修改套用到工作區嗎?" : "注意:改完後沙箱測試沒有通過。仍要套用嗎?");
+    q.appendChild(el("div", "notice", `修改都先放在小助理的草稿上,你的檔案還沒動。patch:${e.name}`));
     card.appendChild(diffView(e.diff));
-    const choose = (apply) => async () => {
-      const r = await api("/api/apply", { patch: e.patch, apply });
+    const choose = (action) => async () => {
+      const r = await api("/api/apply", { patch: e.patch, action });
       if (r.data.text && r.data.text.startsWith("小助理還在")) { alert(r.data.text); return false; }
     };
-    cardButtons(card, [["套用到工作區", e.passed ? "primary" : "", choose(true)], ["先不要", "", choose(false)]]);
+    // 每個 patch 都是累積的:有新的出來,舊卡片就不能再按,免得套到舊版本
+    for (const [key, old] of Object.entries(cards)) {
+      if (key.startsWith("patch") && old.querySelector(".actions")) {
+        old.querySelector(".actions").remove();
+        old.appendChild(el("div", "result", "已有更新的修改,請看下面"));
+      }
+    }
+    cardButtons(card, [["套用到工作區", e.passed ? "primary" : "", choose("apply")], ["先不要", "", choose("keep")],
+                       ["捨棄修改", "", choose("discard")]]);
     cards["patch" + e.patch] = card;
     card.scrollIntoView({ block: "end", behavior: "smooth" });
   },
   applied(e) {
+    loadState();
     const card = cards["patch" + e.patch]; if (!card) return;
     card.querySelector(".actions")?.remove();
     card.appendChild(el("div", "result", e.text));
   },
-  clear() { bot = null; tools.length = 0; showEmpty(); setBusy(false); },
+  clear() { bot = null; tools.length = 0; showEmpty(); setBusy(false); loadState(); },
 };
 
 function connect() {
@@ -469,6 +536,7 @@ async function loadState() {
   row("工作區", r.data.workspace.split(/[\\/]/).pop(), r.data.workspace);
   row("", r.data.status);
   row("專案規則", r.data.instructions ? "已讀取 ASSISTANT.md" : "沒有 ASSISTANT.md");
+  if (r.data.draft && r.data.draft.length) row("草稿", `${r.data.draft.length} 個檔案還沒套用`, r.data.draft.join("\n"));
   if (r.data.lan) {  // 只有這台電腦看得到:手機要開的網址和 PIN
     for (const u of r.data.lan.urls) row("手機開", u.replace(/^http:\/\//, ""), u);
     row("手機 PIN", r.data.lan.pin);
@@ -477,18 +545,30 @@ async function loadState() {
   setBusy(r.data.busy);
 }
 
+let planMode = false;
+function setPlanMode(on) {
+  planMode = on;
+  $("plan-mode").setAttribute("aria-pressed", String(on));
+  input.placeholder = on ? "要規劃什麼任務?" : "問小助理任何事…";
+}
+$("plan-mode").onclick = () => { setPlanMode(!planMode); input.focus(); };
+
 async function submit() {
   const text = input.value.trim();
   if (!text || busy) return;
-  input.value = ""; autosize(); updateSend();
-  const r = await api("/api/ask", { text });
-  if (!r.ok) { alert(r.data.error || "送出失敗"); input.value = text; autosize(); updateSend(); }
+  const mode = planMode ? "plan" : "normal";
+  input.value = ""; autosize(); updateSend(); setPlanMode(false);
+  const r = await api("/api/ask", { text, mode });
+  if (!r.ok) { alert(r.data.error || "送出失敗"); input.value = text; autosize(); updateSend(); setPlanMode(mode === "plan"); }
 }
 $("form").onsubmit = (ev) => { ev.preventDefault(); submit(); };
 input.addEventListener("keydown", (ev) => {
   if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); submit(); }
 });
-function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 200) + "px"; }
+function autosize() {  // 空的時候回到一行:提示文字換行時 scrollHeight 也會變高,不能拿來算
+  input.style.height = "auto";
+  if (input.value) input.style.height = Math.min(input.scrollHeight, 200) + "px";
+}
 input.addEventListener("input", () => { autosize(); updateSend(); });
 const closeSide = () => document.body.classList.remove("side-open");
 $("open-side").onclick = () => document.body.classList.add("side-open");

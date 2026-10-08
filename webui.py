@@ -144,22 +144,28 @@ class Hub:
 
     # ---------- 對話 ----------
 
-    def ask(self, text: str) -> bool:
+    def ask(self, text: str, mode: str = "normal", shown: str | None = None) -> bool:
+        """shown:畫面上顯示的問題(照計畫執行時,送給模型的是 EXECUTE_TASK,畫面只顯示「照計畫執行」)。"""
         with self.cond:
             if self.busy:
                 return False
             self.busy = True
-        self.publish("user", {"text": text})
-        threading.Thread(target=self._run, args=(text,), daemon=True).start()
+        self.publish("user", {"text": shown or text, "mode": mode})
+        threading.Thread(target=self._run, args=(text, mode), daemon=True).start()
         return True
 
-    def _run(self, text: str) -> None:
-        before = len(toolbox.PATCHES)
+    def execute_plan(self, go: bool) -> bool:
+        self.publish("plan_answered", {"go": go})
+        return self.ask(agent.EXECUTE_TASK, "execute", shown="照計畫執行") if go else True
+
+    def _run(self, text: str, mode: str = "normal") -> None:
+        before, planned = len(toolbox.PATCHES), False
         try:
-            r = self.session.ask(self.note + text, agent.file_mentions(text))
+            r = self.session.ask(self.note + text, agent.file_mentions(text), mode)
             self.note = ""
             self.publish("done", {"role": r.role, "steps": r.steps, "tokens": r.tokens_used,
                                   "total": self.session.tokens_used, "answer": r.answer})
+            planned = mode == "plan"
             if len(toolbox.PATCHES) > before:  # 這一輪提了 patch:問要不要套用(沒通過測試也給看,但會警告)
                 index = len(toolbox.PATCHES) - 1
                 patch, passed = toolbox.PATCHES[index]
@@ -172,12 +178,16 @@ class Hub:
             with self.cond:
                 self.busy = False
                 self.cond.notify_all()
+        if planned:  # 等不忙了才問,按下「照計畫執行」才不會被當成上一題還沒結束
+            self.publish("offer_plan")
 
     def clear(self) -> bool:
         with self.cond:
             if self.busy:
                 return False
             self.session, self.note = self.new_session(self.publish), ""
+        if toolbox.DRAFT:  # 新對話不記得草稿,留著會混淆
+            toolbox.discard_draft()
         self.publish("clear")
         with self.cond:
             self.view_start = len(self.events)
@@ -230,20 +240,24 @@ class Hub:
         slot[0].set()
         return True
 
-    def apply(self, index: int, do_apply: bool) -> str:
+    def apply(self, index: int, action: str) -> str:
+        """action:apply 套用草稿 / keep 先不要(草稿留著繼續改)/ discard 捨棄草稿。"""
         with self.cond:
             if self.busy:
-                return "小助理還在回答,等這一輪結束再套用"
+                return "小助理還在回答,等這一輪結束再處理"
         if not 0 <= index < len(toolbox.PATCHES):
             return "找不到這個 patch"
         patch, _ = toolbox.PATCHES[index]
         name = patch.relative_to(toolbox.WORKSPACE).as_posix()
-        if not do_apply:
-            result = "沒有套用,patch 留著給你之後審核。"
-        else:
+        if action == "apply":
             result = toolbox.apply_patch(patch)
             if result.startswith("已套用"):
                 self.note += f"<note>使用者已把 {name} 套用到工作區,相關檔案內容已經改變,需要時請重讀。</note>\n"
+        elif action == "discard":
+            result = toolbox.discard_draft()
+            self.note += "<note>使用者已捨棄你草稿裡的所有修改,檔案回到原本的內容。</note>\n"
+        else:
+            result = "沒有套用。草稿留著,可以繼續請小助理改,之後再套用。"
         self.publish("applied", {"patch": index, "text": result})
         return result
 
@@ -305,7 +319,7 @@ def make_handler(hub: Hub, token: str, port: int, lan: LanAccess | None = None) 
             elif url.path == "/api/state":
                 if self._token_ok(self.headers.get("X-Token")):
                     state = {"workspace": str(toolbox.WORKSPACE), "status": hub.status, "busy": hub.busy,
-                             "model": hub.model,
+                             "model": hub.model, "draft": sorted(toolbox.DRAFT),
                              "instructions": (toolbox.WORKSPACE / agent.INSTRUCTIONS_FILE).is_file()}
                     if lan and self._local():  # 手機連線方式只給這台電腦看
                         state["lan"] = {"urls": [f"http://{ip}:{port}" for ip in lan.ips], "pin": lan.pin}
@@ -372,13 +386,16 @@ def make_handler(hub: Hub, token: str, port: int, lan: LanAccess | None = None) 
                 text = str(body.get("text", "")).strip()
                 if not text:
                     return self._json(400, {"error": "問題是空的"})
-                ok = hub.ask(text)
+                ok = hub.ask(text, "plan" if body.get("mode") == "plan" else "normal")
+                self._json(202 if ok else 409, {} if ok else {"error": "上一個問題還在回答中"})
+            elif path == "/api/execute":  # 規劃模式交出計畫後:照計畫執行 / 先不要
+                ok = hub.execute_plan(bool(body.get("go")))
                 self._json(202 if ok else 409, {} if ok else {"error": "上一個問題還在回答中"})
             elif path == "/api/confirm":
                 ok = hub.answer(str(body.get("id")), str(body.get("answer")))
                 self._json(200 if ok else 404, {} if ok else {"error": "這個確認已經結束了"})
             elif path == "/api/apply":
-                self._json(200, {"text": hub.apply(int(body.get("patch", -1)), bool(body.get("apply")))})
+                self._json(200, {"text": hub.apply(int(body.get("patch", -1)), str(body.get("action", "keep")))})
             elif path == "/api/clear":
                 ok = hub.clear()
                 self._json(200 if ok else 409, {} if ok else {"error": "還在回答中,等結束再開新對話"})

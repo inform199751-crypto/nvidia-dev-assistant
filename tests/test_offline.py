@@ -50,15 +50,17 @@ class ScriptedChat(BaseChatModel):
     role: str = ""
     script: Any = None  # 用 Any,pydantic 才不會複製 list,多個角色共用同一份劇本
     seen: Any = None
+    bound: Any = None  # bind_tools 綁了哪些工具(名稱)
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs: Any) -> ChatResult:
-        self.seen.append((self.role, list(messages)))
+        self.seen.append((self.role, list(messages), self.bound))
         reply = self.script.pop(0)
         if isinstance(reply, Exception):  # 劇本裡放例外 = 模擬伺服器掛掉
             raise reply
         return ChatResult(generations=[ChatGeneration(message=reply)])
 
     def bind_tools(self, tools, **kwargs):
+        self.bound = [t.name for t in tools]
         return self
 
     @property
@@ -70,7 +72,7 @@ class StreamingChat(ScriptedChat):
     """會串流的假模型:劇本每一項是一串 AIMessageChunk;跟 NVIDIA 一樣,工具呼叫只放在 tool_call_chunks。"""
 
     def _stream(self, messages, stop=None, run_manager=None, **kwargs: Any):
-        self.seen.append((self.role, list(messages)))
+        self.seen.append((self.role, list(messages), self.bound))
         for chunk in self.script.pop(0):
             yield ChatGenerationChunk(message=chunk)
 
@@ -94,6 +96,7 @@ def ai(content="", tool_calls=(), tokens=100, reasoning=None):
 def workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(tools, "WORKSPACE", tmp_path)
     monkeypatch.setattr(tools, "PATCHES", [])
+    monkeypatch.setattr(tools, "DRAFT", {})
     return tmp_path
 
 
@@ -310,7 +313,7 @@ def test_propose_patch_builds_diff_from_edits(workspace, fake_sandbox):
     out = patch(("calc.py", "def add(a, b):\n    return a - b", "def add(a, b):\n    return a + b"),
                 ("calc.py", "def mul(a, b):\n    return a - b", "def mul(a, b):\n    return a * b"),
                 ("util.py", "X = 1", "X = 2"))
-    assert "已存成 .agent_patches/" in out and "+    return a + b" in out and "1 passed" in out
+    assert "存成 .agent_patches/" in out and "+    return a + b" in out and "1 passed" in out
     assert fake_sandbox == [{"calc.py": b"def add(a, b):\n    return a + b\n\n\ndef mul(a, b):\n    return a * b\n",
                              "util.py": b"X = 2\n"}]
     saved = next((workspace / ".agent_patches").glob("*.patch"))
@@ -333,7 +336,7 @@ def test_propose_patch_can_add_new_file(workspace, fake_sandbox):
     (workspace / "calc.py").write_bytes(b"def add(a, b):\n    return a - b\n")
     test_src = "from calc import add\n\n\ndef test_add_negative():\n    assert add(-1, 1) == 0\n"
     out = patch(("calc.py", "a - b", "a + b"), ("tests/test_regression.py", "", test_src))
-    assert "已存成" in out and "--- /dev/null" in out and "+++ b/tests/test_regression.py" in out
+    assert "存成" in out and "--- /dev/null" in out and "+++ b/tests/test_regression.py" in out
     assert fake_sandbox == [{"calc.py": b"def add(a, b):\n    return a + b\n",
                              "tests/test_regression.py": test_src.encode()}]
     assert not (workspace / "tests").exists()
@@ -348,7 +351,7 @@ def test_propose_patch_keeps_crlf_and_missing_final_newline(workspace, fake_sand
     (workspace / "win.py").write_bytes(b"a = 1\r\nb = 2\r\nc = 3\r\n")
     (workspace / "tail.py").write_bytes(b"x = 1\ny = 2")
     out = patch(("win.py", "a = 1\nb = 2", "a = 1\nb = 20"), ("tail.py", "y = 2", "y = 3"))
-    assert "已存成" in out
+    assert "存成" in out
     assert fake_sandbox == [{"win.py": b"a = 1\r\nb = 20\r\nc = 3\r\n", "tail.py": b"x = 1\ny = 3"}]
 
 
@@ -815,6 +818,43 @@ def test_compact_failure_does_not_block_the_question(workspace):
     assert AgentSession(reg, TokenQuota(10**6, 2)).compact() is False  # 沒有對話可整理
 
 
+def test_plan_mode_is_read_only_then_execute_reports_progress(workspace):
+    """規劃模式:不給 propose_patch / save_document,請模型交計畫;執行模式:多給 update_plan,進度變成 plan 事件。"""
+    from agent import EXECUTE_TASK
+    steps = [{"step": "改 calc.py", "status": "in_progress"}, {"step": "跑測試", "status": "pending"}]
+    reg, seen = scripted_registry([ai("1. 改 calc.py\n2. 跑測試"),
+                                   ai(tool_calls=[{"name": "update_plan", "args": {"steps": steps}, "id": "p1"}]),
+                                   ai("做完了")])
+    events = []
+    s = AgentSession(reg, TokenQuota(10**6, 2), on_event=lambda kind, data: events.append((kind, data)))
+    s.ask("幫 calc.py 加除法", mode="plan")
+    assert "PLAN MODE" in seen[0][1][-1].content
+    assert "read_file" in seen[0][2] and not {"propose_patch", "save_document", "update_plan"} & set(seen[0][2])
+    s.ask(EXECUTE_TASK, mode="execute")
+    assert {"propose_patch", "update_plan"} <= set(seen[1][2])
+    assert [d["steps"] for k, d in events if k == "plan"] == [steps]
+    assert not any(k == "tool" and d["name"] == "update_plan" for k, d in events)  # 進度不當一般工具顯示
+    assert "◐ 改 calc.py" in s.messages[-2].content  # 工具回給模型的進度
+
+
+def test_cli_plan_then_execute(workspace, monkeypatch):
+    reg, seen = scripted_registry([ai("計畫:1. 改 add"), ai("照做了")])
+    inputs = iter(["/plan 修 add", "y", "/plan", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+    chat(lambda: AgentSession(reg, TokenQuota(10**6, 2)), [])
+    assert "PLAN MODE" in seen[0][1][-1].content and "照上面的計畫執行" in seen[1][1][-1].content
+    assert "update_plan" in seen[1][2]
+
+
+def test_console_view_renders_plan():
+    import io
+    from agent import ConsoleView
+    buf = io.StringIO()
+    ConsoleView(buf)("plan", {"steps": [{"step": "讀檔", "status": "done"}, {"step": "修 bug", "status": "in_progress"},
+                                        {"step": "跑測試", "status": "pending"}]})
+    assert buf.getvalue() == "  計畫進度:\n    ☑ 讀檔\n    ◐ 修 bug\n    ☐ 跑測試\n"
+
+
 def test_system_prompt_has_today(workspace):
     """10/9 實測:模型不知道今天幾號,把「下週三」算錯;系統提示要帶日期與星期。"""
     from agent import today_line
@@ -859,23 +899,51 @@ def test_chat_repl(workspace, monkeypatch, capsys):
 
 
 def test_chat_asks_before_applying_patch(workspace, fake_sandbox, monkeypatch, capsys):
-    """修改通過沙箱測試後先問;直接 Enter 不動工作區,回答 y 才套用,下一輪會告訴模型檔案已經變了。"""
+    """修改通過沙箱測試後先問;直接 Enter 不動工作區、草稿留著,下一輪的修改疊在草稿上;
+    回答 y 才把全部修改套用,下一輪會告訴模型檔案已經變了。"""
     (workspace / "calc.py").write_bytes(b"def add(a, b):\n    return a - b\n")
-    fix = {"edits": [{"path": "calc.py", "old_string": "a - b", "new_string": "a + b"}],
-           "reason": "修加法", "test_target": "."}
+    fix = {"edits": [{"path": "calc.py", "old_string": "a - b", "new_string": "a + b"}], "reason": "修加法",
+           "test_target": "."}
+    note = {"edits": [{"path": "calc.py", "old_string": "a + b", "new_string": "a + b  # 修好了"}], "reason": "加註解",
+            "test_target": "."}
     reg, seen = scripted_registry([
         ai(tool_calls=[{"name": "propose_patch", "args": fix, "id": "c1"}]), ai("修好了"),
-        ai(tool_calls=[{"name": "propose_patch", "args": fix, "id": "c2"}]), ai("再提一次"),
+        ai(tool_calls=[{"name": "propose_patch", "args": note, "id": "c2"}]), ai("加了註解"),
         ai("知道檔案變了"),
     ])
-    inputs = iter(["修 add", "", "再修一次", "y", "接下來呢", "/exit"])
+    inputs = iter(["修 add", "", "再加個註解", "y", "接下來呢", "/exit"])
     monkeypatch.setattr("builtins.input", lambda _: next(inputs))
     chat(lambda: AgentSession(reg, TokenQuota(10**6, 2)), [])
     out = capsys.readouterr().out
     assert "沒有套用" in out and "已套用" in out
-    assert (workspace / "calc.py").read_bytes() == b"def add(a, b):\n    return a + b\n"
+    assert (workspace / "calc.py").read_bytes() == "def add(a, b):\n    return a + b  # 修好了\n".encode()
+    assert tools.DRAFT == {}
     last_question = seen[-1][1][-1].content
     assert "使用者已把" in last_question and "接下來呢" in last_question
+
+
+def test_draft_accumulates_and_every_tool_sees_it(workspace, fake_sandbox):
+    """修改累積在草稿:read_file / search_code / list_files / 沙箱都看草稿版本;存的 patch 是原始 → 草稿的全部修改。"""
+    (workspace / "calc.py").write_bytes(b"def add(a, b):\n    return a - b\n")
+    assert "已改在草稿上" in patch(("calc.py", "a - b", "a + b"))
+    assert "已改在草稿上" in patch(("calc.py", "return a + b", "return a + b\n\n\ndef div(a, b):\n    return a / b"),
+                                 ("tests/test_div.py", "", "from calc import div\n"))
+    assert "def div" in tools.read_file.invoke({"path": "calc.py"})
+    assert "calc.py:5:" in tools.search_code.invoke({"pattern": "def div"})
+    assert "tests/test_div.py  (草稿新增,還沒套用)" in tools.list_files.invoke({"glob": "**/*"})
+    assert fake_sandbox[-1]["calc.py"].endswith(b"return a / b\n") and "tests/test_div.py" in fake_sandbox[-1]
+    latest = tools.PATCHES[-1][0].read_text(encoding="utf-8")  # 第二份 patch 包含兩次的修改
+    assert "-    return a - b" in latest and "+def div(a, b):" in latest and "+++ b/tests/test_div.py" in latest
+    assert (workspace / "calc.py").read_bytes() == b"def add(a, b):\n    return a - b\n"  # 真正的檔案沒動
+    assert "不是最新的" in tools.apply_patch(tools.PATCHES[0][0])  # 舊的累積 patch 不能套
+    assert "已捨棄" in tools.discard_draft() and tools.DRAFT == {}
+    assert "return a - b" in tools.read_file.invoke({"path": "calc.py"})
+
+
+def test_draft_reverted_to_original_is_dropped(workspace, fake_sandbox):
+    (workspace / "calc.py").write_bytes(b"x = 1\n")
+    patch(("calc.py", "x = 1", "x = 2"))
+    assert "草稿已經清空" in patch(("calc.py", "x = 2", "x = 1")) and tools.DRAFT == {}
 
 
 def test_tool_definitions_do_not_inflate_estimate(workspace, caplog):
@@ -964,7 +1032,7 @@ def test_webui_chat_and_security(webui_app):
     assert httpx.get(f"{app.base}/api/events?token=wrong").status_code == 403
     assert app.post("/api/ask", {"text": "你好"}).status_code == 202
     events = app.events_until("done")
-    assert events[0] == {"seq": 1, "kind": "user", "text": "你好"}
+    assert events[0] == {"seq": 1, "kind": "user", "text": "你好", "mode": "normal"}
     assert "text" in [e["kind"] for e in events] and events[-1]["answer"] == "你好,我是小助理"
     app.hub.busy = True
     assert app.post("/api/ask", {"text": "又一題"}).status_code == 409
@@ -990,7 +1058,8 @@ def test_webui_confirm_and_apply(webui_app, workspace, fake_sandbox):
     app.post("/api/ask", {"text": "修 add"})
     offer = app.events_until("offer_apply")[-1]
     assert offer["passed"] and "+    return a + b" in offer["diff"]
-    assert app.post("/api/apply", {"patch": offer["patch"], "apply": True}).json()["text"].startswith("已套用")
+    assert app.post("/api/apply", {"patch": offer["patch"], "action": "apply"}).json()["text"].startswith("已套用")
+    assert tools.DRAFT == {}  # 套用後草稿清空
     assert (workspace / "calc.py").read_bytes() == b"def add(a, b):\n    return a + b\n"
     app.post("/api/ask", {"text": "接下來"})
     app.events_until("done", since=offer["seq"])
@@ -1039,3 +1108,16 @@ def test_webui_clear_and_remember(webui_app, workspace):
     assert events[0]["kind"] == "user" and events[0]["text"] == "第二題"
     sent = app.seen[-1][1]
     assert len(sent) == 2 and "回答要簡短" in sent[0].content  # 新對話:系統提示(含新規則)+ 這一題
+
+
+def test_webui_plan_mode(webui_app):
+    """網頁:用「先規劃」問 → 回答完跳出「照計畫執行」卡片 → 按了才用執行模式跑。"""
+    app = webui_app([ai("計畫:1. 改 add 2. 跑測試"), ai("照計畫做完了")])
+    assert app.post("/api/ask", {"text": "修 add", "mode": "plan"}).status_code == 202
+    events = app.events_until("offer_plan")
+    assert events[0]["mode"] == "plan" and [e["kind"] for e in events][-2:] == ["done", "offer_plan"]
+    assert app.post("/api/execute", {"go": True}).status_code == 202
+    later = app.events_until("done", since=events[-1]["seq"])
+    assert later[0] == {"seq": events[-1]["seq"] + 1, "kind": "plan_answered", "go": True}
+    assert later[1]["kind"] == "user" and later[1]["text"] == "照計畫執行" and later[1]["mode"] == "execute"
+    assert "照上面的計畫執行" in app.seen[1][1][-1].content and "update_plan" in app.seen[1][2]

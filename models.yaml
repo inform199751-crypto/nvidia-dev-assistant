@@ -27,6 +27,7 @@ routing:
 
 limits:
   max_agent_steps: 15
+  max_execute_steps: 25             # 照計畫執行(/plan 同意後)的步數上限:要做的事比一般問答多
   summarize_at: 0.6                 # 對話超過預設模型預算的 6 成,下一題開始前先整理成摘要
   tool_output_max_tokens: 4000      # 單次工具輸出上限(測試 log 很容易爆)
   inline_file_max_tokens: 24000     # 超過就只給大綱,讓 agent 用工具分段讀

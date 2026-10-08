@@ -36,8 +36,8 @@ SYSTEM_PROMPT = """You are an internal assistant for a software team: first of a
 1. Locate: use list_files / search_code / read_file to find the relevant lines (git_log / git_blame when history matters). Do not guess what code you have not read.
 2. Reproduce: run run_tests (or reason from the given traceback) before changing anything.
 3. Hypothesize: state the root cause in one or two sentences, citing path:line.
-4. Fix and verify: call propose_patch with edits. Each edit replaces old_string with new_string in one file; copy old_string verbatim from read_file output WITHOUT the line-number prefix, and include a few surrounding lines if it is not unique. To add a new file (e.g. a regression test), use a path that does not exist with an empty old_string. The tool builds the diff, applies it to a scratch copy, runs the tests and returns the diff and the real post-patch result. Keep changes minimal; do not refactor unrelated code.
-5. If the post-patch tests still fail, read that output and send a revised patch. Edits always apply to the ORIGINAL files (earlier patches are not applied), and run_tests always tests the ORIGINAL code, so do not use it to verify a patch.
+4. Fix and verify: call propose_patch with edits. Each edit replaces old_string with new_string in one file; copy old_string verbatim from read_file output WITHOUT the line-number prefix, and include a few surrounding lines if it is not unique. To add a new file (e.g. a regression test), use a path that does not exist with an empty old_string. Edits go into your draft (the user's real files do not change); the tool runs the tests on the drafted version and returns the diff and the real result. Keep changes minimal; do not refactor unrelated code.
+5. Your edits accumulate in the draft: read_file, search_code, run_tests and run_command all see the drafted version, and the next propose_patch builds on it. If tests still fail, fix forward on top of the current draft. The user applies the draft to their real files only after reviewing it.
 
 ## Rules
 - Cite evidence as path:line. If something is uncertain or not visible in the files, say so instead of inventing APIs or behavior.
@@ -74,7 +74,10 @@ def build_user_prompt(task: str, attachments: list[str], inline_limit: int, whol
     parts = []
     for rel in attachments:
         path = toolbox._safe_path(rel)  # 附檔也要過機密檔檢查
-        text = documents.extract_text(path)  # PDF / Word / Excel 先轉文字,其他當純文字
+        if path.suffix.lower() in documents.DOC_SUFFIXES:  # PDF / Word / Excel 先轉文字
+            text = documents.extract_text(path)
+        else:  # 其他當純文字;草稿改過的檔案給草稿版本
+            text = toolbox.current_text(path) or ""
         n_lines = text.count("\n") + 1
         tokens = estimate_tokens(text)
         if path.suffix.lower() in documents.DOC_SUFFIXES:  # 文件不加行號
@@ -149,6 +152,16 @@ def remember(note: str) -> Path:
     return p
 
 
+PLAN_MODE_NOTE = """
+
+<plan_mode>
+PLAN MODE: do not change anything yet. Investigate with the read-only tools, then reply with a numbered plan: goal, 3-6 concrete steps (each step changes or verifies something; no "look at the file" steps), files to change, how you will verify, and risks. Do not propose patches or save files. Write the plan in Traditional Chinese (zh-TW). The user will review the plan before anything is executed.
+</plan_mode>"""
+
+# 10/9 實測:模型每次單獨呼叫 update_plan,15 步裡約 6 步只在更新清單(每步都重送整段對話),做到一半就碰到步數上限
+EXECUTE_TASK = ("照上面的計畫執行。用 update_plan 回報進度,但要跟下一個實際動作放在同一次回應裡一起呼叫(可以同時呼叫多個工具),"
+                "不要單獨呼叫;一次可以把多個步驟標成 done。全部做完後總結結果。")
+
 SUMMARY_PROMPT = """You are compacting a long conversation between a user and an engineering assistant so the work can continue in a fresh context. Write a concise summary in Traditional Chinese (zh-TW) covering: the user's goals and requests; key findings with file paths and line numbers; decisions made; patches proposed (file names, whether tests passed, whether the user applied them); open questions and next steps. Keep code identifiers, paths and error messages verbatim. Do not invent anything that is not in the conversation. At most about 400 words."""
 
 
@@ -206,7 +219,6 @@ class AgentSession:
         self.registry, self.quota, self.user = registry, quota, user
         self.requested_role, self.thinking, self.whole = role, thinking, whole
         self.tools = [] if whole else list(tools)
-        self.tool_map = {t.name: t for t in self.tools}
         self.overhead = tool_tokens(self.tools)  # 工具定義每步都送,是固定成本;不算進來會被誤判成估算偏低
         self.messages: list[BaseMessage] = [SystemMessage(system_prompt())]
         self.scale = 1.0  # 估算偏低時,用伺服器回報的實際 input tokens 往上修正
@@ -280,26 +292,43 @@ class AgentSession:
         except Exception as e:  # 摘要失敗不擋這一題:後面還有瘦身與升級模型兩道防線
             self._notice("整理摘要失敗,先照常繼續:%s", f"{type(e).__name__}: {e}")
 
-    def ask(self, task: str, attachments: list[str] = ()) -> AgentResult:
-        """問一輪。中途出錯(額度、伺服器全掛)就把這一輪的訊息退掉,對話停在上一輪結束的狀態。"""
+    def ask(self, task: str, attachments: list[str] = (), mode: str = "normal") -> AgentResult:
+        """問一輪。中途出錯(額度、伺服器全掛)就把這一輪的訊息退掉,對話停在上一輪結束的狀態。
+
+        mode="plan":只給唯讀工具,請模型調查後交出編號計畫(像 Claude Code 的 plan mode),不准改東西;
+        mode="execute":照上一輪的計畫做,多給 update_plan 讓它回報進度。
+        """
         self._maybe_compact()  # 要在記下 start 之前:摘要會把訊息變短
         start = len(self.messages)
         try:
-            return self._ask(task, list(attachments))
+            return self._ask(task, list(attachments), mode)
         except BaseException:
             del self.messages[start:]
             raise
 
-    def _ask(self, task: str, attachments: list[str]) -> AgentResult:
-        reg, limits, tools = self.registry, self.registry.limits, self.tools
+    def _tools_for(self, mode: str) -> list:
+        if mode == "plan":
+            return [t for t in self.tools if t.name not in toolbox.WRITE_TOOLS]
+        if mode == "execute" and self.tools:
+            return self.tools + [toolbox.update_plan]
+        return self.tools
+
+    def _ask(self, task: str, attachments: list[str], mode: str = "normal") -> AgentResult:
+        reg, limits = self.registry, self.registry.limits
+        tools = self._tools_for(mode)
+        tool_map = {t.name: t for t in tools}
+        self.overhead = tool_tokens(tools)  # 這一輪實際綁的工具;規劃 / 執行模式的工具不一樣
+        if mode == "plan":
+            task += PLAN_MODE_NOTE
         self.messages.append(HumanMessage(
             build_user_prompt(task, attachments, limits["inline_file_max_tokens"], self.whole)))
         role = reg.pick_role(prompt_tokens=self.sized(), needs_tools=bool(tools), requested=self.requested_role)
         llm = reg.agent_model(role, tools, thinking=self.thinking)
         used = 0
+        max_steps = limits.get("max_execute_steps", 25) if mode == "execute" else limits["max_agent_steps"]
 
         with self.quota.slot(self.user):
-            for step in range(1, limits["max_agent_steps"] + 1):
+            for step in range(1, max_steps + 1):
                 # 每一步送出前的三道檢查:清掉舊思考 → 瘦身 → 還放不下就升級模型
                 self.messages = strip_stale_reasoning(self.messages)
                 budget = reg.budget(role)
@@ -331,14 +360,18 @@ class AgentSession:
                 if not ai.tool_calls and not ai.invalid_tool_calls:
                     return AgentResult(strip_think_text(str(ai.content)), role, step, used)
                 for call in ai.tool_calls:
-                    tool = self.tool_map.get(call["name"])
-                    self._emit("tool", name=call["name"], args=call["args"])
+                    tool = tool_map.get(call["name"])
+                    if call["name"] == "update_plan" and tool:  # 進度清單直接畫給使用者看,不當一般工具列
+                        self._emit("plan", steps=call["args"].get("steps", []))
+                    else:
+                        self._emit("tool", name=call["name"], args=call["args"])
                     try:
                         out = tool.invoke(call["args"]) if tool else f"錯誤:沒有 {call['name']} 這個工具"
                     except Exception as e:  # 錯誤回給模型自己修正,不讓整個流程掛掉
                         out = f"工具執行錯誤:{type(e).__name__}: {e}"
                     out = truncate_middle(str(out), limits["tool_output_max_tokens"])
-                    self._emit("tool_done", name=call["name"], output=out)
+                    if call["name"] != "update_plan":
+                        self._emit("tool_done", name=call["name"], output=out)
                     self.messages.append(ToolMessage(out, tool_call_id=call["id"]))
                 # 參數不是合法 JSON 的呼叫會落在 invalid_tool_calls(tool_calls 是空的);
                 # 套件仍會把原始 tool call 送回伺服器,所以一樣要回一則 ToolMessage 讓模型修正重送
@@ -346,8 +379,7 @@ class AgentSession:
                     out = f"錯誤:{bad.get('name')} 的參數不是合法 JSON,請修正後重送。\n{bad.get('error') or ''}"
                     self.messages.append(ToolMessage(truncate_middle(out, limits["tool_output_max_tokens"]),
                                                      tool_call_id=bad.get("id") or ""))
-        return AgentResult(f"[已達 {limits['max_agent_steps']} 步上限,停止。請把問題拆小再問]",
-                           role, limits["max_agent_steps"], used)
+        return AgentResult(f"[已達 {max_steps} 步上限,停止。請把問題拆小再問]", role, max_steps, used)
 
 
 def run_agent(task: str, *, registry: ModelRegistry, quota: TokenQuota, user: str = "cli",
@@ -359,11 +391,13 @@ def run_agent(task: str, *, registry: ModelRegistry, quota: TokenQuota, user: st
 
 
 HELP = """直接輸入問題,Enter 送出。用 @路徑 附上工作區的檔案,例如:看一下 @calc.py 的 add
-  AI 提出的修改通過沙箱測試後,會問你要不要套用到工作區(預設不套用)。
+  AI 的修改先放在它的草稿上(你的檔案不會動);通過沙箱測試後會問你要不要套用(預設不套用)。
   工作區的 ASSISTANT.md 是這個專案給小助理的規則,每段對話開始時自動讀取。
   /remember 規則  把一條規則寫進 ASSISTANT.md,馬上生效(例如:/remember 回答都要附檔案路徑)
+  /plan 任務  先規劃再動手:小助理只讀不改、交出計畫,你同意後才照計畫做(會顯示進度清單)
   對話太長時會自動把前面的內容整理成摘要;/compact 可以手動整理。
-  /apply  套用最近一個 patch(一樣會先問你)
+  /apply  把草稿套用到工作區(一樣會先問你)
+  /discard  捨棄草稿裡還沒套用的修改
   /clear  開始新對話(清掉前面的內容)
   /help   顯示這段說明
   /exit   離開(也可以按 Ctrl+C)"""
@@ -413,6 +447,10 @@ class ConsoleView:
             self._line(f"  ▸ {data['name']} {args[:100] + '…' if len(args) > 100 else args}")
         elif kind == "notice":
             self._line(f"  ({data['text']})")
+        elif kind == "plan":
+            marks = {"done": "☑", "in_progress": "◐"}
+            self._line("  計畫進度:\n" + "\n".join(f"    {marks.get(s.get('status'), '☐')} {s.get('step')}"
+                                                for s in data["steps"]))
         elif kind == "step":
             self._write("")  # 擦掉沒接上文字的「思考中…」
 
@@ -439,8 +477,9 @@ def _offer_apply(patch: Path, passed: bool) -> str:
     """問要不要把 patch 套用到工作區;套用了就回傳要告訴模型的通知(它讀過的檔案已經變了)。"""
     name = patch.relative_to(toolbox.WORKSPACE).as_posix()
     warning = "" if passed else "(注意:套用後沙箱測試沒有通過)"
-    if not ask_yes_no(f"\n要把 {name} 套用到工作區嗎?{warning}"):
-        print("沒有套用,patch 留著給你之後審核。")
+    files = "、".join(sorted(toolbox.DRAFT))
+    if not ask_yes_no(f"\n要把草稿的修改({files})套用到工作區嗎?{warning}"):
+        print(f"沒有套用。草稿留著,可以繼續請我改;/apply 之後再套用、/discard 捨棄。patch 檔:{name}")
         return ""
     result = toolbox.apply_patch(patch)
     print(result)
@@ -472,7 +511,14 @@ def chat(session_factory, first_files: list[str], banner: str = "") -> None:
             continue
         if text == "/clear":
             session, note = session_factory(), ""
-            print("已開始新對話。")
+            dropped = f"({toolbox.discard_draft()})" if toolbox.DRAFT else ""  # 新對話不記得草稿,留著會混淆
+            print(f"已開始新對話。{dropped}")
+            continue
+        if text == "/discard":
+            had = bool(toolbox.DRAFT)
+            print(toolbox.discard_draft())
+            if had:
+                note += "<note>使用者已捨棄你草稿裡的所有修改,檔案回到原本的內容。</note>\n"
             continue
         if text.startswith("/remember"):
             if rule := text.removeprefix("/remember").strip():
@@ -492,30 +538,40 @@ def chat(session_factory, first_files: list[str], banner: str = "") -> None:
                 print(f"整理失敗:{type(e).__name__}: {e}")
             continue
         if text == "/apply":
-            if toolbox.PATCHES:
+            if toolbox.PATCHES and toolbox.DRAFT:
                 note += _offer_apply(*toolbox.PATCHES[-1])
             else:
-                print("還沒有提出任何 patch。")
+                print("草稿是空的,沒有要套用的修改。")
             continue
-        before = len(toolbox.PATCHES)
-        try:
-            r = session.ask(note + text, pending + [f for f in file_mentions(text) if f not in pending])
-        except KeyboardInterrupt:
-            print("\n(已中斷這一輪,對話保留在上一輪結束的狀態)")
-            continue
-        except Exception as e:  # 額度用完、模型全掛:這輪退掉,對話還能繼續
-            print(f"\n錯誤:{type(e).__name__}: {e}")
-            continue
-        pending, note = [], ""
-        answer = "\n" if session.on_event else f"\n{r.answer}\n"  # 串流時回答已經邊產生邊印出來了
-        print(f"{answer}\n— {r.role} · {r.steps} 步 · {r.tokens_used:,} tokens"
-              f"(這段對話累計 {session.tokens_used:,})")
-        if new := toolbox.PATCHES[before:]:
-            patch, passed = new[-1]
-            if passed:
-                note = _offer_apply(patch, passed)
-            else:
-                print("(最後一個 patch 的沙箱測試沒過,先不問要不要套用;仍要套用請輸入 /apply)")
+        mode = "normal"
+        if text.startswith("/plan"):
+            text, mode = text.removeprefix("/plan").strip(), "plan"
+            if not text:
+                print("用法:/plan 任務,例如 /plan 幫 calc.py 加上除法並補測試")
+                continue
+        while True:  # 規劃模式:交出計畫、使用者同意後,接著再跑一輪「照計畫執行」
+            before = len(toolbox.PATCHES)
+            try:
+                r = session.ask(note + text, pending + [f for f in file_mentions(text) if f not in pending], mode)
+            except KeyboardInterrupt:
+                print("\n(已中斷這一輪,對話保留在上一輪結束的狀態)")
+                break
+            except Exception as e:  # 額度用完、模型全掛:這輪退掉,對話還能繼續
+                print(f"\n錯誤:{type(e).__name__}: {e}")
+                break
+            pending, note = [], ""
+            answer = "\n" if session.on_event else f"\n{r.answer}\n"  # 串流時回答已經邊產生邊印出來了
+            print(f"{answer}\n— {r.role} · {r.steps} 步 · {r.tokens_used:,} tokens"
+                  f"(這段對話累計 {session.tokens_used:,})")
+            if new := toolbox.PATCHES[before:]:
+                patch, passed = new[-1]
+                if passed:
+                    note = _offer_apply(patch, passed)
+                else:
+                    print("(最後一個 patch 的沙箱測試沒過,先不問要不要套用;仍要套用請輸入 /apply)")
+            if mode != "plan" or not ask_yes_no("\n照這個計畫執行嗎?"):
+                break
+            text, mode = EXECUTE_TASK, "execute"
 
 
 def prepare() -> tuple[ModelRegistry, TokenQuota, list, bool]:
