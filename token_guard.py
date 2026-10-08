@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 import threading
 from collections import defaultdict
@@ -14,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.utils.function_calling import convert_to_openai_tool
 
 _CJK = re.compile(r"[　-鿿가-힯＀-￯]")
 _THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", re.S)
@@ -50,6 +52,17 @@ def message_tokens(messages: list[BaseMessage]) -> int:
             total += sum(estimate_tokens(str(c.get("args", ""))) for c in m.tool_calls)
             total += estimate_tokens(m.additional_kwargs.get("reasoning_content") or "")
     return total
+
+
+def tool_tokens(tools: list) -> int:
+    """工具定義(名稱、說明、參數 schema)每一步都會跟著送出,是固定成本,要另外算進 prompt。
+
+    2026-10-08 改 bug 實測:沒算它時,第一步實際 1271 / 估算 638,
+    差額被當成估算公式偏低,之後每一步都被放大 1.99 倍,中型任務會提早升級到 Ultra。
+    """
+    if not tools:
+        return 0
+    return estimate_tokens(json.dumps([convert_to_openai_tool(t) for t in tools], ensure_ascii=False))
 
 
 # ---------- 截斷與瘦身 ----------
@@ -90,9 +103,11 @@ def strip_stale_reasoning(messages: list[BaseMessage]) -> list[BaseMessage]:
     """刪掉「上一輪以前」的思考內容,保留本輪的。
 
     langchain-nvidia-ai-endpoints 會把 AIMessage 的 reasoning_content 原樣送回伺服器,
-    多步 agent 每一步都重送全部思考過程,token 會滾雪球。
+    多輪對話每一輪都重送全部思考過程,token 會滾雪球。
     本輪(最後一個 HumanMessage 之後)保留,因為有些模型的 tool calling
     要求同一輪內把 reasoning 帶回去才能接著想。
+    注意:CLI 一次任務只有一個 HumanMessage,整個任務都算本輪,這裡不會刪任何東西;
+    本輪的思考仍會累積,但 message_tokens 有算進去,超過預算一樣會瘦身 / 升級。
     """
     last_human = max((i for i, m in enumerate(messages) if isinstance(m, HumanMessage)), default=-1)
     out: list[BaseMessage] = []

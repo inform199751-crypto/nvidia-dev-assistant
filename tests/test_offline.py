@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 from typing import Any
 
 import pytest
@@ -10,10 +11,10 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 import tools
-from agent import run_agent
+from agent import SYSTEM_PROMPT, build_user_prompt, run_agent
 from llm_registry import ModelRegistry
 from token_guard import (ContextTooLarge, QuotaExceeded, TokenQuota, compact_history,
-                         message_tokens, outline, strip_stale_reasoning, truncate_middle)
+                         message_tokens, outline, strip_stale_reasoning, tool_tokens, truncate_middle)
 
 CONFIG = {
     "backends": {
@@ -388,3 +389,30 @@ def test_quota_is_checked_every_step(workspace):
     with pytest.raises(QuotaExceeded):
         run_agent("看 a.py", registry=reg, quota=TokenQuota(10**6, 2))
     assert len(seen) == 1
+
+
+def test_tool_definitions_do_not_inflate_estimate(workspace, caplog):
+    """工具定義是每步固定的成本,要算進估算;不能被當成「估算偏低」把之後每一步都放大(10/8 實測被放大 1.99 倍)。"""
+    assert tool_tokens(tools.ALL_TOOLS) > 300 and tool_tokens([]) == 0
+    (workspace / "a.py").write_text("y = 1", encoding="utf-8")
+    prompt = [SystemMessage(SYSTEM_PROMPT), HumanMessage(build_user_prompt("看 a.py", [], 2000, False))]
+    actual = message_tokens(prompt) + tool_tokens(tools.ALL_TOOLS)  # 伺服器回報的 = 對話 + 工具定義
+    first = AIMessage(content="", tool_calls=[{"name": "read_file", "args": {"path": "a.py"}, "id": "c1"}],
+                      usage_metadata={"input_tokens": actual, "output_tokens": 10, "total_tokens": actual + 10})
+    reg, _ = scripted_registry([first, ai("好了")])
+    with caplog.at_level(logging.INFO, logger="dev_assistant"):
+        run_agent("看 a.py", registry=reg, quota=TokenQuota(10**6, 2))
+    assert "估算偏低" not in caplog.text
+
+
+def test_malformed_tool_call_is_fed_back_not_final(workspace):
+    """參數不是合法 JSON 的 tool call 會進 invalid_tool_calls、tool_calls 是空的;不能當成最終答案回傳空字串。"""
+    bad = AIMessage(content="", invalid_tool_calls=[{"name": "read_file", "args": '{"path": "calc.py"', "id": "c1",
+                                                     "error": "Expecting ',' delimiter", "type": "invalid_tool_call"}],
+                    usage_metadata={"input_tokens": 100, "output_tokens": 0, "total_tokens": 100})
+    reg, seen = scripted_registry([bad, ai("修正後的回答")])
+    r = run_agent("看 calc.py", registry=reg, quota=TokenQuota(10**6, 2))
+    assert (r.answer, r.steps) == ("修正後的回答", 2)
+    feedback = seen[1][1][-1]
+    assert isinstance(feedback, ToolMessage) and feedback.tool_call_id == "c1"
+    assert "不是合法 JSON" in feedback.content and "delimiter" in feedback.content

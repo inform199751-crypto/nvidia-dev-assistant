@@ -15,7 +15,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, To
 
 from llm_registry import ModelRegistry
 from token_guard import (TokenQuota, compact_history, estimate_tokens, message_tokens,
-                         outline, strip_stale_reasoning, strip_think_text, truncate_middle)
+                         outline, strip_stale_reasoning, strip_think_text, tool_tokens, truncate_middle)
 import tools as toolbox
 from tools import ALL_TOOLS
 
@@ -82,14 +82,16 @@ def run_agent(task: str, *, registry: ModelRegistry, quota: TokenQuota, user: st
         SystemMessage(SYSTEM_PROMPT),
         HumanMessage(build_user_prompt(task, list(attachments), limits["inline_file_max_tokens"], whole)),
     ]
-    role = registry.pick_role(prompt_tokens=message_tokens(messages), needs_tools=bool(tools), requested=role)
+    overhead = tool_tokens(tools)  # 工具定義每步都送,是固定成本;不算進來會被誤判成估算偏低
+    role = registry.pick_role(prompt_tokens=message_tokens(messages) + overhead, needs_tools=bool(tools),
+                              requested=role)
     llm = registry.agent_model(role, tools, thinking=thinking)
     tool_map = {t.name: t for t in tools}
     used = 0
     scale = 1.0  # 估算偏低時,用伺服器回報的實際 input tokens 往上修正
 
     def sized() -> int:
-        return int(message_tokens(messages) * scale)
+        return int((message_tokens(messages) + overhead) * scale)
 
     with quota.slot(user):
         for step in range(1, limits["max_agent_steps"] + 1):
@@ -97,14 +99,14 @@ def run_agent(task: str, *, registry: ModelRegistry, quota: TokenQuota, user: st
             messages = strip_stale_reasoning(messages)
             budget = registry.budget(role)
             if sized() > budget:
-                messages = compact_history(messages, int(budget / scale))
+                messages = compact_history(messages, int(budget / scale) - overhead)
             if (tokens := sized()) > budget:
                 new_role = registry.pick_role(prompt_tokens=tokens, needs_tools=bool(tools))  # 放不下會丟 ContextTooLarge
                 log.info("對話約 %s tokens 超過 %s 的預算,升級到 %s", tokens, role, new_role)
                 role, llm = new_role, registry.agent_model(new_role, tools, thinking=thinking)
             quota.check(user, sized() + registry.spec(role).max_output)  # 每步都檢查,不是只在開始
 
-            estimated = message_tokens(messages)
+            estimated = message_tokens(messages) + overhead
             ai = llm.invoke(messages)
             usage = ai.usage_metadata or {}
             if usage.get("input_tokens") and estimated and usage["input_tokens"] / estimated > scale * 1.05:
@@ -114,10 +116,11 @@ def run_agent(task: str, *, registry: ModelRegistry, quota: TokenQuota, user: st
             used += step_tokens
             quota.charge(user, step_tokens)
             messages.append(ai)
-            calls = ", ".join(f"{c['name']}({str(c['args'])[:60]})" for c in ai.tool_calls) or "(回答)"
+            calls = ", ".join([f"{c['name']}({str(c['args'])[:60]})" for c in ai.tool_calls]
+                              + [f"{c.get('name')}(參數格式錯誤)" for c in ai.invalid_tool_calls]) or "(回答)"
             log.info("step %d  role=%s  tokens=%d  %s", step, role, step_tokens, calls)
 
-            if not ai.tool_calls:
+            if not ai.tool_calls and not ai.invalid_tool_calls:
                 return AgentResult(strip_think_text(str(ai.content)), role, step, used)
             for call in ai.tool_calls:
                 tool = tool_map.get(call["name"])
@@ -127,6 +130,12 @@ def run_agent(task: str, *, registry: ModelRegistry, quota: TokenQuota, user: st
                     out = f"工具執行錯誤:{type(e).__name__}: {e}"
                 messages.append(ToolMessage(truncate_middle(str(out), limits["tool_output_max_tokens"]),
                                             tool_call_id=call["id"]))
+            # 參數不是合法 JSON 的呼叫會落在 invalid_tool_calls(tool_calls 是空的);
+            # 套件仍會把原始 tool call 送回伺服器,所以一樣要回一則 ToolMessage 讓模型修正重送
+            for bad in ai.invalid_tool_calls:
+                out = f"錯誤:{bad.get('name')} 的參數不是合法 JSON,請修正後重送。\n{bad.get('error') or ''}"
+                messages.append(ToolMessage(truncate_middle(out, limits["tool_output_max_tokens"]),
+                                            tool_call_id=bad.get("id") or ""))
     return AgentResult(f"[已達 {limits['max_agent_steps']} 步上限,停止。請把問題拆小再問]",
                        role, limits["max_agent_steps"], used)
 
