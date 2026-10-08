@@ -4,7 +4,7 @@
 改走 NVIDIA 生態系:開發期接 API Catalog(build.nvidia.com),正式環境換成地端 NIM 容器,**程式碼不用改**。
 
 重點不在「接上了模型」,而在:**依任務與 token 數動態切換模型、控制 token 與顯存、讓 agent 只能在沙箱裡動手**,
-而且每個設計都用真模型實測過。實測與審查抓到 20 個問題,見下方。
+而且每個設計都用真模型實測過。實測與審查抓到 21 個問題,見下方。
 
 ## 架構
 
@@ -43,9 +43,9 @@ flowchart LR
 | 模型冒煙測試 | 三顆模型 × 回應 / 開思考 / 關思考 / tool calling | 全過;Super 每次 0.4–2.6 秒,DeepSeek 18–27 秒 |
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
-| 離線測試 | 假模型,不需金鑰 | 57 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 59 個全過 |
 
-## 實測與審查抓到的 20 個問題
+## 實測與審查抓到的 21 個問題
 
 | # | 問題 | 怎麼發現 | 處理 |
 |---|---|---|---|
@@ -69,6 +69,7 @@ flowchart LR
 | 18 | `run_tests` 直接掛載整個工作區,`.env` 在沙箱裡讀得到;複本的排除清單也漏了 `.env.staging` 這類檔名 | 加 `run_command` 前審查 | 沙箱一律掛排除機密檔的複本,判斷跟 `read_file` 同一套;指到工作區外的連結也不複製 |
 | 19 | 沙箱逾時只停掉 docker CLI,容器在背景繼續跑;Windows 上沙箱輸出的中文變亂碼 | 程式碼審查 + 本機實測 | 容器加名字、逾時就 `docker kill`;輸出一律用 UTF-8 解碼 |
 | 20 | 模型不知道今天幾號:摘要會議紀錄時把「下週三」算成 10/16(正確是 10/14) | 多功能互動實測(10/9) | 系統提示帶今天日期與星期(台北時間);重問一次答對 |
+| 21 | 串流模式下套件只把工具呼叫放在 `tool_call_chunks`,送回伺服器時 AI 訊息沒有 tool call,下一步 ToolMessage 對不到 | 加串流前讀套件原始碼 | 串流結束後用 `as_complete_message` 補回 `additional_kwargs["tool_calls"]`;真模型 3 步工具呼叫正常 |
 
 ## 執行
 

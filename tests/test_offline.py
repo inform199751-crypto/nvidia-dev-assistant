@@ -9,8 +9,8 @@ from typing import Any
 
 import pytest
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
 import documents
 import tools
@@ -65,11 +65,20 @@ class ScriptedChat(BaseChatModel):
         return "scripted"
 
 
-def scripted_registry(script: list[AIMessage], config: dict = CONFIG):
+class StreamingChat(ScriptedChat):
+    """會串流的假模型:劇本每一項是一串 AIMessageChunk;跟 NVIDIA 一樣,工具呼叫只放在 tool_call_chunks。"""
+
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs: Any):
+        self.seen.append((self.role, list(messages)))
+        for chunk in self.script.pop(0):
+            yield ChatGenerationChunk(message=chunk)
+
+
+def scripted_registry(script: list[AIMessage], config: dict = CONFIG, chat_cls: type = ScriptedChat):
     shared = {"script": script, "seen": []}
 
     def factory(spec, **_):
-        return ScriptedChat(role=spec.role, script=shared["script"], seen=shared["seen"])
+        return chat_cls(role=spec.role, script=shared["script"], seen=shared["seen"])
 
     return ModelRegistry(copy.deepcopy(config), backend="nim", chat_factory=factory), shared["seen"]
 
@@ -707,6 +716,50 @@ def test_session_keeps_history_across_turns(workspace):
     assert [type(m).__name__ for m in sent] == ["SystemMessage", "HumanMessage", "AIMessage", "HumanMessage"]
     assert "add 哪裡錯" in sent[1].content and "那要怎麼改" in sent[3].content
     assert sent[2].content == "calc.py:2 寫成減號" and "reasoning_content" not in sent[2].additional_kwargs
+
+
+def test_streaming_emits_events_and_keeps_tool_calls_for_the_wire(workspace):
+    """串流:邊產生邊送事件;合併後要補回 additional_kwargs["tool_calls"],
+    不然套件送回伺服器的 AI 訊息沒有 tool call,下一步的 ToolMessage 對不到(10/9 讀套件原始碼發現)。"""
+    import json
+    from langchain_nvidia_ai_endpoints._utils import convert_message_to_dict
+
+    (workspace / "calc.py").write_text("x = 1\n", encoding="utf-8")
+    think = lambda t: {"reasoning_content": t, "_reasoning_api_fields": ["reasoning_content"]}  # noqa: E731
+    usage = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+    step1 = [AIMessageChunk(content="", additional_kwargs=think("先看")),
+             AIMessageChunk(content="", additional_kwargs=think("檔案")),
+             AIMessageChunk(content="我看一下", tool_call_chunks=[
+                 {"index": None, "id": "c1", "name": "read_file", "args": '{"path": "calc.py"}'}]),
+             AIMessageChunk(content="", usage_metadata=usage)]
+    step2 = [AIMessageChunk(content="x 是 "), AIMessageChunk(content="1"), AIMessageChunk(content="", usage_metadata=usage)]
+    reg, seen = scripted_registry([step1, step2], chat_cls=StreamingChat)
+    events = []
+    s = AgentSession(reg, TokenQuota(10**6, 2), on_event=lambda kind, data: events.append((kind, data)))
+    r = s.ask("x 是多少")
+    assert (r.answer, r.tokens_used) == ("x 是 1", 30)
+    assert [k for k, _ in events] == ["thinking", "thinking", "text", "step", "tool", "tool_done", "text", "text", "step"]
+    assert events[4][1] == {"name": "read_file", "args": {"path": "calc.py"}} and "x = 1" in events[5][1]["output"]
+    wire = convert_message_to_dict(seen[1][1][2])  # 第二步送出去的上一則 AI 訊息
+    assert wire["tool_calls"][0]["id"] == "c1"
+    assert json.loads(wire["tool_calls"][0]["function"]["arguments"]) == {"path": "calc.py"}
+    assert wire["reasoning_content"] == "先看檔案"
+    assert s.messages[2].additional_kwargs["_reasoning_api_fields"] == ["reasoning_content"]
+
+
+def test_console_view_renders_stream():
+    """終端機畫面:「思考中…」會被蓋掉,工具一行一個,回答接著印。"""
+    import io
+    from agent import ConsoleView
+
+    buf = io.StringIO()
+    view = ConsoleView(buf)
+    for kind, data in [("thinking", {"text": "想"}), ("thinking", {"text": "想"}), ("step", {}),
+                       ("tool", {"name": "read_file", "args": {"path": "calc.py"}}),
+                       ("thinking", {"text": "想"}), ("text", {"text": "x 是 "}), ("text", {"text": "1"}), ("step", {})]:
+        view(kind, data)
+    screen = [line.split("\r")[-1].rstrip() for line in buf.getvalue().split("\n")]  # \r 之後的內容會覆蓋前面
+    assert screen == ['  ▸ read_file {"path": "calc.py"}', "x 是 1"]
 
 
 def test_system_prompt_has_today(workspace):

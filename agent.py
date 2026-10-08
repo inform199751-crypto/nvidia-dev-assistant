@@ -6,14 +6,18 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import Runnable
 
 from llm_registry import ModelRegistry
 from token_guard import (TAIPEI, TokenQuota, compact_history, estimate_tokens, message_tokens,
@@ -115,15 +119,42 @@ def today_line(now: datetime | None = None) -> str:
     return f"\n\nToday is {d:%Y-%m-%d} ({_WEEKDAYS[d.weekday()]}, Asia/Taipei)."
 
 
+def as_complete_message(msg: AIMessage) -> AIMessage:
+    """把串流合併出來的訊息整理成可以送回伺服器的完整訊息。
+
+    langchain-nvidia-ai-endpoints 送回伺服器時只看 additional_kwargs["tool_calls"],串流模式下它是空的
+    (只有 tool_call_chunks);不補回去,下一步的 ToolMessage 對不到 tool call,API 直接報錯。
+    另外每個 chunk 都帶一份 _reasoning_api_fields,合併後會重複。
+    """
+    kwargs = dict(msg.additional_kwargs)
+    if "_reasoning_api_fields" in kwargs:
+        kwargs["_reasoning_api_fields"] = list(dict.fromkeys(kwargs["_reasoning_api_fields"]))
+    if (msg.tool_calls or msg.invalid_tool_calls) and "tool_calls" not in kwargs:
+        kwargs["tool_calls"] = (
+            [{"id": c["id"], "type": "function",
+              "function": {"name": c["name"], "arguments": json.dumps(c["args"], ensure_ascii=False)}}
+             for c in msg.tool_calls]
+            + [{"id": c.get("id"), "type": "function", "function": {"name": c.get("name"), "arguments": c.get("args") or ""}}
+               for c in msg.invalid_tool_calls])
+    return AIMessage(content=msg.content, additional_kwargs=kwargs, tool_calls=msg.tool_calls,
+                     invalid_tool_calls=msg.invalid_tool_calls, usage_metadata=msg.usage_metadata,
+                     response_metadata=msg.response_metadata, id=msg.id)
+
+
+EventHandler = Callable[[str, dict], None]
+
+
 class AgentSession:
     """一段對話:保留完整 messages,每一輪(每次 ask)都走同一套逐步檢查。CLI 單次任務就是只問一輪。
 
     跨輪保留的:對話內容、估算倍率 scale。每輪重新決定模型(放得下就回到預設角色)。
+    給了 on_event 就改用串流,邊產生邊送出事件(終端機 / 網頁介面拿去顯示):
+    thinking / text(文字片段)、tool(要執行的工具)、tool_done(工具結果)、step(這一步用量)、notice(升級模型等)。
     """
 
     def __init__(self, registry: ModelRegistry, quota: TokenQuota, *, user: str = "cli",
                  role: str | None = None, thinking: bool | None = None, whole: bool = False,
-                 tools: list = ALL_TOOLS):
+                 tools: list = ALL_TOOLS, on_event: EventHandler | None = None):
         self.registry, self.quota, self.user = registry, quota, user
         self.requested_role, self.thinking, self.whole = role, thinking, whole
         self.tools = [] if whole else list(tools)
@@ -132,6 +163,28 @@ class AgentSession:
         self.messages: list[BaseMessage] = [SystemMessage(SYSTEM_PROMPT + today_line())]
         self.scale = 1.0  # 估算偏低時,用伺服器回報的實際 input tokens 往上修正
         self.tokens_used = 0  # 整段對話累計
+        self.on_event = on_event
+
+    def _emit(self, kind: str, **data) -> None:
+        if self.on_event:
+            self.on_event(kind, data)
+
+    def _notice(self, msg: str, *args) -> None:
+        log.info(msg, *args)
+        self._emit("notice", text=msg % args)
+
+    def _call(self, llm: Runnable) -> AIMessage:
+        """有 on_event 就串流(邊想邊顯示),沒有就一次拿完整回應。"""
+        if not self.on_event:
+            return llm.invoke(self.messages)
+        total = None
+        for chunk in llm.stream(self.messages):
+            if reasoning := chunk.additional_kwargs.get("reasoning_content"):
+                self._emit("thinking", text=reasoning)
+            if isinstance(chunk.content, str) and chunk.content:
+                self._emit("text", text=chunk.content)
+            total = chunk if total is None else total + chunk
+        return as_complete_message(total)
 
     def sized(self) -> int:
         return int((message_tokens(self.messages) + self.overhead) * self.scale)
@@ -162,17 +215,17 @@ class AgentSession:
                     self.messages = compact_history(self.messages, int(budget / self.scale) - self.overhead)
                 if (tokens := self.sized()) > budget:
                     new_role = reg.pick_role(prompt_tokens=tokens, needs_tools=bool(tools))  # 放不下會丟 ContextTooLarge
-                    log.info("對話約 %s tokens 超過 %s 的預算,升級到 %s", tokens, role, new_role)
+                    self._notice("對話約 %s tokens 超過 %s 的預算,升級到 %s", tokens, role, new_role)
                     role, llm = new_role, reg.agent_model(new_role, tools, thinking=self.thinking)
                 self.quota.check(self.user, self.sized() + reg.spec(role).max_output)  # 每步都檢查,不是只在開始
 
                 estimated = message_tokens(self.messages) + self.overhead
-                ai = llm.invoke(self.messages)
+                ai = self._call(llm)
                 usage = ai.usage_metadata or {}
                 if usage.get("input_tokens") and usage["input_tokens"] / estimated > self.scale * 1.05:
                     self.scale = usage["input_tokens"] / estimated
-                    log.info("估算偏低:實際 %s / 估算 %s,之後的預算按 %.2f 倍計",
-                             usage["input_tokens"], estimated, self.scale)
+                    self._notice("估算偏低:實際 %s / 估算 %s,之後的預算按 %.2f 倍計",
+                                 usage["input_tokens"], estimated, self.scale)
                 step_tokens = usage.get("total_tokens", 0)
                 used += step_tokens
                 self.tokens_used += step_tokens
@@ -181,17 +234,20 @@ class AgentSession:
                 calls = ", ".join([f"{c['name']}({str(c['args'])[:60]})" for c in ai.tool_calls]
                                   + [f"{c.get('name')}(參數格式錯誤)" for c in ai.invalid_tool_calls]) or "(回答)"
                 log.info("step %d  role=%s  tokens=%d  %s", step, role, step_tokens, calls)
+                self._emit("step", step=step, role=role, tokens=step_tokens)
 
                 if not ai.tool_calls and not ai.invalid_tool_calls:
                     return AgentResult(strip_think_text(str(ai.content)), role, step, used)
                 for call in ai.tool_calls:
                     tool = self.tool_map.get(call["name"])
+                    self._emit("tool", name=call["name"], args=call["args"])
                     try:
                         out = tool.invoke(call["args"]) if tool else f"錯誤:沒有 {call['name']} 這個工具"
                     except Exception as e:  # 錯誤回給模型自己修正,不讓整個流程掛掉
                         out = f"工具執行錯誤:{type(e).__name__}: {e}"
-                    self.messages.append(ToolMessage(truncate_middle(str(out), limits["tool_output_max_tokens"]),
-                                                     tool_call_id=call["id"]))
+                    out = truncate_middle(str(out), limits["tool_output_max_tokens"])
+                    self._emit("tool_done", name=call["name"], output=out)
+                    self.messages.append(ToolMessage(out, tool_call_id=call["id"]))
                 # 參數不是合法 JSON 的呼叫會落在 invalid_tool_calls(tool_calls 是空的);
                 # 套件仍會把原始 tool call 送回伺服器,所以一樣要回一則 ToolMessage 讓模型修正重送
                 for bad in ai.invalid_tool_calls:
@@ -227,13 +283,52 @@ def ask_yes_no(question: str) -> bool:
         return False
 
 
+class ConsoleView:
+    """把串流事件印到終端機:回答邊產生邊印;工具呼叫一行一個;思考中只顯示一個會消失的提示,不印內容。"""
+
+    _THINKING = "  思考中…"
+
+    def __init__(self, out=None):
+        self.out = out or sys.stdout
+        self.transient = False  # 「思考中…」還在畫面上,下一個輸出前要擦掉
+        self.line_start = True
+
+    def _write(self, text: str) -> None:
+        if self.transient:
+            self.out.write("\r" + " " * 16 + "\r")  # 中文字佔兩格,16 格足夠蓋掉提示
+            self.transient = False
+        self.out.write(text)
+        if text:
+            self.line_start = text.endswith("\n")
+        self.out.flush()
+
+    def _line(self, text: str) -> None:
+        self._write(("" if self.line_start else "\n") + text + "\n")
+
+    def __call__(self, kind: str, data: dict) -> None:
+        if kind == "thinking" and not self.transient:
+            self._write("" if self.line_start else "\n")
+            self.out.write(self._THINKING)
+            self.out.flush()
+            self.transient = True
+        elif kind == "text":
+            self._write(data["text"])
+        elif kind == "tool":
+            args = json.dumps(data["args"], ensure_ascii=False)
+            self._line(f"  ▸ {data['name']} {args[:100] + '…' if len(args) > 100 else args}")
+        elif kind == "notice":
+            self._line(f"  ({data['text']})")
+        elif kind == "step":
+            self._write("")  # 擦掉沒接上文字的「思考中…」
+
+
 _ALWAYS_ALLOWED: set[str] = set()
 
 
 def confirm_action(action: str, detail: str) -> bool:
     """工具動手前的權限提示(目前用在上網):y 這次允許、a 這次執行期間同類動作都允許、其他(含直接 Enter)不允許。"""
     if action in _ALWAYS_ALLOWED:
-        log.info("(已允許%s)%s", action, detail)
+        print(f"  (已允許{action}){detail}")
         return True
     try:
         answer = input(f"\nAI 想要{action}:{detail}\n允許嗎?[y=這次 / a=之後都允許 / N=不要] ").strip().lower()
@@ -298,7 +393,8 @@ def chat(session_factory, first_files: list[str], banner: str = "") -> None:
             print(f"\n錯誤:{type(e).__name__}: {e}")
             continue
         pending, note = [], ""
-        print(f"\n{r.answer}\n\n— {r.role} · {r.steps} 步 · {r.tokens_used:,} tokens"
+        answer = "" if session.on_event else f"\n{r.answer}\n"  # 串流時回答已經邊產生邊印出來了
+        print(f"{answer}\n— {r.role} · {r.steps} 步 · {r.tokens_used:,} tokens"
               f"(這段對話累計 {session.tokens_used:,})")
         if new := toolbox.PATCHES[before:]:
             patch, passed = new[-1]
@@ -334,8 +430,12 @@ def main() -> None:
     tools = ALL_TOOLS + (web.web_tools() if allow_web else [])  # 上網預設關閉
     web.CONFIRM = confirm_action  # 每次上網前都問使用者
 
+    view = ConsoleView()
+    log.setLevel(logging.WARNING)  # 進度改由 ConsoleView 顯示,不再印 step 紀錄
+
     def new_session() -> AgentSession:
-        return AgentSession(registry, quota, role=args.role, thinking=thinking, whole=args.whole, tools=tools)
+        return AgentSession(registry, quota, role=args.role, thinking=thinking, whole=args.whole, tools=tools,
+                            on_event=view)
 
     if args.task is None:
         if not allow_web:
@@ -345,7 +445,7 @@ def main() -> None:
         chat(new_session, args.file, banner)
         return
     r = new_session().ask(args.task, args.file)
-    print(f"\n{r.answer}\n\n— {r.role} · {r.steps} 步 · {r.tokens_used:,} tokens")
+    print(f"\n\n— {r.role} · {r.steps} 步 · {r.tokens_used:,} tokens")
 
 
 if __name__ == "__main__":

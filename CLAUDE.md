@@ -28,6 +28,8 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 
 ## 架構
 
+**串流**:`AgentSession(on_event=...)` 有給就用 `llm.stream()`,送出 `thinking` / `text` / `tool` / `tool_done` / `step` / `notice` 事件;CLI 用 `ConsoleView` 顯示(step 紀錄改成 WARNING 不印)。串流合併的訊息**一定要經過 `as_complete_message`**:套件送回伺服器只看 `additional_kwargs["tool_calls"]`,串流時它是空的,少了它下一步的 ToolMessage 會對不到。
+
 `agent.AgentSession` 保存一段對話(messages、估算倍率 `scale`、累計 tokens);`ask()` 是一輪,中途出錯會把這一輪的訊息退掉。`run_agent()` = 開新 session 只問一輪;`chat()` 是互動模式的 REPL,問題裡的 `@路徑` 由 `file_mentions` 轉成附檔。每輪開始重新 `pick_role`,之後每一步送出前依序做:
 1. `token_guard.strip_stale_reasoning`:只清「上一輪以前」的推理。同一輪內不清 —— 這是刻意的,模型接著 tool call 推理需要本輪的 reasoning。
 2. 超過預算 → `compact_history`(把舊 ToolMessage 內容換成佔位字)。
