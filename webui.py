@@ -32,9 +32,10 @@ MAX_BODY = 1_000_000  # POST 內容上限(問題文字、規則)
 class Hub:
     """一段對話的狀態 + 事件紀錄。agent 在背景執行緒跑,事件記下來給瀏覽器(重新整理時從頭重播這段對話)。"""
 
-    def __init__(self, new_session: Callable[[Callable], agent.AgentSession], status: str = ""):
+    def __init__(self, new_session: Callable[[Callable], agent.AgentSession], status: str = "", model: str = ""):
         self.new_session = new_session
         self.status = status
+        self.model = model  # 頁面上方顯示的模型名稱
         self.cond = threading.Condition()
         self.events: list[dict] = []
         self.view_start = 0  # 最近一次「新對話」之後的第一個事件
@@ -191,6 +192,7 @@ def make_handler(hub: Hub, token: str, port: int) -> type[BaseHTTPRequestHandler
             elif url.path == "/api/state":
                 if self._token_ok(self.headers.get("X-Token")):
                     self._json(200, {"workspace": str(toolbox.WORKSPACE), "status": hub.status, "busy": hub.busy,
+                                     "model": hub.model,
                                      "instructions": (toolbox.WORKSPACE / agent.INSTRUCTIONS_FILE).is_file()})
             elif url.path == "/api/events":
                 qs = parse_qs(url.query)
@@ -281,7 +283,8 @@ def main() -> None:
     thinking = {"on": True, "off": False}.get(args.think)
     hub = Hub(lambda on_event: agent.AgentSession(registry, quota, role=args.role, thinking=thinking, tools=tools,
                                                   on_event=on_event),
-              status=agent.web_status(allow_web))
+              status=agent.web_status(allow_web),
+              model=registry.spec(args.role or registry.routing["default_role"]).model.split("/")[-1])
     web.CONFIRM = hub.confirm  # 上網前在網頁上跳確認
     server = serve(hub, args.port)
     url = f"http://127.0.0.1:{args.port}/"
