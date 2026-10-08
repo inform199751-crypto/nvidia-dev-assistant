@@ -326,6 +326,7 @@ def main() -> None:
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # 不然每次上網都多印一行 HTTP Request
     registry = ModelRegistry.from_yaml()
     quota = TokenQuota(registry.limits["daily_tokens_per_user"], registry.limits["max_concurrent_per_user"])
     thinking = {"on": True, "off": False}.get(args.think)
