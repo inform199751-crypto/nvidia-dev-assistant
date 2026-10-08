@@ -265,24 +265,57 @@ def test_quota_daily_and_concurrency():
         pass
 
 
-def test_propose_patch_validates_diff(workspace, monkeypatch):
-    (workspace / "calc.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8", newline="\n")
-    seen = []  # 假沙箱:記下它看到的程式碼,不真的啟動 Docker
+@pytest.fixture
+def fake_sandbox(workspace, monkeypatch):
+    """假沙箱:記下它看到的複本(路徑 → bytes),不真的啟動 Docker。"""
+    seen = []
 
-    def fake_sandbox(root, target):
-        seen.append((root.resolve() != workspace.resolve(), (root / "calc.py").read_text(encoding="utf-8")))
+    def run(root, target):
+        assert root.resolve() != workspace.resolve()  # 測的是複本,不是工作區
+        seen.append({p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*.py")})
         return "exit code 0\n1 passed"
 
-    monkeypatch.setattr(tools, "_run_sandbox", fake_sandbox)
-    good = ("--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n"
-            "-    return a - b\n+    return a + b\n")
-    out = tools.propose_patch.invoke({"path": "calc.py", "unified_diff": good, "reason": "修加法", "test_target": "."})
-    assert "已存成" in out and "1 passed" in out
-    assert seen == [(True, "def add(a, b):\n    return a + b\n")]  # 測的是套用後的複本
-    bad = good.replace("return a - b", "return a * b")
-    assert "套不上去" in tools.propose_patch.invoke({"path": "calc.py", "unified_diff": bad, "reason": "x"})
-    assert len(seen) == 1  # 套不上去就不跑測試
-    assert (workspace / "calc.py").read_text(encoding="utf-8").endswith("a - b\n")  # 原檔沒被改
+    monkeypatch.setattr(tools, "_run_sandbox", run)
+    return seen
+
+
+def patch(*edits, reason="修正", test_target="."):
+    return tools.propose_patch.invoke({"edits": [dict(zip(("path", "old_string", "new_string"), e)) for e in edits],
+                                       "reason": reason, "test_target": test_target})
+
+
+def test_propose_patch_builds_diff_from_edits(workspace, fake_sandbox):
+    """模型手寫 unified diff 常格式錯(10/6 兩次、10/8 三次被退回);改成給舊字串 → 新字串,diff 由工具產生。"""
+    (workspace / "calc.py").write_bytes(b"def add(a, b):\n    return a - b\n\n\ndef mul(a, b):\n    return a - b\n")
+    (workspace / "util.py").write_bytes(b"X = 1\n")
+    out = patch(("calc.py", "def add(a, b):\n    return a - b", "def add(a, b):\n    return a + b"),
+                ("calc.py", "def mul(a, b):\n    return a - b", "def mul(a, b):\n    return a * b"),
+                ("util.py", "X = 1", "X = 2"))
+    assert "已存成 .agent_patches/" in out and "+    return a + b" in out and "1 passed" in out
+    assert fake_sandbox == [{"calc.py": b"def add(a, b):\n    return a + b\n\n\ndef mul(a, b):\n    return a * b\n",
+                             "util.py": b"X = 2\n"}]
+    saved = next((workspace / ".agent_patches").glob("*.patch"))
+    assert saved.name.endswith("_calc.py+1.patch")
+    assert (workspace / "calc.py").read_bytes().endswith(b"return a - b\n")  # 原檔沒被改
+
+
+def test_propose_patch_rejects_bad_edits_without_running_tests(workspace, fake_sandbox):
+    (workspace / "calc.py").write_text("def f():\n    return 1\n\ndef g():\n    return 1\n", encoding="utf-8")
+    assert "找不到 old_string" in patch(("calc.py", "    1| def f():", "def h():"))  # 帶了行號前綴
+    assert "出現 2 次" in patch(("calc.py", "    return 1", "    return 2"))
+    assert "沒有任何變更" in patch(("calc.py", "def f():", "def f():"))
+    with pytest.raises(PermissionError):
+        patch((".env", "A=1", "A=2"))
+    assert fake_sandbox == [] and not list(workspace.glob(".agent_patches/*.patch"))
+
+
+def test_propose_patch_keeps_crlf_and_missing_final_newline(workspace, fake_sandbox):
+    """read_file 給模型看的是 \\n:CRLF 檔要能比對、只改到那一行;沒有結尾換行的檔案 git apply 也要吃得下。"""
+    (workspace / "win.py").write_bytes(b"a = 1\r\nb = 2\r\nc = 3\r\n")
+    (workspace / "tail.py").write_bytes(b"x = 1\ny = 2")
+    out = patch(("win.py", "a = 1\nb = 2", "a = 1\nb = 20"), ("tail.py", "y = 2", "y = 3"))
+    assert "已存成" in out
+    assert fake_sandbox == [{"win.py": b"a = 1\r\nb = 20\r\nc = 3\r\n", "tail.py": b"x = 1\ny = 3"}]
 
 
 def test_shipped_models_yaml_is_consistent():

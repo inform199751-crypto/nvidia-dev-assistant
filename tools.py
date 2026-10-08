@@ -1,6 +1,7 @@
 """Agent 工具。原則:小而精準的輸出 + 錯誤回給模型自己修正 + 不直接改檔。"""
 from __future__ import annotations
 
+import difflib
 import os
 import re
 import shutil
@@ -8,6 +9,7 @@ import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from typing import TypedDict
 
 from langchain_core.tools import tool
 
@@ -109,33 +111,82 @@ def run_tests(target: str = "tests") -> str:
     return _check_target(target) or _run_sandbox(WORKSPACE, target)
 
 
+class Edit(TypedDict):
+    path: str
+    old_string: str
+    new_string: str
+
+
+def _apply_edit(text: str, old: str, new: str) -> str:
+    """把唯一出現的 old 換成 new;找不到或不唯一就丟 ValueError(訊息會回給模型)。"""
+    if not old:
+        raise ValueError("old_string 不能是空的(只能修改既有內容)")
+    if old not in text and "\r\n" in text:  # read_file 給模型看的是 \n,CRLF 檔要換回來比對
+        old, new = (s.replace("\r\n", "\n").replace("\n", "\r\n") for s in (old, new))
+    n = text.count(old)
+    if n == 0:
+        raise ValueError("找不到 old_string。請用 read_file 重讀,逐字複製(不要帶「    12| 」行號前綴,縮排要一致)")
+    if n > 1:
+        raise ValueError(f"old_string 出現 {n} 次,請多帶幾行上下文讓它唯一")
+    return text.replace(old, new, 1)
+
+
+def _unified_diff(rel: str, before: str, after: str) -> str:
+    """git apply 吃得下的 unified diff;最後一行沒換行要補標記(difflib 不會加)。"""
+    out = []
+    for line in difflib.unified_diff(before.splitlines(keepends=True), after.splitlines(keepends=True),
+                                     f"a/{rel}", f"b/{rel}"):
+        out.append(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n")
+    return "".join(out)
+
+
 @tool
-def propose_patch(path: str, unified_diff: str, reason: str, test_target: str = "tests") -> str:
-    """提出修改:輸入 unified diff,存成 .patch 等人工審核,原始檔案不會被改動。
-    會先檢查 diff 能不能套用,再把 patch 套到工作區的暫存複本上、在沙箱跑 test_target,回傳套用後的真實測試結果。"""
-    _safe_path(path)
+def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") -> str:
+    """提出修改,存成 .patch 等人工審核,原始檔案不會被改動。
+    edits:每一筆把 path 檔案裡的 old_string 換成 new_string。old_string 要從 read_file 的輸出逐字複製
+    (不要帶「    12| 」行號前綴)、在檔案裡只出現一次,不夠唯一就多帶幾行上下文。可以一次改多處、多個檔案;
+    每次都是對「原始檔案」修改(之前提的 patch 不會套用)。只能修改既有檔案。
+    diff 由工具產生,套到工作區的暫存複本上、在沙箱跑 test_target,回傳 diff 與套用後的真實測試結果。"""
     if err := _check_target(test_target):
         return err
     if not shutil.which("git"):
         return "錯誤:這台機器沒有 git,無法驗證 patch"
+    if not edits:
+        return "錯誤:edits 是空的"
+    files: dict[str, tuple[str, str]] = {}  # 相對路徑 → (原文, 改後)
+    for i, e in enumerate(edits, 1):
+        p = _safe_path(e["path"])
+        rel = p.relative_to(WORKSPACE).as_posix()
+        before, after = files.get(rel) or (p.read_bytes().decode("utf-8"),) * 2  # 不轉換行,CRLF 檔才不會整檔變動
+        try:
+            files[rel] = (before, _apply_edit(after, e["old_string"], e["new_string"]))
+        except ValueError as err:
+            return f"錯誤:第 {i} 筆修改({rel}):{err}"
+    diff = "".join(_unified_diff(rel, before, after) for rel, (before, after) in files.items())
+    if not diff:
+        return "錯誤:old_string 和 new_string 一樣,沒有任何變更"
+
     out_dir = WORKSPACE / ".agent_patches"
     out_dir.mkdir(exist_ok=True)
-    patch_file = out_dir / f"{datetime.now():%Y%m%d_%H%M%S}_{Path(path).name}.patch"
-    patch_file.write_text(f"# {reason}\n{unified_diff.rstrip()}\n", encoding="utf-8", newline="\n")
+    name = Path(next(iter(files))).name + (f"+{len(files) - 1}" if len(files) > 1 else "")
+    patch_file = out_dir / f"{datetime.now():%Y%m%d_%H%M%S}_{name}.patch"
+    patch_file.write_text(f"# {' '.join(reason.split())}\n{diff}", encoding="utf-8", newline="\n")
     r = subprocess.run(["git", "apply", "--check", str(patch_file)],
                        cwd=WORKSPACE, capture_output=True, text=True)
-    if r.returncode != 0:
+    if r.returncode != 0:  # diff 是從原檔算出來的,照理一定套得上;套不上多半是編碼或換行的怪狀況
         patch_file.unlink()
-        return f"diff 套不上去,請依錯誤修正後重送:\n{r.stderr.strip()}"
+        return f"錯誤:產生的 diff 套不上去:\n{r.stderr.strip()}"
 
     # 套到暫存複本上驗證;正式環境大 repo 改用 git worktree,不要整包複製
     with tempfile.TemporaryDirectory(prefix="agent_verify_") as tmp:
         copy = Path(tmp) / "ws"
         shutil.copytree(WORKSPACE, copy, ignore=_COPY_IGNORE)
-        subprocess.run(["git", "apply", str(patch_file)], cwd=copy, check=True, capture_output=True)
+        # 關掉換行轉換:Git for Windows 預設 autocrlf=true,會把複本裡的 LF 檔改成 CRLF,測到的就不是原本的內容
+        subprocess.run(["git", "-c", "core.autocrlf=false", "apply", str(patch_file)],
+                       cwd=copy, check=True, capture_output=True)
         result = _run_sandbox(copy, test_target)
     saved = patch_file.relative_to(WORKSPACE).as_posix()
-    return f"已存成 {saved},等工程師審核後套用。\n套用此 patch 後的測試結果:\n{result}"
+    return f"已存成 {saved},等工程師審核後套用。\n```diff\n{diff}```\n套用此 patch 後的測試結果:\n{result}"
 
 
 ALL_TOOLS = [read_file, search_code, run_tests, propose_patch]
