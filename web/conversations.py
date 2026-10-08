@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from langchain_core.messages import messages_from_dict, messages_to_dict
 
-from agent import run_agent
+from agent import omit_attachments, run_agent
 from token_guard import ContextTooLarge, QuotaExceeded
 from web.workspaces import WorkspaceRegistry
 
@@ -118,7 +118,15 @@ class ConversationManager:
     # ---------- 存取 ----------
     def _load(self) -> None:
         for path in sorted(self.store_dir.glob("*.json")):
-            conv = Conversation.from_dict(json.loads(path.read_text(encoding="utf-8")))
+            try:
+                conv = Conversation.from_dict(json.loads(path.read_text(encoding="utf-8")))
+            except Exception:  # 一個壞檔(或 Turn 欄位改版)不能讓整個伺服器起不來
+                log.exception("對話檔 %s 讀取失敗,改名為 .bad 後略過", path.name)
+                try:
+                    os.replace(path, path.with_suffix(".bad"))
+                except OSError:
+                    pass
+                continue
             changed = False
             for turn in conv.turns:
                 if turn.status not in FINISHED:  # 伺服器重開前沒跑完的,標成中斷
@@ -136,7 +144,7 @@ class ConversationManager:
         try:
             tmp.write_text(json.dumps(asdict(conv), ensure_ascii=False), encoding="utf-8")
             os.replace(tmp, path)  # 先寫暫存檔再取代,寫到一半當機也不會壞檔
-        except OSError:  # 存檔失敗(防毒軟體鎖檔等)不能中斷正在跑的這一輪;記憶體裡的狀態照樣正確,下一個事件會再寫一次
+        except (OSError, ValueError):  # 存檔失敗(防毒軟體鎖檔等)不能中斷正在跑的這一輪;記憶體裡的狀態照樣正確,下一個事件會再寫一次
             log.exception("對話 %s 存檔失敗", conv.id)
 
     def list(self) -> list[dict]:
@@ -180,6 +188,10 @@ class ConversationManager:
     def _validate(question: str, mode: str) -> None:
         if not (question or "").strip():
             raise ValueError("問題不能是空的")
+        try:
+            question.encode("utf-8")
+        except UnicodeEncodeError:  # 落單的代理字元(例如 \ud800)寫不進 JSON 檔,先擋掉
+            raise ValueError("問題裡有無法辨識的字元") from None
         if mode not in MODES:
             raise ValueError(f"模式只能是 {sorted(MODES)}")
 
@@ -221,7 +233,8 @@ class ConversationManager:
                 whole=whole, workspace=ws.path, history=history,
                 on_event=lambda e: self._emit(conv, turn, e), should_stop=stop.is_set)
             with self.lock:
-                conv.messages = messages_to_dict(result.messages)
+                # 存檔不留附檔全文(整份文件模式可能好幾 MB,每個事件都要整份重寫);追問本來就會先 omit_attachments,所以不損失任何東西
+                conv.messages = messages_to_dict(omit_attachments(result.messages))
             self._finish(conv, turn, "cancelled" if result.stopped else "done",
                          result.steps, result.tokens_used, started)
         except Exception as exc:  # 任何錯誤都要讓畫面知道,不能讓這一輪永遠停在「執行中」

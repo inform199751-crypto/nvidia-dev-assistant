@@ -176,3 +176,26 @@ def test_save_failure_does_not_abort_the_turn(tmp_path, workspaces, monkeypatch)
     cid, tid = mgr.start("demo", "q", "fix")
     turn = mgr.get(cid).turn(tid)
     assert turn.status == "done" and types(turn)[-1] == "end"
+
+
+def test_corrupt_conversation_file_does_not_block_startup(tmp_path, workspaces):
+    mgr, _ = make_manager(tmp_path, workspaces, [ai("好")])
+    cid, _ = mgr.start("demo", "q", "fix")
+    (tmp_path / "conversations" / "broken.json").write_text("{not json", encoding="utf-8")
+    again, _ = make_manager(tmp_path, workspaces, [])
+    assert [c["id"] for c in again.list()] == [cid]
+    assert (tmp_path / "conversations" / "broken.bad").exists()
+
+
+def test_unencodable_question_rejected_before_anything_is_stored(tmp_path, workspaces):
+    mgr, _ = make_manager(tmp_path, workspaces, [])
+    with pytest.raises(ValueError, match="無法辨識"):
+        mgr.start("demo", "hi \ud800", "fix")
+    assert mgr.list() == []
+
+
+def test_saved_history_drops_attachment_bodies(tmp_path, workspaces):
+    mgr, _ = make_manager(tmp_path, workspaces, [ai("# 文件")])
+    cid, _ = mgr.start("demo", "寫文件", "whole")
+    saved = (tmp_path / "conversations" / f"{cid}.json").read_text(encoding="utf-8")
+    assert "return a - b" not in saved and 'omitted=\\"true\\"' in saved
