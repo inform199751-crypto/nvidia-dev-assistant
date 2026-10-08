@@ -13,6 +13,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 
 import documents
 import tools
+import web
 from agent import SYSTEM_PROMPT, AgentSession, build_user_prompt, chat, file_mentions, run_agent
 from llm_registry import ModelRegistry
 from token_guard import (ContextTooLarge, QuotaExceeded, TokenQuota, compact_history,
@@ -565,6 +566,78 @@ def test_office_file_attached_by_chinese_name(workspace):
     reg, seen = scripted_registry([ai("摘要好了")])
     run_agent("摘要", registry=reg, quota=TokenQuota(10**6, 2), attachments=["會議紀錄.docx"])
     assert '<document path="會議紀錄.docx">\n下週三上線\n</document>' in seen[0][1][1].content
+
+
+@pytest.fixture
+def fake_web(monkeypatch):
+    """假網路:handler 決定每個請求的回應;記下所有請求網址。CONFIRM 預設同意(個別測試可改)。"""
+    import httpx
+    calls = []
+    state = {"handler": lambda req: httpx.Response(200, text="ok")}
+
+    def handler(request):
+        calls.append(str(request.url))
+        return state["handler"](request)
+
+    monkeypatch.setattr(web, "_client", lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(web, "CONFIRM", lambda action, detail: True)
+    state["calls"] = calls
+    return state
+
+
+def test_web_blocks_internal_addresses():
+    for url in ["http://localhost/", "http://127.0.0.1:8000/", "http://10.1.2.3/", "http://192.168.0.1/",
+                "http://169.254.169.254/latest/meta-data", "http://[::1]/", "file:///etc/passwd", "ftp://8.8.8.8/"]:
+        assert web._check_public(url), url
+    assert web._check_public("https://8.8.8.8/") is None
+
+
+def test_fetch_url_needs_confirmation_and_rechecks_redirects(fake_web, monkeypatch):
+    import httpx
+    page = "<html><head><title>官方文件</title><script>evil()</script></head><body><h1>安裝</h1><p>pip install x</p></body></html>"
+    fake_web["handler"] = lambda req: (httpx.Response(302, headers={"location": "http://127.0.0.1/admin"})
+                                       if req.url.path == "/go" else
+                                       httpx.Response(200, text=page, headers={"content-type": "text/html"}))
+    out = web.fetch_url.invoke({"url": "http://93.184.216.34/docs"})
+    assert out.startswith("[官方文件]") and "安裝\npip install x" in out and "evil" not in out
+    assert "內網" in web.fetch_url.invoke({"url": "http://93.184.216.34/go"})  # 轉址到本機:擋下,不會去連
+    assert fake_web["calls"] == ["http://93.184.216.34/docs", "http://93.184.216.34/go"]
+    monkeypatch.setattr(web, "CONFIRM", lambda action, detail: False)
+    assert "沒有允許" in web.fetch_url.invoke({"url": "http://93.184.216.34/docs"})
+    assert len(fake_web["calls"]) == 2  # 使用者拒絕就不連線
+
+
+def test_web_search(fake_web, monkeypatch):
+    import httpx
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    assert "TAVILY_API_KEY" in web.web_search.invoke({"query": "pypdf extract text"})
+    assert web.web_tools() == [web.fetch_url]
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-test")
+    seen = {}
+
+    def tavily(req):
+        seen["auth"], seen["body"] = req.headers["authorization"], req.content
+        return httpx.Response(200, json={"results": [{"title": "pypdf docs", "url": "https://pypdf.readthedocs.io",
+                                                      "content": "Extract   text\nfrom PDFs"}]})
+
+    fake_web["handler"] = tavily
+    out = web.web_search.invoke({"query": "pypdf extract text"})
+    assert out == "1. pypdf docs\n   https://pypdf.readthedocs.io\n   Extract text from PDFs"
+    assert seen["auth"] == "Bearer tvly-test" and b"pypdf extract text" in seen["body"]
+    assert web.web_tools() == [web.web_search, web.fetch_url]
+
+
+def test_confirm_action_always_allow(monkeypatch):
+    import agent
+    monkeypatch.setattr(agent, "_ALWAYS_ALLOWED", set())
+    answers = iter(["", "y", "a"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    assert agent.confirm_action("上網搜尋", "q1") is False  # 直接 Enter = 不允許
+    assert agent.confirm_action("上網搜尋", "q2") is True
+    assert agent.confirm_action("上網搜尋", "q3") is True   # a:之後都允許
+    assert agent.confirm_action("上網搜尋", "q4") is True   # 不再問(answers 已經用完,問了會丟 StopIteration)
+    with pytest.raises(StopIteration):
+        agent.confirm_action("讀取網頁", "https://x")      # 別種動作還是要問
 
 
 def test_nim_backend_uses_nim_context_window():

@@ -20,7 +20,9 @@ flowchart LR
     A --> T[工具]
     T --> T1["list_files / read_file / search_code<br/>git_log / git_blame<br/>擋 .env · 金鑰 · .git"]
     T --> T2["run_tests / run_command<br/>Docker 沙箱:無網路 · 唯讀 · 不含機密檔的複本"]
-    T --> T3["propose_patch<br/>舊字串→新字串 / 新增檔案,diff 由工具產生<br/>複本套用 + 跑測試<br/>只產 .patch,不改原檔"]
+    T --> T3["propose_patch<br/>舊字串→新字串 / 新增檔案,diff 由工具產生<br/>複本套用 + 跑測試<br/>只產 .patch,使用者確認後才套用"]
+    T --> T4["read_document / save_document<br/>PDF · Word · Excel / 存到 output/"]
+    T --> T5["web_search / fetch_url<br/>預設關閉 · 每次先問 · 擋內網"]
 ```
 
 | 檔案 | 內容 |
@@ -31,6 +33,7 @@ flowchart LR
 | `token_guard.py` | token 估算(實測校準)、截斷、歷史瘦身、大檔大綱、每人配額 |
 | `tools.py` | 列檔 / 讀檔 / 搜尋 / git 紀錄 / 沙箱測試與指令 / 提 patch / 存文件,含機密檔封鎖 |
 | `documents.py` | PDF / Word / Excel 轉文字,給 `read_document` 和 `@附檔` 用 |
+| `web.py` | 上網搜尋(Tavily)與讀網頁;`.env` 設 `ALLOW_WEB=true` 才啟用,每次上網都先問使用者 |
 | `smoke_test.py` | 對 catalog 上每個模型做冒煙測試(回應、思考開關、tool calling) |
 
 ## 實測結果(2026-10-06,NVIDIA API Catalog 免費層)
@@ -40,7 +43,7 @@ flowchart LR
 | 模型冒煙測試 | 三顆模型 × 回應 / 開思考 / 關思考 / tool calling | 全過;Super 每次 0.4–2.6 秒,DeepSeek 18–27 秒 |
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
-| 離線測試 | 假模型,不需金鑰 | 52 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 56 個全過 |
 
 ## 實測與審查抓到的 19 個問題
 
@@ -87,6 +90,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 - 模型清單會汰換,上線前用 `ChatNVIDIA.get_available_models()` 或 `smoke_test.py` 再對一次。
 - `requirements.txt` 鎖在實測過的版本:程式依賴 langchain-nvidia-ai-endpoints 的內部行為,升版前先跑離線測試和 `smoke_test.py`。
 - 地端的 `nim_context_window`(Ultra / Super 備援 256K)是規劃值,部署時 `NIM_MAX_MODEL_LEN` 要設成一樣。
+- 上網工具擋內網是「連線前解析一次 DNS」,擋不住 DNS rebinding;正式環境要走有白名單的出口 proxy。搜尋關鍵字和網址會送到外部網站,公司環境要先確認規定。
 - **PoC 不要送公司真實程式碼到 build.nvidia.com**:API Trial 條款 §1.2 禁止正式使用,§3.3 允許 NVIDIA 收集輸入輸出改進模型。
 
 ---

@@ -52,6 +52,7 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 - `read_document` / 附檔用 `documents.extract_text`(pypdf / python-docx / openpyxl):PDF 分頁標記、沒文字層會說是掃描檔;Word 保留段落與表格順序、標題轉 `#`;Excel 每個工作表最多 `MAX_SHEET_ROWS` 列;舊版 .doc/.xls 直接報錯。長文件用 `split_parts` 分段(`DOC_PART_TOKENS`,要小於 `tool_output_max_tokens`)。
 - `agent.file_mentions`:`@路徑` 從最長往回試,取確實存在的最長檔名(中文檔名、後面不空格都認得)。
 - 工具定義現在約 1,900 tokens、每步都送;新增工具前想清楚,說明文字盡量短。改了工具或系統提示後,`test_agent_escalates_mid_run_when_history_grows` 的上下文長度可能要重調。
+- 上網(`web.py`):`.env` 的 `ALLOW_WEB=true` 才把 `web.web_tools()` 加進工具(有 `TAVILY_API_KEY` 才有 `web_search`)。每次上網都經過 `web.CONFIRM`(`agent.main` 設成 `confirm_action`:y / a=之後都允許 / 預設拒絕;沒設定時一律拒絕)。`fetch_url` 自己跟轉址、每一跳都用 `_check_public` 擋非公開 IP。測試用 `fake_web` fixture 換掉 `web._client`,不連網。
 - `save_document` 只寫 `OUTPUT_DIR`(`.env` 的 `AGENT_OUTPUT`,預設專案下的 `output/`,已 gitignore):只取檔名、限文字類副檔名、同名自動加編號、CSV 用 utf-8-sig。
 - `propose_patch(edits, reason, test_target)`:每筆 edit 是 `path` / `old_string` / `new_string`(old_string 必須唯一;不存在的路徑 + 空 old_string = 新增檔案)。diff 由 difflib 產生 → `git apply --check` → 套到暫存複本(`git -c core.autocrlf=false apply`)→ 沙箱跑測試 → 存到 `WORKSPACE/.agent_patches/`,並記進 `tools.PATCHES`。**模型的工具永遠不改工作區**;每個 patch 都是單獨套在原始檔案上驗證,不會疊加。
 - 唯一會改工作區的是 `tools.apply_patch()`,不是工具、模型叫不到:只有互動模式(`agent.chat`)在 patch 通過測試、使用者回答 y(或 `/apply`)之後才呼叫,下一輪問題前面會加 `<note>` 告訴模型檔案已經變了。
