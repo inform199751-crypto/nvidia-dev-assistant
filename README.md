@@ -39,7 +39,7 @@ flowchart LR
 | 模型冒煙測試 | 三顆模型 × 回應 / 開思考 / 關思考 / tool calling | 全過;Super 每次 0.4–2.6 秒,DeepSeek 18–27 秒 |
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
-| 離線測試 | 假模型,不需金鑰 | 33 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 98 個全過 |
 
 ## 實測抓到的 11 個問題
 
@@ -80,7 +80,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
   `.env`、金鑰、`.git` 會被丟掉,路徑穿越與符號連結整包拒收)。
 - 對話與每一步的紀錄存在 `conversations/`,重新整理或伺服器重開都看得到;跑到一半被關掉的會標成「已中斷」。
 - 只聽本機 `127.0.0.1`、只接受本機網址,沒有登入;網頁不修改任何專案檔案,修正只存成 `.agent_patches/*.patch`,
-  頁面上提供 `git apply --recount` 指令讓工程師自己套用。
+  頁面上提供 `git apply` 指令讓工程師自己套用(patch 存檔前先整理成相對於資料夾的格式,驗證與套用結果一致)。
 
 2026-10-08 在瀏覽器用真模型實測(Nemotron 3 Super):demo 專案「找 bug → 追問」兩輪都在沙箱驗證通過
 (8 步 15.6 秒、5 步 22 秒),追問還自己找到 `average([])` 除以零;重新整理後完整還原、停止鍵在第 1 步後停下;

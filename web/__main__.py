@@ -1,4 +1,8 @@
-"""啟動網頁版:python -m web(或直接執行這個檔)。只聽 127.0.0.1 —— 沒有登入,不能讓同網路的其他電腦連進來。"""
+"""啟動網頁版。只聽 127.0.0.1 —— 沒有登入,不能讓同網路的其他電腦連進來。
+
+`python -m web` 一定要在專案根目錄執行(python 靠目前目錄找到 web 套件);
+直接執行這個檔(python web/__main__.py)則在任何資料夾都行,下面那行 sys.path 就是為這個用法加的。
+"""
 from __future__ import annotations
 
 import logging
@@ -9,7 +13,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))  # 不管從哪個目錄啟動,都找得到 agent / tools / web
+sys.path.insert(0, str(ROOT))  # 直接執行這個檔時,不管從哪個目錄啟動都找得到 agent / tools / web(python -m web 不靠它)
 
 import uvicorn  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
