@@ -762,6 +762,26 @@ def test_console_view_renders_stream():
     assert screen == ['  ▸ read_file {"path": "calc.py"}', "x 是 1"]
 
 
+def test_project_instructions_and_remember(workspace, monkeypatch, capsys):
+    """ASSISTANT.md(像 CLAUDE.md)放進系統提示;/remember 寫進檔案並且這段對話馬上生效。"""
+    import agent
+    reg, seen = scripted_registry([ai("第一題"), ai("第二題")])
+    inputs = iter(["第一題", "/remember 回答都要附檔案路徑", "/remember", "第二題", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+    chat(lambda: AgentSession(reg, TokenQuota(10**6, 2)), [])
+    assert "已讀取" not in capsys.readouterr().out.splitlines()[0]
+    assert "回答都要附檔案路徑" not in seen[0][1][0].content
+    assert "回答都要附檔案路徑" in seen[1][1][0].content  # 同一段對話,第二題就照新規則
+    assert (workspace / "ASSISTANT.md").read_text(encoding="utf-8").endswith("\n- 回答都要附檔案路徑\n")
+    md = workspace / "ASSISTANT.md"
+    md.write_bytes(md.read_bytes().rstrip(b"\n"))  # 使用者手動編輯後沒有結尾換行
+    agent.remember("第二條,沒有結尾換行也不會黏在一起")
+    lines = (workspace / "ASSISTANT.md").read_text(encoding="utf-8").splitlines()
+    assert lines[-2:] == ["- 回答都要附檔案路徑", "- 第二條,沒有結尾換行也不會黏在一起"]
+    (workspace / "ASSISTANT.md").write_text("規則" * 5000, encoding="utf-8")  # 太長就截斷
+    assert "中間截斷" in agent.system_prompt() and message_tokens([SystemMessage(agent.system_prompt())]) < 4000
+
+
 def test_system_prompt_has_today(workspace):
     """10/9 實測:模型不知道今天幾號,把「下週三」算錯;系統提示要帶日期與星期。"""
     from agent import today_line

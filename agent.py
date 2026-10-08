@@ -119,6 +119,36 @@ def today_line(now: datetime | None = None) -> str:
     return f"\n\nToday is {d:%Y-%m-%d} ({_WEEKDAYS[d.weekday()]}, Asia/Taipei)."
 
 
+INSTRUCTIONS_FILE = "ASSISTANT.md"
+MAX_INSTRUCTION_TOKENS = 2000  # 說明檔每步都會送,太長就截斷
+
+
+def project_instructions() -> str:
+    """工作區根目錄的 ASSISTANT.md(像 Claude Code 的 CLAUDE.md):這個專案的規則與慣例,放進系統提示。"""
+    p = toolbox.WORKSPACE / INSTRUCTIONS_FILE
+    if not p.is_file():
+        return ""
+    text = truncate_middle(p.read_text(encoding="utf-8", errors="replace").strip(), MAX_INSTRUCTION_TOKENS)
+    return f"\n\n## Project instructions (from {INSTRUCTIONS_FILE}, written by the team; follow them)\n{text}" if text else ""
+
+
+def system_prompt() -> str:
+    return SYSTEM_PROMPT + project_instructions() + today_line()
+
+
+def remember(note: str) -> Path:
+    """/remember:把一條規則加進 ASSISTANT.md。是使用者自己下的指令,模型的工具還是不能改工作區。"""
+    p = toolbox.WORKSPACE / INSTRUCTIONS_FILE
+    if p.is_file():
+        text = p.read_text(encoding="utf-8")
+        prefix = "" if not text or text.endswith("\n") else "\n"
+    else:
+        prefix = f"# {INSTRUCTIONS_FILE}\n\n給小助理的專案規則與慣例,每段對話開始時自動讀取。\n\n"
+    with p.open("a", encoding="utf-8", newline="\n") as f:
+        f.write(f"{prefix}- {' '.join(note.split())}\n")
+    return p
+
+
 def as_complete_message(msg: AIMessage) -> AIMessage:
     """把串流合併出來的訊息整理成可以送回伺服器的完整訊息。
 
@@ -160,7 +190,7 @@ class AgentSession:
         self.tools = [] if whole else list(tools)
         self.tool_map = {t.name: t for t in self.tools}
         self.overhead = tool_tokens(self.tools)  # 工具定義每步都送,是固定成本;不算進來會被誤判成估算偏低
-        self.messages: list[BaseMessage] = [SystemMessage(SYSTEM_PROMPT + today_line())]
+        self.messages: list[BaseMessage] = [SystemMessage(system_prompt())]
         self.scale = 1.0  # 估算偏低時,用伺服器回報的實際 input tokens 往上修正
         self.tokens_used = 0  # 整段對話累計
         self.on_event = on_event
@@ -185,6 +215,10 @@ class AgentSession:
                 self._emit("text", text=chunk.content)
             total = chunk if total is None else total + chunk
         return as_complete_message(total)
+
+    def refresh_system_prompt(self) -> None:
+        """ASSISTANT.md 改過(例如 /remember)之後,這段對話馬上照新規則走。"""
+        self.messages[0] = SystemMessage(system_prompt())
 
     def sized(self) -> int:
         return int((message_tokens(self.messages) + self.overhead) * self.scale)
@@ -268,6 +302,8 @@ def run_agent(task: str, *, registry: ModelRegistry, quota: TokenQuota, user: st
 
 HELP = """直接輸入問題,Enter 送出。用 @路徑 附上工作區的檔案,例如:看一下 @calc.py 的 add
   AI 提出的修改通過沙箱測試後,會問你要不要套用到工作區(預設不套用)。
+  工作區的 ASSISTANT.md 是這個專案給小助理的規則,每段對話開始時自動讀取。
+  /remember 規則  把一條規則寫進 ASSISTANT.md,馬上生效(例如:/remember 回答都要附檔案路徑)
   /apply  套用最近一個 patch(一樣會先問你)
   /clear  開始新對話(清掉前面的內容)
   /help   顯示這段說明
@@ -357,6 +393,8 @@ def _offer_apply(patch: Path, passed: bool) -> str:
 def chat(session_factory, first_files: list[str], banner: str = "") -> None:
     """互動模式:像 Claude Code 一樣一直聊,前面說過的內容都記得;動到工作區之前一定先問。"""
     session = session_factory()
+    if (toolbox.WORKSPACE / INSTRUCTIONS_FILE).is_file():
+        banner += f" · 已讀取 {INSTRUCTIONS_FILE}"
     print(f"對內研發助理 · 工作區 {toolbox.WORKSPACE}{banner} · 輸入 /help 看用法、/exit 離開")
     pending = list(first_files)  # -f 給的檔案附在第一個問題
     note = ""  # 下一個問題要先告訴模型的事
@@ -377,6 +415,14 @@ def chat(session_factory, first_files: list[str], banner: str = "") -> None:
             session, note = session_factory(), ""
             print("已開始新對話。")
             continue
+        if text.startswith("/remember"):
+            if rule := text.removeprefix("/remember").strip():
+                path = remember(rule)
+                session.refresh_system_prompt()
+                print(f"已記住,寫進 {path.name}(這段對話馬上生效)")
+            else:
+                print("用法:/remember 規則,例如 /remember 回答都要附檔案路徑")
+            continue
         if text == "/apply":
             if toolbox.PATCHES:
                 note += _offer_apply(*toolbox.PATCHES[-1])
@@ -393,7 +439,7 @@ def chat(session_factory, first_files: list[str], banner: str = "") -> None:
             print(f"\n錯誤:{type(e).__name__}: {e}")
             continue
         pending, note = [], ""
-        answer = "" if session.on_event else f"\n{r.answer}\n"  # 串流時回答已經邊產生邊印出來了
+        answer = "\n" if session.on_event else f"\n{r.answer}\n"  # 串流時回答已經邊產生邊印出來了
         print(f"{answer}\n— {r.role} · {r.steps} 步 · {r.tokens_used:,} tokens"
               f"(這段對話累計 {session.tokens_used:,})")
         if new := toolbox.PATCHES[before:]:

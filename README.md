@@ -43,7 +43,7 @@ flowchart LR
 | 模型冒煙測試 | 三顆模型 × 回應 / 開思考 / 關思考 / tool calling | 全過;Super 每次 0.4–2.6 秒,DeepSeek 18–27 秒 |
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
-| 離線測試 | 假模型,不需金鑰 | 59 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 60 個全過 |
 
 ## 實測與審查抓到的 21 個問題
 
@@ -79,6 +79,7 @@ cp .env.example .env                              # 填 NVIDIA_API_KEY,AGENT_WOR
 docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python agent.py                     # 互動模式:一直聊下去,記得前面的內容;@calc.py 附檔、/clear 新對話
                                                   # 修改通過沙箱測試後會問要不要套用,回答 y 才改工作區
+                                                  # 工作區的 ASSISTANT.md 是專案規則(像 CLAUDE.md);/remember 規則 會寫進去
 .venv/Scripts/python agent.py "test_add 失敗了,找出 bug 並提出修正" -f calc.py
 .venv/Scripts/python agent.py "為這個專案寫技術文件" -f a.py -f b.py --whole   # 整檔 → 自動走長文本模型
 .venv/Scripts/python agent.py "這個 race condition 的根因" -f x.py --role code_deep --think on
