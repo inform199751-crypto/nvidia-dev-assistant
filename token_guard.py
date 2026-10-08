@@ -1,0 +1,201 @@
+"""Token 管理:估算、截斷、歷史瘦身、大檔大綱、每人配額。
+
+設計原則:每一道防線都在「送進 GPU 之前」把關,
+推理伺服器(NIM)那一層只負責最後的硬上限。
+"""
+from __future__ import annotations
+
+import ast
+import re
+import threading
+from collections import defaultdict
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+
+_CJK = re.compile(r"[　-鿿가-힯＀-￯]")
+_THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", re.S)
+_TAIPEI = timezone(timedelta(hours=8))  # 台灣沒有日光節約,固定 +8 即可(Windows 不必裝 tzdata)
+
+
+class ContextTooLarge(Exception):
+    """連長文本模型都放不下 → 改走離線批次(切塊 map-reduce),不要硬塞。"""
+
+
+class QuotaExceeded(Exception):
+    pass
+
+
+# ---------- 估算 ----------
+
+def estimate_tokens(text: str) -> int:
+    """保守估算:中日韓字每字 1.5 token,其餘每 2.7 字元 1 token。
+
+    2026-10-06 用 Nemotron 3 Ultra 實測校準:客服專案 57 檔(中文 4.8 萬字 + 其他 31 萬字元,
+    含行號前綴)實際 18.2 萬 tokens;舊公式(1 / 3)只估 15.3 萬,低估近 20%。
+    執行中再用回應的 usage_metadata 自動修正(見 agent.run_agent);
+    地端可改打 NIM 的 POST /tokenize 拿精確值。
+    """
+    cjk = len(_CJK.findall(text))
+    return int(cjk * 1.5 + (len(text) - cjk) / 2.7) + 1
+
+
+def message_tokens(messages: list[BaseMessage]) -> int:
+    total = 0
+    for m in messages:
+        total += 4 + estimate_tokens(m.content if isinstance(m.content, str) else str(m.content))
+        if isinstance(m, AIMessage):
+            total += sum(estimate_tokens(str(c.get("args", ""))) for c in m.tool_calls)
+            total += estimate_tokens(m.additional_kwargs.get("reasoning_content") or "")
+    return total
+
+
+# ---------- 截斷與瘦身 ----------
+
+def truncate_middle(text: str, max_tokens: int) -> str:
+    """保留頭 60%、尾 40%(錯誤訊息和 traceback 通常在尾巴),中間換成提示。"""
+    if estimate_tokens(text) <= max_tokens:
+        return text
+    lines = text.splitlines()
+    head, tail, used = [], [], 0
+    for line in lines:
+        cost = estimate_tokens(line) + 1
+        if used + cost > max_tokens * 0.6:
+            break
+        head.append(line)
+        used += cost
+    for line in reversed(lines[len(head):]):
+        cost = estimate_tokens(line) + 1
+        if used + cost > max_tokens:
+            break
+        tail.insert(0, line)
+        used += cost
+    dropped = len(lines) - len(head) - len(tail)
+    marker = f"... [中間截斷 {dropped} 行;需要的話用 read_file 指定行號範圍讀取] ..."
+    return "\n".join([*head, marker, *tail])
+
+
+def strip_think_text(text: str) -> str:
+    """去掉混在回答裡的推理:成對的 <think>…</think>,以及只剩結尾 </think> 的情況
+    (Ultra 開 force_nonempty_content 時,開頭標籤會被伺服器吃掉)。"""
+    text = _THINK_BLOCK.sub("", text)
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[1]
+    return text.lstrip()
+
+
+def strip_stale_reasoning(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """刪掉「上一輪以前」的思考內容,保留本輪的。
+
+    langchain-nvidia-ai-endpoints 會把 AIMessage 的 reasoning_content 原樣送回伺服器,
+    多步 agent 每一步都重送全部思考過程,token 會滾雪球。
+    本輪(最後一個 HumanMessage 之後)保留,因為有些模型的 tool calling
+    要求同一輪內把 reasoning 帶回去才能接著想。
+    """
+    last_human = max((i for i, m in enumerate(messages) if isinstance(m, HumanMessage)), default=-1)
+    out: list[BaseMessage] = []
+    for i, m in enumerate(messages):
+        if i < last_human and isinstance(m, AIMessage) and (
+            "reasoning_content" in m.additional_kwargs or "</think>" in str(m.content)
+        ):
+            kwargs = {k: v for k, v in m.additional_kwargs.items()
+                      if k not in ("reasoning_content", "reasoning", "_reasoning_api_fields")}
+            content = strip_think_text(m.content) if isinstance(m.content, str) else m.content
+            m = m.model_copy(update={"additional_kwargs": kwargs, "content": content})
+        out.append(m)
+    return out
+
+
+def compact_history(messages: list[BaseMessage], budget: int, keep_recent_tools: int = 2) -> list[BaseMessage]:
+    """超過預算時,把舊的工具輸出換成一行佔位字。
+
+    只換內容、不刪訊息 —— tool_call 和 ToolMessage 必須成對,刪掉會讓 API 直接報錯。
+    盡力而為:回傳後若仍超過預算,由呼叫端決定升級模型或拒絕。
+    """
+    if message_tokens(messages) <= budget:
+        return messages
+    tool_idx = [i for i, m in enumerate(messages) if isinstance(m, ToolMessage)]
+    out = list(messages)
+    for i in tool_idx[:-keep_recent_tools] if keep_recent_tools else tool_idx:
+        out[i] = out[i].model_copy(update={"content": "[較早的工具輸出已省略;需要時請重新呼叫工具]"})
+        if message_tokens(out) <= budget:
+            break
+    return out
+
+
+# ---------- 大檔:給大綱,不給全文 ----------
+
+_DEF_LINE = re.compile(r"^\s*(?:export\s+)?(?:public|private|protected|static|async|def|class|function|func|fn|interface|struct)\b.*")
+
+
+def outline(source: str, path: str = "") -> str:
+    """產生檔案大綱(類別 / 函式 + 行號),讓 agent 先看地圖再用 read_file 讀需要的段落。"""
+    if path.endswith(".py"):
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            tree = None
+        if tree is not None:
+            rows = []
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    kind = "class" if isinstance(node, ast.ClassDef) else "def"
+                    rows.append((node.lineno, f"L{node.lineno}-{node.end_lineno}  {kind} {node.name}"))
+            return "\n".join(r for _, r in sorted(rows))
+    hits = [f"L{n}  {line.strip()[:120]}" for n, line in enumerate(source.splitlines(), 1) if _DEF_LINE.match(line)]
+    return "\n".join(hits) or "(找不到函式定義;請用 search_code 搜尋)"
+
+
+# ---------- 每人配額 + 同時請求數 ----------
+
+@dataclass
+class _Usage:
+    day: str = ""
+    tokens: int = 0
+    running: int = 0
+
+
+class TokenQuota:
+    """每人每日 token 額度 + 同時請求數上限。
+
+    示範用記憶體版;API server 不只一台時要換成 Redis(INCRBY + EXPIRE)。
+    一天以台灣午夜切。
+    """
+
+    def __init__(self, daily_tokens: int, max_concurrent: int):
+        self.daily_tokens = daily_tokens
+        self.max_concurrent = max_concurrent
+        self._lock = threading.Lock()
+        self._usage: dict[str, _Usage] = defaultdict(_Usage)
+
+    def _today(self, user: str) -> _Usage:
+        u = self._usage[user]
+        today = datetime.now(_TAIPEI).date().isoformat()
+        if u.day != today:
+            u.day, u.tokens = today, 0
+        return u
+
+    def check(self, user: str, need: int) -> None:
+        with self._lock:
+            u = self._today(user)
+            if u.tokens + need > self.daily_tokens:
+                raise QuotaExceeded(f"{user} 今日額度剩 {self.daily_tokens - u.tokens} tokens,這次約需 {need}")
+
+    def charge(self, user: str, tokens: int) -> None:
+        with self._lock:
+            self._today(user).tokens += tokens
+
+    @contextmanager
+    def slot(self, user: str):
+        with self._lock:
+            u = self._today(user)
+            if u.running >= self.max_concurrent:
+                raise QuotaExceeded(f"{user} 已有 {u.running} 個請求在跑,請等前一個完成")
+            u.running += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._usage[user].running -= 1

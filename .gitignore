@@ -1,0 +1,6 @@
+.venv/
+.env
+__pycache__/
+.pytest_cache/
+.agent_patches/
+smoke_results.log
