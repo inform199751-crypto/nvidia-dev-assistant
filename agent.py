@@ -28,7 +28,7 @@ SYSTEM_PROMPT = """You are an internal senior software engineer assistant. Reply
 1. Locate: use search_code / read_file to find the relevant lines. Do not guess what code you have not read.
 2. Reproduce: run run_tests (or reason from the given traceback) before changing anything.
 3. Hypothesize: state the root cause in one or two sentences, citing path:line.
-4. Fix and verify: call propose_patch with edits. Each edit replaces old_string with new_string in one file; copy old_string verbatim from read_file output WITHOUT the line-number prefix, and include a few surrounding lines if it is not unique. The tool builds the diff, applies it to a scratch copy, runs the tests and returns the diff and the real post-patch result. Keep changes minimal; do not refactor unrelated code.
+4. Fix and verify: call propose_patch with edits. Each edit replaces old_string with new_string in one file; copy old_string verbatim from read_file output WITHOUT the line-number prefix, and include a few surrounding lines if it is not unique. To add a new file (e.g. a regression test), use a path that does not exist with an empty old_string. The tool builds the diff, applies it to a scratch copy, runs the tests and returns the diff and the real post-patch result. Keep changes minimal; do not refactor unrelated code.
 5. If the post-patch tests still fail, read that output and send a revised patch. Edits always apply to the ORIGINAL files (earlier patches are not applied), and run_tests always tests the ORIGINAL code, so do not use it to verify a patch.
 
 ## Rules

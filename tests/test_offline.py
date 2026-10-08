@@ -309,6 +309,21 @@ def test_propose_patch_rejects_bad_edits_without_running_tests(workspace, fake_s
     assert fake_sandbox == [] and not list(workspace.glob(".agent_patches/*.patch"))
 
 
+def test_propose_patch_can_add_new_file(workspace, fake_sandbox):
+    """補回歸測試要能新增檔案:不存在的路徑 + old_string 留空;原工作區不能多出檔案。"""
+    (workspace / "calc.py").write_bytes(b"def add(a, b):\n    return a - b\n")
+    test_src = "from calc import add\n\n\ndef test_add_negative():\n    assert add(-1, 1) == 0\n"
+    out = patch(("calc.py", "a - b", "a + b"), ("tests/test_regression.py", "", test_src))
+    assert "已存成" in out and "--- /dev/null" in out and "+++ b/tests/test_regression.py" in out
+    assert fake_sandbox == [{"calc.py": b"def add(a, b):\n    return a + b\n",
+                             "tests/test_regression.py": test_src.encode()}]
+    assert not (workspace / "tests").exists()
+    assert "不是既有檔案" in patch(("nope.py", "x", "y"))
+    assert "不能是空的" in patch(("calc.py", "", "x"))  # 既有檔案不能用空的 old_string
+    with pytest.raises(PermissionError):
+        patch((".env.local", "", "KEY=1\n"))  # 也不能新增機密檔
+
+
 def test_propose_patch_keeps_crlf_and_missing_final_newline(workspace, fake_sandbox):
     """read_file 給模型看的是 \\n:CRLF 檔要能比對、只改到那一行;沒有結尾換行的檔案 git apply 也要吃得下。"""
     (workspace / "win.py").write_bytes(b"a = 1\r\nb = 2\r\nc = 3\r\n")

@@ -123,7 +123,7 @@ class Edit(TypedDict):
 def _apply_edit(text: str, old: str, new: str) -> str:
     """把唯一出現的 old 換成 new;找不到或不唯一就丟 ValueError(訊息會回給模型)。"""
     if not old:
-        raise ValueError("old_string 不能是空的(只能修改既有內容)")
+        raise ValueError("old_string 不能是空的(檔案已存在;old_string 留空只用在新增檔案)")
     if old not in text and "\r\n" in text:  # read_file 給模型看的是 \n,CRLF 檔要換回來比對
         old, new = (s.replace("\r\n", "\n").replace("\n", "\r\n") for s in (old, new))
     n = text.count(old)
@@ -134,11 +134,12 @@ def _apply_edit(text: str, old: str, new: str) -> str:
     return text.replace(old, new, 1)
 
 
-def _unified_diff(rel: str, before: str, after: str) -> str:
-    """git apply 吃得下的 unified diff;最後一行沒換行要補標記(difflib 不會加)。"""
+def _unified_diff(rel: str, before: str | None, after: str) -> str:
+    """git apply 吃得下的 unified diff;before=None 是新檔(--- /dev/null)。
+    最後一行沒換行要補標記(difflib 不會加)。"""
     out = []
-    for line in difflib.unified_diff(before.splitlines(keepends=True), after.splitlines(keepends=True),
-                                     f"a/{rel}", f"b/{rel}"):
+    for line in difflib.unified_diff((before or "").splitlines(keepends=True), after.splitlines(keepends=True),
+                                     "/dev/null" if before is None else f"a/{rel}", f"b/{rel}"):
         out.append(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n")
     return "".join(out)
 
@@ -148,7 +149,8 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
     """提出修改,存成 .patch 等人工審核,原始檔案不會被改動。
     edits:每一筆把 path 檔案裡的 old_string 換成 new_string。old_string 要從 read_file 的輸出逐字複製
     (不要帶「    12| 」行號前綴)、在檔案裡只出現一次,不夠唯一就多帶幾行上下文。可以一次改多處、多個檔案;
-    每次都是對「原始檔案」修改(之前提的 patch 不會套用)。只能修改既有檔案。
+    每次都是對「原始檔案」修改(之前提的 patch 不會套用)。
+    新增檔案(例如補回歸測試):path 用不存在的路徑、old_string 留空、new_string 放整個檔案內容。
     diff 由工具產生,套到工作區的暫存複本上、在沙箱跑 test_target,回傳 diff 與套用後的真實測試結果。"""
     if err := _check_target(test_target):
         return err
@@ -156,11 +158,19 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
         return "錯誤:這台機器沒有 git,無法驗證 patch"
     if not edits:
         return "錯誤:edits 是空的"
-    files: dict[str, tuple[str, str]] = {}  # 相對路徑 → (原文, 改後)
+    files: dict[str, tuple[str | None, str]] = {}  # 相對路徑 → (原文,新檔為 None;改後)
     for i, e in enumerate(edits, 1):
         p = _safe_path(e["path"])
         rel = p.relative_to(WORKSPACE).as_posix()
-        before, after = files.get(rel) or (p.read_bytes().decode("utf-8"),) * 2  # 不轉換行,CRLF 檔才不會整檔變動
+        if rel in files:
+            before, after = files[rel]
+        elif p.is_file():
+            before = after = p.read_bytes().decode("utf-8")  # 不轉換行,CRLF 檔才不會整檔變動
+        elif not p.exists() and not e["old_string"]:
+            files[rel] = (None, e["new_string"])
+            continue
+        else:
+            return f"錯誤:第 {i} 筆修改:{rel} 不是既有檔案;要新增檔案請用不存在的路徑並把 old_string 留空"
         try:
             files[rel] = (before, _apply_edit(after, e["old_string"], e["new_string"]))
         except ValueError as err:
@@ -189,7 +199,10 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
                        cwd=copy, check=True, capture_output=True)
         result = _run_sandbox(copy, test_target)
     saved = patch_file.relative_to(WORKSPACE).as_posix()
-    return f"已存成 {saved},等工程師審核後套用。\n```diff\n{diff}```\n套用此 patch 後的測試結果:\n{result}"
+    # 10/9 實測:模型先單獨修 bug、再單獨送新測試檔,以為會疊加,結果測試失敗多繞好幾步
+    return (f"已存成 {saved},等工程師審核後套用。\n```diff\n{diff}```\n套用此 patch 後的測試結果:\n{result}\n"
+            "(提醒:每個 patch 都是單獨套在原始檔案上驗證,之前的 patch 不會一起套用;"
+            "要調整就重送包含全部修改的 edits)")
 
 
 ALL_TOOLS = [read_file, search_code, run_tests, propose_patch]
