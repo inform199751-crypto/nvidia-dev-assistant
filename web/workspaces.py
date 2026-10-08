@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import io
 import json
+import lzma
+import ntpath
 import shutil
 import subprocess
 import time
@@ -51,6 +53,8 @@ class Workspace:
 
 def _clean_rel(name: str) -> PurePosixPath | None:
     """回傳安全的相對路徑;機密檔、.git、macOS 雜檔回 None(丟掉);危險路徑整包拒收。
+    Windows 裝置名稱(aux.c、con.h、nul、lpt1.py …,不管副檔名)寫入時會卡住或打到真的裝置,
+    但真實專案裡有這種檔(例如 Linux 核心的 aux.c),所以和 .env 一樣丟掉並列在 skipped,不整包拒收。
 
     Windows 上 `C:..` 這種片段會被 pathlib 當成磁碟機路徑而跳出資料夾,所以帶冒號、保留字元、
     結尾是點或空白的片段一律拒收;寫入前還有一道 resolve 後的範圍檢查。
@@ -60,7 +64,7 @@ def _clean_rel(name: str) -> PurePosixPath | None:
     if (name.startswith("/") or ".." in p.parts
             or any(set(part) & _BAD_CHARS or part.endswith((".", " ")) for part in p.parts)):
         raise UploadRejected(f"路徑可疑,整包拒收:{name}")
-    if not p.parts or any(part.lower() in _SKIP_DIRS for part in p.parts) or _is_secret(Path(p.name)):
+    if not p.parts or any(part.lower() in _SKIP_DIRS or ntpath.isreserved(part) for part in p.parts) or _is_secret(Path(p.name)):
         return None
     return p
 
@@ -179,7 +183,7 @@ class WorkspaceRegistry:
         except UploadRejected:
             raise
         except (zipfile.BadZipFile, zipfile.LargeZipFile, RuntimeError, NotImplementedError, EOFError,
-                zlib.error, OSError) as e:
+                zlib.error, lzma.LZMAError, ValueError, OSError) as e:
             raise UploadRejected(f"zip 檔損壞或格式不支援(例如加密):{e}") from None
 
     def cleanup(self, now: float | None = None) -> int:
@@ -208,7 +212,7 @@ class WorkspaceRegistry:
                 r = subprocess.run(["git", "-c", "core.quotepath=off", "-c", "core.fsmonitor=false", "ls-files"],
                                    cwd=root, capture_output=True, text=True, encoding="utf-8")
                 if r.returncode == 0:
-                    names = r.stdout.splitlines()
+                    names = [n for n in r.stdout.splitlines() if (root / n).is_file()]  # 刪掉但還沒 git rm 的檔案不列
             except FileNotFoundError:  # 沒裝 git 就改用掃描
                 names = None
         if names is None:

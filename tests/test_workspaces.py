@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import zipfile
 
 import pytest
@@ -158,3 +159,21 @@ def test_invalid_windows_filename_rejected_without_leftovers(reg, tmp_path):
     with pytest.raises(UploadRejected):
         reg.add_upload([("a?b.py", b"x")])
     assert no_upload_left(tmp_path)
+
+
+def test_windows_device_names_dropped_and_listed(reg):
+    names = ["aux.c", "src/con.h", "NUL", "lpt1.py", "com1.txt", "prn"]
+    blob = make_zip({**{n: b"x" for n in names}, "auxiliary.py": b"ok", "com10.py": b"ok"})
+    ws, skipped = reg.add_upload([("repo.zip", blob)])
+    assert sorted(skipped) == sorted(names)
+    assert (ws.path / "auxiliary.py").exists() and (ws.path / "com10.py").exists()
+
+
+def test_whole_files_skips_tracked_but_deleted_files(reg, tmp_path):
+    proj = tmp_path / "proj"
+    for name in ("a.py", "b.py"):
+        (proj / name).write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=proj, check=True)
+    subprocess.run(["git", "add", "a.py", "b.py"], cwd=proj, check=True)
+    (proj / "b.py").unlink()
+    assert reg.whole_files(reg.get("demo")) == ["a.py"]
