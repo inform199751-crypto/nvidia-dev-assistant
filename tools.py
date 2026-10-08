@@ -68,6 +68,9 @@ def search_code(pattern: str, glob: str = "**/*.py", max_hits: int = 50) -> str:
         if (not f.is_file() or _is_secret(f)
                 or any(part.startswith(".") for part in f.relative_to(WORKSPACE).parts)):
             continue
+        real = f.resolve()  # symlink / Windows junction 可能指到工作區外或機密檔,看實際位置
+        if not real.is_relative_to(WORKSPACE) or _is_secret(real):
+            continue
         for n, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
             if rx.search(line):
                 hits.append(f"{f.relative_to(WORKSPACE).as_posix()}:{n}: {line.strip()[:200]}")

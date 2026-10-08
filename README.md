@@ -4,7 +4,7 @@
 改走 NVIDIA 生態系:開發期接 API Catalog(build.nvidia.com),正式環境換成地端 NIM 容器,**程式碼不用改**。
 
 重點不在「接上了模型」,而在:**依任務與 token 數動態切換模型、控制 token 與顯存、讓 agent 只能在沙箱裡動手**,
-而且每個設計都用真模型實測過。實測與審查抓到 14 個問題,見下方。
+而且每個設計都用真模型實測過。實測與審查抓到 16 個問題,見下方。
 
 ## 架構
 
@@ -39,9 +39,9 @@ flowchart LR
 | 模型冒煙測試 | 三顆模型 × 回應 / 開思考 / 關思考 / tool calling | 全過;Super 每次 0.4–2.6 秒,DeepSeek 18–27 秒 |
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
-| 離線測試 | 假模型,不需金鑰 | 37 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 39 個全過 |
 
-## 實測與審查抓到的 14 個問題
+## 實測與審查抓到的 16 個問題
 
 | # | 問題 | 怎麼發現 | 處理 |
 |---|---|---|---|
@@ -59,6 +59,8 @@ flowchart LR
 | 12 | 工具定義(約 700 tokens)沒算進估算,被誤判成估算偏低,之後每步 ×1.99,中型任務會提早升級到 Ultra | 改 bug 實測 log(10/8) | 工具定義算進估算,不拿來放大倍率 |
 | 13 | 模型回的 tool call 參數不是合法 JSON 時,被當成最終答案、回傳空字串 | 程式碼審查 + 讀套件原始碼 | 錯誤回給模型修正重送 |
 | 14 | 模型手寫 unified diff 常格式錯,每次被退回多花 2–3 步(10/8 一次 8 步、2.1 萬 tokens) | 改 bug 實測 | 改成給「舊字串 → 新字串」,diff 由工具產生;同一題變 4 步、8 千 tokens |
+| 15 | `models.yaml` 的上下文長度是 catalog 的值(Ultra 1M),地端預設 256K;切到 nim 時路由以為放得下,送出才被拒 | 程式碼審查 | 角色可另寫 `nim_context_window`,`LLM_BACKEND=nim` 時自動套用 |
+| 16 | `search_code` 會跟著 symlink / Windows junction 讀到工作區外的檔案(`read_file` 有擋) | 程式碼審查 + 本機重現(一般帳號就能建 junction) | 依實際位置檢查,工作區外與機密檔一律略過 |
 
 ## 執行
 
@@ -77,6 +79,8 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 - **地端 NIM 沒實際部署過**:需要 GPU 伺服器。Ultra 550B 要 8×B200/H200 等級,建議第一階段用 Super 120B(FP8 約 2×H100)。
 - 配額是記憶體版,多台 API server 要換 Redis;長任務(如整份文件 8 分鐘)應走背景佇列。
 - 模型清單會汰換,上線前用 `ChatNVIDIA.get_available_models()` 或 `smoke_test.py` 再對一次。
+- `requirements.txt` 鎖在實測過的版本:程式依賴 langchain-nvidia-ai-endpoints 的內部行為,升版前先跑離線測試和 `smoke_test.py`。
+- 地端的 `nim_context_window`(Ultra / Super 備援 256K)是規劃值,部署時 `NIM_MAX_MODEL_LEN` 要設成一樣。
 - **PoC 不要送公司真實程式碼到 build.nvidia.com**:API Trial 條款 §1.2 禁止正式使用,§3.3 允許 NVIDIA 收集輸入輸出改進模型。
 
 ---

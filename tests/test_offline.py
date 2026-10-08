@@ -381,6 +381,41 @@ def test_secret_files_are_blocked(workspace):
     assert hits.startswith("app.py:1:") and "server.key" not in hits and ".env" not in hits
 
 
+def _dir_link(link, target):
+    """目錄連結:能建 symlink 就用 symlink;Windows 一般帳號不能,改用不需權限的 junction。"""
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+
+
+def test_search_code_does_not_follow_links_out_of_workspace(workspace, tmp_path_factory):
+    """工作區裡的 symlink / junction 指到外面時,read_file 會擋,search_code 也要擋。"""
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "leak.py").write_text("TOKEN = 'nvapi-secret'\n", encoding="utf-8")
+    (workspace / "ok.py").write_text("x = 'nvapi-secret'\n", encoding="utf-8")
+    _dir_link(workspace / "vendor", outside)
+    for glob in ["**/*.py", "vendor/*.py"]:
+        hits = tools.search_code.invoke({"pattern": "nvapi-secret", "glob": glob})
+        assert "vendor" not in hits, glob
+    assert tools.search_code.invoke({"pattern": "nvapi-secret"}).splitlines() == ["ok.py:1: x = 'nvapi-secret'"]
+    with pytest.raises(ValueError, match="超出工作區"):
+        tools.read_file.invoke({"path": "vendor/leak.py"})
+
+
+def test_nim_backend_uses_nim_context_window():
+    """catalog 給 Ultra 1M,地端預設 256K;切到 nim 時路由要照地端的長度算,不然送出去才被伺服器拒絕。"""
+    catalog = ModelRegistry.from_yaml(backend="catalog")
+    nim = ModelRegistry.from_yaml(backend="nim")
+    assert catalog.spec("long_context").context_window == 1_048_576
+    assert nim.spec("long_context").context_window == 262_144
+    assert nim.spec("code").context_window == catalog.spec("code").context_window  # 沒寫 nim_context_window 就沿用
+    assert catalog.pick_role(prompt_tokens=500_000) == "long_context"
+    with pytest.raises(ContextTooLarge):
+        nim.pick_role(prompt_tokens=500_000)
+
+
 def test_agent_rejects_secret_attachment(workspace):
     (workspace / ".env").write_text("NVIDIA_API_KEY=nvapi-secret\n", encoding="utf-8")
     reg, _ = scripted_registry([ai("不該被呼叫")])

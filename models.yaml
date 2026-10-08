@@ -7,7 +7,9 @@
 #   nvidia/nemotron-3-ultra-550b-a55b / super-120b    → 可用,tool calling 2026-10-05 實測通過
 #   deepseek-ai/deepseek-v4.1-flash                   → 可用,2026-10-06 冒煙測試四項全過
 #
-# context_window 填「我們允許用到」的長度(地端 = NIM_MAX_MODEL_LEN),不是模型理論上限。
+# context_window 填「我們允許用到」的長度,不是模型理論上限。
+# 地端跟 catalog 不同時另寫 nim_context_window(LLM_BACKEND=nim 時取代 context_window),
+# 部署 NIM 時 NIM_MAX_MODEL_LEN 要設成這個值。
 # 這個數字決定 KV cache 要預留多少顯存,開越大、能同時服務的人越少。
 
 backends:
@@ -71,7 +73,8 @@ roles:
   long_context:
     model: nvidia/nemotron-3-ultra-550b-a55b
     nim_base_url: http://nim-nemotron-ultra:8000/v1
-    context_window: 1048576                 # catalog 給 1M;地端預設 256K,要 1M 得另開 vLLM 參數
+    context_window: 1048576                 # catalog 給 1M
+    nim_context_window: 262144              # 地端預設 256K;要 1M 得另開 vLLM 參數,顯存也要跟著加
     max_output: 16384
     timeout_s: 900                          # 幾十萬 token 的 prefill 可能要好幾分鐘
     temperature: 1.0
@@ -86,6 +89,7 @@ roles:
     model: nvidia/nemotron-3-super-120b-a12b
     nim_base_url: http://nim-nemotron-super:8000/v1
     context_window: 1048576
+    nim_context_window: 262144              # 不能比 Ultra 小,不然 Ultra 收下的大請求一退到這裡就爆
     max_output: 16384
     timeout_s: 900
     temperature: 1.0

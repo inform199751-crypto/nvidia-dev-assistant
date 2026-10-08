@@ -72,14 +72,17 @@ class ModelRegistry:
         self._backend_cfg = config["backends"][self.backend]
         self.routing: dict = config["routing"]
         self.limits: dict = config["limits"]
-        self.specs = {
-            role: ModelSpec(role=role, **{
+        self.specs = {}
+        for role, cfg in config["roles"].items():
+            cfg = dict(cfg)
+            nim_window = cfg.pop("nim_context_window", None)
+            if self.backend == "nim" and nim_window:  # 地端的 NIM_MAX_MODEL_LEN 通常比 catalog 小
+                cfg["context_window"] = nim_window
+            self.specs[role] = ModelSpec(role=role, **{
                 **cfg,
                 "fallbacks": tuple(cfg.get("fallbacks", ())),
                 "available_on": tuple(cfg.get("available_on", ("catalog", "nim"))),
             })
-            for role, cfg in config["roles"].items()
-        }
         self._chat_factory = chat_factory
 
     @classmethod
