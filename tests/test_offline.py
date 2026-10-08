@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import logging
 import subprocess
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -16,7 +17,7 @@ import tools
 import web
 from agent import SYSTEM_PROMPT, AgentSession, build_user_prompt, chat, file_mentions, run_agent
 from llm_registry import ModelRegistry
-from token_guard import (ContextTooLarge, QuotaExceeded, TokenQuota, compact_history,
+from token_guard import (TAIPEI, ContextTooLarge, QuotaExceeded, TokenQuota, compact_history,
                          message_tokens, outline, strip_stale_reasoning, tool_tokens, truncate_middle)
 
 CONFIG = {
@@ -706,6 +707,15 @@ def test_session_keeps_history_across_turns(workspace):
     assert [type(m).__name__ for m in sent] == ["SystemMessage", "HumanMessage", "AIMessage", "HumanMessage"]
     assert "add 哪裡錯" in sent[1].content and "那要怎麼改" in sent[3].content
     assert sent[2].content == "calc.py:2 寫成減號" and "reasoning_content" not in sent[2].additional_kwargs
+
+
+def test_system_prompt_has_today(workspace):
+    """10/9 實測:模型不知道今天幾號,把「下週三」算錯;系統提示要帶日期與星期。"""
+    from agent import today_line
+    assert today_line(datetime(2026, 10, 9, tzinfo=TAIPEI)) == "\n\nToday is 2026-10-09 (Friday, Asia/Taipei)."
+    reg, seen = scripted_registry([ai("好")])
+    run_agent("下週三是幾號", registry=reg, quota=TokenQuota(10**6, 2))
+    assert "Today is " in seen[0][1][0].content
 
 
 def test_failed_turn_is_rolled_back(workspace):

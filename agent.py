@@ -10,12 +10,13 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
 from llm_registry import ModelRegistry
-from token_guard import (TokenQuota, compact_history, estimate_tokens, message_tokens,
+from token_guard import (TAIPEI, TokenQuota, compact_history, estimate_tokens, message_tokens,
                          outline, strip_stale_reasoning, strip_think_text, tool_tokens, truncate_middle)
 import documents
 import tools as toolbox
@@ -105,6 +106,15 @@ def file_mentions(text: str) -> list[str]:
     return found
 
 
+_WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def today_line(now: datetime | None = None) -> str:
+    """模型不知道今天幾號:10/9 實測把會議紀錄的「下週三」算成 10/16(正確是 10/14)。"""
+    d = now or datetime.now(TAIPEI)
+    return f"\n\nToday is {d:%Y-%m-%d} ({_WEEKDAYS[d.weekday()]}, Asia/Taipei)."
+
+
 class AgentSession:
     """一段對話:保留完整 messages,每一輪(每次 ask)都走同一套逐步檢查。CLI 單次任務就是只問一輪。
 
@@ -119,7 +129,7 @@ class AgentSession:
         self.tools = [] if whole else list(tools)
         self.tool_map = {t.name: t for t in self.tools}
         self.overhead = tool_tokens(self.tools)  # 工具定義每步都送,是固定成本;不算進來會被誤判成估算偏低
-        self.messages: list[BaseMessage] = [SystemMessage(SYSTEM_PROMPT)]
+        self.messages: list[BaseMessage] = [SystemMessage(SYSTEM_PROMPT + today_line())]
         self.scale = 1.0  # 估算偏低時,用伺服器回報的實際 input tokens 往上修正
         self.tokens_used = 0  # 整段對話累計
 

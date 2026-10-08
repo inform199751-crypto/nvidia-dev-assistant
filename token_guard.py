@@ -19,7 +19,7 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 
 _CJK = re.compile(r"[　-鿿가-힯＀-￯]")
 _THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", re.S)
-_TAIPEI = timezone(timedelta(hours=8))  # 台灣沒有日光節約,固定 +8 即可(Windows 不必裝 tzdata)
+TAIPEI = timezone(timedelta(hours=8))  # 台灣沒有日光節約,固定 +8 即可(Windows 不必裝 tzdata)
 
 
 class ContextTooLarge(Exception):
@@ -188,7 +188,7 @@ class TokenQuota:
 
     def _today(self, user: str) -> _Usage:
         u = self._usage[user]
-        today = datetime.now(_TAIPEI).date().isoformat()
+        today = datetime.now(TAIPEI).date().isoformat()
         if u.day != today:
             u.day, u.tokens = today, 0
         return u
