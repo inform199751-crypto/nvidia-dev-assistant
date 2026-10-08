@@ -1,6 +1,7 @@
 """工具綁定資料夾:網頁同時跑多個任務、各自在不同資料夾時不能互相覆蓋。"""
 from __future__ import annotations
 
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -90,3 +91,70 @@ def test_normalize_diff_recounts_and_strips_git_headers():
            "@@ -1,9 +1,9 @@ def add\n def add(a, b):\n-    return a - b\n+    return a + b\n\n")
     assert tools.normalize_diff(raw) == ("--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@ def add\n"
                                          " def add(a, b):\n-    return a - b\n+    return a + b\n")
+
+
+def saved_patch(root, out):
+    """propose_patch 的回傳第一行是「已存成 <路徑>,等工程師審核後套用。」"""
+    return root / out.split()[1].split(",", 1)[0]
+
+
+# calc.py 的修正 hunk:要帶後置 context(兩行空白行)。git 規定沒有後置 context 的 hunk 必須對到檔尾,calc.py 後面還有內容,會被拒收
+CALC_HUNK = "--- a/calc.py\n+++ b/calc.py\n@@ -1,4 +1,4 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n \n \n"
+
+
+def test_propose_patch_two_file_legacy_diff(tmp_path, monkeypatch):
+    """兩個檔的傳統格式 diff:以前加了 --recount 會把第二個檔的 ---/+++ 算進第一個 hunk,整個被拒(最終審查重現)。"""
+    (tmp_path / "calc.py").write_text(CALC, encoding="utf-8", newline="\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_calc.py").write_text("from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n",
+                                                     encoding="utf-8", newline="\n")
+    monkeypatch.setattr(tools, "_run_sandbox", lambda root, target, **kw: "exit code 0\n3 passed")
+    t = by_name(tools.make_tools(tmp_path))
+    diff = (CALC_HUNK +
+            "--- a/tests/test_calc.py\n+++ b/tests/test_calc.py\n@@ -4,1 +4,4 @@\n def test_add():\n     assert add(2, 3) == 5\n"
+            "+\n+\n+def test_add_negative():\n+    assert add(-1, 1) == 0\n")
+    out = t["propose_patch"].invoke({"path": "calc.py", "unified_diff": diff, "reason": "修加法", "test_target": "."})
+    assert out.startswith("已存成"), out
+    saved = saved_patch(tmp_path, out)
+    check = subprocess.run(["git", "apply", "--check", str(saved)], cwd=tmp_path, capture_output=True, text=True)
+    assert check.returncode == 0, check.stderr  # 工程師不加任何旗標直接套用也要成功
+
+
+def test_propose_patch_in_folder_nested_in_parent_repo(tmp_path, monkeypatch):
+    """工作區巢狀在別的 git repo 裡(demo_workspace 就是):diff --git 格式不能被靜靜略過(最終審查重現)。"""
+    outer = tmp_path / "outer"
+    ws = outer / "ws"
+    ws.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=outer, check=True)
+    (ws / "calc.py").write_text(CALC, encoding="utf-8", newline="\n")
+    monkeypatch.setattr(tools, "_run_sandbox", lambda root, target, **kw: "exit code 0\n2 passed")
+    t = by_name(tools.make_tools(ws))
+    good = "diff --git a/calc.py b/calc.py\nindex 1111111..2222222 100644\n" + CALC_HUNK
+    bad = good.replace("-    return a - b", "-    return a * b")
+    assert t["propose_patch"].invoke({"path": "calc.py", "unified_diff": bad, "reason": "x", "test_target": "."}).startswith("diff ")
+    out = t["propose_patch"].invoke({"path": "calc.py", "unified_diff": good, "reason": "修加法", "test_target": "."})
+    assert out.startswith("已存成"), out
+    saved = saved_patch(ws, out)
+    subprocess.run(["git", "-C", str(ws), "apply", str(saved)], check=True, capture_output=True)  # 頁面複製的指令
+    assert (ws / "calc.py").read_text(encoding="utf-8").startswith("def add(a, b):\n    return a + b\n")
+
+
+def test_reason_cannot_smuggle_extra_hunks(tmp_path, monkeypatch):
+    (tmp_path / "calc.py").write_text(CALC, encoding="utf-8", newline="\n")
+    (tmp_path / "other.py").write_text("X = 1\n", encoding="utf-8", newline="\n")
+    monkeypatch.setattr(tools, "_run_sandbox", lambda root, target, **kw: "exit code 0\n2 passed")
+    t = by_name(tools.make_tools(tmp_path))
+    reason = "修加法\n--- a/other.py\n+++ b/other.py\n@@ -1 +1 @@\n-X = 1\n+X = 2\n"
+    out = t["propose_patch"].invoke({"path": "calc.py", "unified_diff": CALC_HUNK, "reason": reason, "test_target": "."})
+    saved = saved_patch(tmp_path, out)
+    numstat = subprocess.run(["git", "apply", "--numstat", str(saved)], cwd=tmp_path, capture_output=True, text=True).stdout
+    assert "other.py" not in numstat and "calc.py" in numstat
+
+
+def test_patch_files_unique_within_same_second(tmp_path, monkeypatch):
+    (tmp_path / "calc.py").write_text(CALC, encoding="utf-8", newline="\n")
+    monkeypatch.setattr(tools, "_run_sandbox", lambda root, target, **kw: "exit code 0\n2 passed")
+    t = by_name(tools.make_tools(tmp_path))
+    for _ in range(2):
+        t["propose_patch"].invoke({"path": "calc.py", "unified_diff": CALC_HUNK, "reason": "x", "test_target": "."})
+    assert len(list((tmp_path / ".agent_patches").glob("*.patch"))) == 2
