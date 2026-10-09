@@ -18,7 +18,7 @@
 </script>
 <style>
   /* 版面參考 Claude / ChatGPT 桌面版:左側欄(新增、成品、待命、自訂、更多,下面是專案和對話),中間置中的對話欄。
-     外觀:<html data-theme> = dark(預設,黑底)/ light / system(跟著系統);在「更多」切換 */
+     外觀:<html data-theme> = dark(預設,黑底)/ light / system(跟著系統)/ gold(黑金)/ red(賽道紅);在「設定」切換 */
   :root {
     color-scheme: light;  /* 捲軸等瀏覽器內建元件跟著深淺色 */
     --bg: #ffffff; --sidebar: #f9f9f8; --text: #0d0d0d; --muted: #5d5d5d; --faint: #8f8f8f;
@@ -45,6 +45,32 @@
       --shadow: 0 2px 12px rgba(0, 0, 0, .5);
     }
   }
+  /* 黑金:參考 awesome-design-md 的藍寶堅尼分析 —— 純黑底、金色是唯一的彩色,只用在主要按鈕和選中的地方;
+     警告改成偏紅的橘(原本的橘黃跟金色分不出來)。不用它的名字、牛標誌和專屬字型 */
+  :root[data-theme="gold"] {
+    color-scheme: dark;
+    --bg: #000000; --sidebar: #0a0a0a; --text: #ffffff; --muted: #b8b8b8; --faint: #7d7d7d;
+    --line: #262626; --hover: #161616; --active: #202020; --user: #202020; --input: #0f0f0f; --code: #0d0d0d;
+    --btn: #ffc000; --btn-ink: #000000; --btn-off: #3a3a3a; --accent: #ffc000; --accent-ink: #000000;
+    --dot: #ffc000; --dot-ink: #000000; --warn: #ff6a3d; --error: #ff5c5c; --add: #102a17; --del: #3a1414;
+    --shadow: 0 2px 14px rgba(0, 0, 0, .7);
+  }
+  /* 賽道紅:參考法拉利的分析 —— 深灰黑底、紅色只用在主要按鈕;錯誤改成偏粉的淺紅、警告用黃色,才不會跟主色搞混 */
+  :root[data-theme="red"] {
+    color-scheme: dark;
+    --bg: #181818; --sidebar: #111111; --text: #ffffff; --muted: #b5b5b5; --faint: #8f8f8f;
+    --line: #303030; --hover: #232323; --active: #303030; --user: #2a2a2a; --input: #202020; --code: #111111;
+    --btn: #da291c; --btn-ink: #ffffff; --btn-off: #4a4a4a; --accent: #da291c; --accent-ink: #ffffff;
+    --dot: #f6e500; --dot-ink: #000000; --warn: #f6e500; --error: #ff8a9a; --add: #102a17; --del: #3a1418;
+    --shadow: 0 2px 12px rgba(0, 0, 0, .55);
+  }
+  /* 賽道紅的「測試通過」不能用主色:紅色看起來像失敗(10/10 截圖看到),改成綠色 */
+  :root[data-theme="red"] .tag.ok { color: #3ddc84; background: rgba(61, 220, 132, .14); }
+  /* 黑金的形狀:藍寶堅尼是完全直角,這裡改成小圓角(俐落,但不會太硬) */
+  :root[data-theme="gold"] :is(.composer, .msg.user, .card, .rows, .popup, .phone, .none, .plan, .md pre, .tool pre,
+    .diff, .page pre.rules, .field input, .msg-images img, .thumb) { border-radius: 4px; }
+  :root[data-theme="gold"] :is(.pill, .chip, .mode-btn, .tag, .send, .round-btn, .nav-btn, .conv, .model-pick, .icon-btn,
+    .mode-switch, .mode-switch button, .side-user, .popup button) { border-radius: 3px; }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
@@ -79,7 +105,7 @@
   .nav-btn[aria-current="page"] { background: var(--active); }
   .nav-btn .plus { width: 20px; height: 20px; border-radius: 50%; background: var(--active); display: grid; place-items: center; }
   .nav-btn.more { color: var(--muted); }
-  .badge { margin-left: auto; min-width: 18px; height: 18px; border-radius: 9px; background: var(--dot); color: #fff;
+  .badge { margin-left: auto; min-width: 18px; height: 18px; border-radius: 9px; background: var(--dot); color: var(--dot-ink, #fff);
            font-size: 11px; font-weight: 600; display: grid; place-items: center; padding: 0 5px; }
   .project { margin-top: 14px; }
   .project-head { display: flex; align-items: center; gap: 2px; padding: 2px 4px 2px 8px; color: var(--muted); font-size: 13px; }
@@ -442,10 +468,13 @@ let sideMode = store.get("mode", "code") === "chat" ? "chat" : "code";
 const kindOf = (c) => (c && c.kind) || "code";
 
 const theme = () => document.documentElement.dataset.theme || "dark";
+// 外觀選項:[代碼, 名稱];標題列(桌面版、手機)的顏色跟側邊欄一樣
+const THEMES = [["dark", "深色"], ["light", "淺色"], ["system", "跟著系統"], ["gold", "黑金"], ["red", "賽道紅"]];
+const BAR_COLORS = { gold: "#0a0a0a", red: "#111111" };
 function setTheme(t) {
   document.documentElement.dataset.theme = t; store.set("theme", t);
   const dark = t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
-  document.querySelector('meta[name="theme-color"]').content = dark ? "#0a0a0a" : "#f9f9f8";
+  document.querySelector('meta[name="theme-color"]').content = BAR_COLORS[t] || (dark ? "#0a0a0a" : "#f9f9f8");
 }
 
 function api(path, body, convId) {
@@ -1060,7 +1089,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/10", ["上網讀到的網頁和訪客的問題先經過安全檢查(Nemotron 3.5 Content Safety),藏著要 AI 照做的指令會被擋下",
+  ["10/10", ["設定 → 外觀多了兩種配色:黑金(純黑底、金色重點、小圓角)和賽道紅(深灰黑底、紅色重點)",
+             "上網讀到的網頁和訪客的問題先經過安全檢查(Nemotron 3.5 Content Safety),藏著要 AI 照做的指令會被擋下",
              "讀得懂掃描的 PDF 了:沒有文字層的頁交給看圖模型讀,知識庫也收得進去",
              "設定的「手機與訪客」把配對過的裝置一筆一筆列出來(iPhone · 主畫面 App、Windows · Chrome…),各自可以取消"]],
   ["10/9 晚上", ["設定的「手機與訪客」列出每支訪客手機今天用了多少,也可以只取消其中一支",
@@ -1364,7 +1394,7 @@ async function renderPage() {
     } else box.appendChild(el("p", "lead", "這裡沒有用量資料。"));
     section(box, "外觀");
     const look = box.appendChild(el("div", "actions"));
-    for (const [t, label] of [["dark", "深色"], ["light", "淺色"], ["system", "跟著系統"]])
+    for (const [t, label] of THEMES)
       look.appendChild(button(label, "pill" + (theme() === t ? " dark" : ""), () => { setTheme(t); renderPage(); }));
     section(box, "回答語言");
     box.appendChild(el("p", "lead", "HSUAN 回答用的語言(介面文字不變)。改了之後,打開中的對話也馬上換。"));
