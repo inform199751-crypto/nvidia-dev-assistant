@@ -13,6 +13,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
@@ -174,24 +175,39 @@ class _Usage:
 
 
 class TokenQuota:
-    """每人每日 token 額度 + 同時請求數上限。
+    """每人每日 token 額度 + 同時請求數上限。一天以台灣午夜切。
 
-    示範用記憶體版;API server 不只一台時要換成 Redis(INCRBY + EXPIRE)。
-    一天以台灣午夜切。
+    store:今天的用量存在這個 JSON 檔(每次扣額度都讀檔、加上去、寫回):重開程式不會歸零,
+    桌面版和 VS Code 外掛這種同時開著的不同行程也加在同一份。None = 只記在記憶體(測試)。
+    API server 不只一台時要換成 RedisTokenQuota。
     """
 
-    def __init__(self, daily_tokens: int, max_concurrent: int):
+    def __init__(self, daily_tokens: int, max_concurrent: int, store: Path | None = None):
         self.daily_tokens = daily_tokens
         self.max_concurrent = max_concurrent
+        self.store = store
         self._lock = threading.Lock()
         self._usage: dict[str, _Usage] = defaultdict(_Usage)
+
+    def _read(self) -> dict:
+        try:
+            return json.loads(self.store.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
 
     def _today(self, user: str) -> _Usage:
         u = self._usage[user]
         today = datetime.now(TAIPEI).date().isoformat()
-        if u.day != today:
+        if self.store:  # 檔案才是準的(別的行程可能也用了)
+            u.day, u.tokens = today, int((self._read().get(user) or {}).get(today, 0))
+        elif u.day != today:
             u.day, u.tokens = today, 0
         return u
+
+    def used(self, user: str) -> int:
+        """今天已經用了多少 tokens(畫面上顯示用)。"""
+        with self._lock:
+            return self._today(user).tokens
 
     def check(self, user: str, need: int) -> None:
         with self._lock:
@@ -201,7 +217,15 @@ class TokenQuota:
 
     def charge(self, user: str, tokens: int) -> None:
         with self._lock:
-            self._today(user).tokens += tokens
+            u = self._today(user)
+            u.tokens += tokens
+            if self.store and tokens:
+                data = self._read()
+                data[user] = {u.day: u.tokens}  # 每人只留今天
+                self.store.parent.mkdir(parents=True, exist_ok=True)
+                tmp = self.store.with_name(self.store.name + ".tmp")
+                tmp.write_text(json.dumps(data), encoding="utf-8")
+                tmp.replace(self.store)
 
     @contextmanager
     def slot(self, user: str):
@@ -230,6 +254,9 @@ class RedisTokenQuota:
     def _day_key(self, user: str) -> str:
         return f"{self.prefix}:tokens:{user}:{datetime.now(TAIPEI).date().isoformat()}"
 
+    def used(self, user: str) -> int:
+        return int(self.r.get(self._day_key(user)) or 0)
+
     def check(self, user: str, need: int) -> None:
         used = int(self.r.get(self._day_key(user)) or 0)
         if used + need > self.daily_tokens:
@@ -255,9 +282,9 @@ class RedisTokenQuota:
             self.r.decr(key)
 
 
-def make_quota(daily_tokens: int, max_concurrent: int, redis_url: str | None = None):
-    """有 REDIS_URL 就用 Redis(多台伺服器共用額度),沒有就用記憶體版。"""
+def make_quota(daily_tokens: int, max_concurrent: int, redis_url: str | None = None, store: Path | None = None):
+    """有 REDIS_URL 就用 Redis(多台伺服器共用額度),沒有就用本機版(store 給了就存檔,重開不歸零)。"""
     if not redis_url:
-        return TokenQuota(daily_tokens, max_concurrent)
+        return TokenQuota(daily_tokens, max_concurrent, store)
     import redis
     return RedisTokenQuota(redis.Redis.from_url(redis_url, decode_responses=True), daily_tokens, max_concurrent)

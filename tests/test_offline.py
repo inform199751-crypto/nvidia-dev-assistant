@@ -2141,3 +2141,102 @@ def test_webui_model_picker_per_conversation(workspace, tmp_path_factory):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_token_usage_is_saved_and_shared(tmp_path, monkeypatch):
+    """今天的用量存檔:重開程式不歸零、同時開著的兩個行程(桌面版 + VS Code 外掛)加在同一份;過了午夜重算;
+    畫面上顯示的 used() 跟扣額度用的是同一個數字。"""
+    import token_guard
+    store = tmp_path / "usage.json"
+    a, b = TokenQuota(1000, 2, store), TokenQuota(1000, 2, store)
+    a.charge("me", 300)
+    b.charge("me", 200)
+    assert a.used("me") == b.used("me") == 500 and TokenQuota(1000, 2, store).used("me") == 500
+    with pytest.raises(QuotaExceeded):
+        a.check("me", 600)
+    assert a.used("guest-x") == 0
+    tomorrow = datetime.now(TAIPEI) + __import__("datetime").timedelta(days=1)
+    monkeypatch.setattr(token_guard, "datetime", type("D", (), {"now": staticmethod(lambda tz=None: tomorrow)}))
+    assert a.used("me") == 0
+    a.charge("me", 10)
+    assert json.loads(store.read_text())["me"] == {tomorrow.date().isoformat(): 10}  # 只留今天
+
+
+def test_lan_access_guest_pin(tmp_path):
+    """兩組 PIN:輸入哪一組決定身分(手機自己沒辦法升級);每支訪客手機有自己的代號;「忘記所有訪客」不影響主人的手機;
+    舊版存的配對(雜湊清單)當作主人的手機。"""
+    import webui
+    store = tmp_path / "phones.json"
+    store.write_text(json.dumps([webui.LanAccess._digest("old-cookie")]), encoding="utf-8")
+    lan = webui.LanAccess(["127.0.0.1"], pin="111111", store=store, guests=True)
+    assert lan.guest_pin and lan.guest_pin != lan.pin and lan.identify("old-cookie") == "owner"
+    owner, g1, g2 = lan.login("111111"), lan.login(lan.guest_pin), lan.login(lan.guest_pin)
+    assert lan.identify(owner) == "owner"
+    assert lan.identify(g1).startswith("guest:") and lan.identify(g1) != lan.identify(g2)
+    assert (lan.count("owner"), lan.count("guest")) == (2, 2)
+    again = webui.LanAccess(["127.0.0.1"], store=store, guests=True)  # 重開:PIN 換了,配對還在
+    assert again.identify(g1) == lan.identify(g1) and again.identify(owner) == "owner"
+    again.forget("guest")
+    assert again.identify(g1) is None and again.identify(owner) == "owner"
+    assert webui.LanAccess(["127.0.0.1"]).guest_pin is None  # --lan 沒有訪客
+
+
+def test_guest_phone_gets_its_own_space(workspace, tmp_path_factory, monkeypatch):
+    """訪客 PIN 配對的手機:自己的空資料夾當工作區(讀不到主人的專案)、看不到主人的對話(拿主人的對話 id 也一樣)、
+    不給電腦上的路徑、不能加專案 / 改規則、沒有跑沙箱的工具、自己的每日額度;主人的手機照舊看到主人的對話。"""
+    import threading
+    import httpx
+    import webui
+    (workspace / "secret_plan.md").write_text("主人的機密", encoding="utf-8")
+    store, guests_dir = tmp_path_factory.mktemp("state"), tmp_path_factory.mktemp("guests")
+    reg, seen = scripted_registry([ai("主人的答案"), ai("訪客的答案")])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=store)
+    guests = webui.guest_desks(reg, tools.ALL_TOOLS, "上網:關", "model", base=guests_dir)
+    monkeypatch.setattr(webui, "lan_ips", lambda: ["127.0.0.1"])
+    phone = webui.PhoneLink(desk, "t0k", 0, store=store, host="127.0.0.1", guests=guests)
+    main = webui.serve(desk, 0, token="t0k", phone=phone)
+    threading.Thread(target=main.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{main.server_address[1]}"
+    try:
+        owner_conv = httpx.post(base + "/api/conv/new", json={}, headers={"X-Token": "t0k"}).json()["id"]
+        httpx.post(base + "/api/ask", json={"text": "主人的問題"}, headers={"X-Token": "t0k", "X-Conv": owner_conv})
+        st = httpx.post(base + "/api/phone", json={"on": True}, headers={"X-Token": "t0k"}).json()
+        assert st["guest_pin"] and st["guest_pin"] != st["pin"]
+        monkeypatch.setattr(webui, "LOCAL_ADDRS", set())  # 接下來的連線都當成手機
+        url = st["urls"][0]
+        guest = httpx.Client(base_url=url, cookies=httpx.post(url + "/api/login", json={"pin": st["guest_pin"]}).cookies,
+                             headers={"X-Token": "t0k"})
+        mine = httpx.Client(base_url=url, cookies=httpx.post(url + "/api/login", json={"pin": st["pin"]}).cookies,
+                            headers={"X-Token": "t0k"})
+        listing = guest.get("/api/desk").json()
+        assert listing["user"] == "訪客" and [p["path"] for p in listing["projects"]] == ["訪客空間"]
+        assert owner_conv not in [c["id"] for c in listing["conversations"]]
+        state = guest.get("/api/state", headers={"X-Conv": owner_conv}).json()  # 拿主人的對話 id 也看不到
+        assert state["guest"] and state["conv"] != owner_conv and state["workspace"] == "訪客空間"
+        assert state["usage"] == {"used": 0, "limit": webui.GUEST_DAILY_TOKENS}
+        gid = next(iter(guests.desks))
+        hub = guests.desks[gid].hubs[state["conv"]]
+        assert hub.workspace == guests_dir / gid / "訪客空間" and not (hub.workspace / "secret_plan.md").exists()
+        assert not {t.name for t in hub.session.tools} & webui.GUEST_BLOCKED_TOOLS
+        assert hub.session.user == f"guest-{gid}"
+        assert guest.post("/api/project/add", json={"path": str(workspace)}).status_code == 400
+        assert guest.post("/api/remember", json={"rule": "x"}).status_code == 403
+        assert guest.get("/api/phone").status_code == 404
+        assert guest.post("/api/ask", json={"text": "訪客的問題"}, headers={"X-Conv": state["conv"]}).status_code == 202
+        with guest.stream("GET", f"/api/events?token=t0k&c={state['conv']}", timeout=10) as r:
+            for line in r.iter_lines():
+                if line.startswith("data: ") and json.loads(line[6:])["kind"] == "done":
+                    break
+        assert guest.get("/api/state", headers={"X-Conv": state["conv"]}).json()["usage"]["used"] == 100
+        assert mine.get("/api/desk").json()["user"] == "" and owner_conv in [c["id"] for c in mine.get("/api/desk").json()["conversations"]]
+        monkeypatch.setattr(webui, "LOCAL_ADDRS", {"127.0.0.1", "::1"})
+        counts = httpx.get(base + "/api/phone", headers={"X-Token": "t0k"}).json()
+        assert (counts["phones"], counts["guests"]) == (1, 1)
+        httpx.post(base + "/api/phone/forget", json={"who": "guests"}, headers={"X-Token": "t0k"})
+        monkeypatch.setattr(webui, "LOCAL_ADDRS", set())
+        assert guest.get("/api/desk").status_code == 403 and mine.get("/api/desk").status_code == 200
+    finally:
+        phone.close()
+        main.shutdown()
+        main.server_close()

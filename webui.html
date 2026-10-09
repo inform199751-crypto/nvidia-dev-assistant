@@ -100,6 +100,15 @@
   .side-user .who { flex: 1; min-width: 0; line-height: 1.3; }
   .side-user .who div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .side-user .who small { color: var(--faint); font-size: 12px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 今天的 token 用量:八成以上變橘、用完變紅 */
+  .usage-bar { height: 4px; border-radius: 2px; background: var(--line); margin-top: 4px; overflow: hidden; }
+  .usage-bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+  .usage-bar.high i { background: var(--warn); }
+  .usage-bar.full i { background: var(--error); }
+  .usage-big { font-size: 26px; font-weight: 700; }
+  .usage-big small { font-size: 14px; font-weight: 400; color: var(--faint); }
+  .page .usage-bar { height: 8px; border-radius: 4px; margin: 8px 0 6px; max-width: 420px; }
+  .pins { display: flex; gap: 22px; flex-wrap: wrap; }
   .icon-btn { background: none; border: 0; border-radius: 8px; padding: 6px; color: var(--muted); }
   .icon-btn:hover { background: var(--hover); color: var(--text); }
   #close-side, #open-side { display: none; }
@@ -310,8 +319,9 @@
   </div>
   <div class="side-user">
     <img src="/favicon.ico" alt="">
-    <div class="who"><div id="who">本機</div><small id="who-model"></small></div>
-    <button type="button" class="icon-btn" id="settings" aria-label="設定與狀態" title="設定與狀態">
+    <div class="who"><div id="who">本機</div><small id="who-usage"></small>
+      <div class="usage-bar" id="usage-bar" hidden><i id="usage-fill"></i></div></div>
+    <button type="button" class="icon-btn" id="settings" aria-label="設定" title="設定">
       <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="2.6"/><path d="M10 2v2.2M10 15.8V18M2 10h2.2M15.8 10H18M4.3 4.3l1.6 1.6M14.1 14.1l1.6 1.6M4.3 15.7l1.6-1.6M14.1 5.9l1.6-1.6"/></svg>
     </button>
   </div>
@@ -836,10 +846,10 @@ async function loadState() {
   const r = await api("/api/state");
   if (!r.ok) return;
   state = r.data;
-  $("who-model").textContent = state.model || "";
+  renderUsage();
   renderModel();
   setBusy(state.busy);
-  if (page === "more" || page === "custom") renderPage();
+  if (["more", "custom", "settings"].includes(page)) renderPage();
 }
 let pendingItems = [];
 async function loadPending() {
@@ -853,7 +863,7 @@ async function loadPending() {
 }
 
 // ---------- 側邊欄的頁面 ----------
-const PAGE_TITLES = { outputs: "成品", pending: "待命", custom: "自訂", more: "更多" };
+const PAGE_TITLES = { outputs: "成品", pending: "待命", custom: "自訂", more: "更多", settings: "設定" };
 function openPage(name) {
   page = name; closeSide();
   $("scroller").hidden = true; $("composer-area").hidden = true; $("page").hidden = false; $("back").hidden = false;
@@ -870,7 +880,7 @@ function closePage() {
 }
 document.querySelectorAll(".nav-btn[data-page]").forEach((b) => (b.onclick = () => openPage(b.dataset.page)));
 $("back").onclick = closePage;
-$("settings").onclick = () => openPage("more");
+$("settings").onclick = () => openPage("settings");
 
 function section(box, title) { box.appendChild(el("h3", "", title)); return box; }
 function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 QR code、網址、PIN 和加到主畫面的步驟
@@ -881,7 +891,7 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
     renderPage();
   };
   if (!st.on) {
-    box.appendChild(el("p", "lead", "手機也能用 HSUAN,電腦和手機看到的是同一份對話。手機要和電腦連同一個 Wi-Fi。"));
+    box.appendChild(el("p", "lead", "手機也能用 HSUAN:你的手機和電腦看到的是同一份對話,也可以給別人訪客 PIN。手機要和電腦連同一個 Wi-Fi。"));
     box.appendChild(el("div", "actions")).appendChild(button("打開手機連線", "pill dark", act({ on: true })));
     box.appendChild(el("p", "lead", "第一次打開時 Windows 會問要不要讓 HSUAN 使用網路:請勾「私人網路」並按「允許」。"
       + (st.phones ? `已配對 ${st.phones} 支手機。` : "")));
@@ -890,22 +900,48 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
   const card = box.appendChild(el("div", "phone"));
   card.appendChild(el("div", "qr")).innerHTML = st.qr;  // 伺服器產生的 SVG(只有格子,沒有外來內容)
   const info = card.appendChild(el("div", "grow"));
-  info.appendChild(el("div", "pin-label", "PIN"));
-  info.appendChild(el("div", "pin", st.pin));
+  const pins = info.appendChild(el("div", "pins"));
+  for (const [label, pin] of [["你的手機 PIN", st.pin], ["訪客 PIN", st.guest_pin]]) {
+    if (!pin) continue;
+    const p = pins.appendChild(el("div"));
+    p.appendChild(el("div", "pin-label", label));
+    p.appendChild(el("div", "pin", pin));
+  }
   info.appendChild(el("div", "url", st.urls[0]));
   if (st.urls.length > 1) info.appendChild(el("small", "", `連不上再試:${st.urls.slice(1).join("、")}`));
-  info.appendChild(el("small", "", st.phones ? `已配對 ${st.phones} 支手機(電腦重開也不用再輸入 PIN)` : "還沒有配對的手機"));
+  info.appendChild(el("small", "", `已配對:你的手機 ${st.phones || 0} 支、訪客 ${st.guests || 0} 支(電腦重開也不用再輸入 PIN)`));
+  if (st.guest_pin) box.appendChild(el("p", "lead",
+    "給別人用就給「訪客 PIN」:訪客有自己的空間,看不到你的對話,也碰不到你電腦上的專案;每支訪客手機每天 20 萬 tokens。"
+    + "訪客的對話會存在這台電腦上(output/guests)。「你的手機 PIN」只給自己的手機:它看得到你全部的對話。"));
   const steps = box.appendChild(el("ol", "help"));
   for (const t of ["手機連同一個 Wi-Fi,用相機掃上面的 QR code(或在瀏覽器輸入網址)。",
-                   "輸入 PIN。",
+                   "輸入 PIN(你的手機或訪客的那一組)。",
                    "加到主畫面,之後點圖示就打開:iPhone 用 Safari 按「分享」→「加入主畫面」;Android 用 Chrome 按右上「⋮」→「加到主畫面」。第一次從主畫面打開要再輸入一次 PIN。"])
     steps.appendChild(el("li", "", t));
   box.appendChild(el("p", "lead", "電腦上的 HSUAN 要開著,手機才連得到。連不到的話:確認 Windows 防火牆有允許,而且這個 Wi-Fi 在 Windows 設成「私人網路」。"));
   const a = box.appendChild(el("div", "actions"));
   a.appendChild(button("關閉手機連線", "pill", act({ on: false })));
-  if (st.phones) a.appendChild(button("忘記所有手機", "pill", () => {
-    if (confirm("所有手機都要重新輸入 PIN 才能連。確定?")) act({}, "/api/phone/forget")();
+  if (st.guests) a.appendChild(button("忘記所有訪客", "pill", () => {
+    if (confirm("訪客手機都要重新輸入訪客 PIN 才能連(你的手機不受影響)。確定?")) act({ who: "guests" }, "/api/phone/forget")();
   }));
+  if (st.phones || st.guests) a.appendChild(button("忘記所有手機", "pill", () => {
+    if (confirm("所有手機(含訪客)都要重新輸入 PIN 才能連。確定?")) act({}, "/api/phone/forget")();
+  }));
+}
+// ---------- token 用量(側邊欄左下角、設定頁) ----------
+const fmtTok = (n) => n >= 10000 ? `${(n / 10000).toFixed(n >= 1000000 ? 0 : 1)} 萬` : Number(n).toLocaleString();
+function paintBar(bar, used, limit) {
+  const ratio = limit ? used / limit : 0;
+  bar.querySelector("i") || bar.appendChild(el("i"));
+  bar.querySelector("i").style.width = `${Math.min(100, ratio * 100)}%`;
+  bar.classList.toggle("high", ratio >= 0.8 && ratio < 1);
+  bar.classList.toggle("full", ratio >= 1);
+}
+function renderUsage() {
+  const u = state.usage, bar = $("usage-bar");
+  bar.hidden = !u;
+  $("who-usage").textContent = u ? `今天 ${fmtTok(u.used)} / ${fmtTok(u.limit)} tokens` : (state.model || "");
+  if (u) paintBar(bar, u.used, u.limit);
 }
 function rows(box) { return box.appendChild(el("div", "rows")); }
 function row(list, name, sub, actions) {
@@ -919,7 +955,7 @@ function row(list, name, sub, actions) {
 async function renderPage() {
   const box = $("page-in"), name = page;
   const r = name === "outputs" ? await api("/api/outputs") : name === "custom" ? await api("/api/instructions")
-    : name === "more" ? await api("/api/phone") : null;
+    : name === "settings" ? await api("/api/phone") : null;
   if (page !== name) return;
   box.innerHTML = "";
   box.appendChild(el("h2", "", PAGE_TITLES[name]));
@@ -975,7 +1011,7 @@ async function renderPage() {
     if (r.data.downloaded) box.appendChild(el("p", "lead",
       "這是從 GitHub 下載的專案:它自帶的 ASSISTANT.md 是別人寫的,HSUAN 不會照著做;你在這裡加的規則另外存在 HSUAN 自己的資料夾。"));
     if (r.data.text) box.appendChild(el("pre", "rules", r.data.text)); else box.appendChild(el("div", "none", "這個專案還沒有規則。"));
-    if (r.data.team) box.appendChild(el("p", "lead", "多人模式的專案規則由管理者維護。"));
+    if (r.data.team) box.appendChild(el("p", "lead", state.guest ? "訪客不能改專案規則。" : "多人模式的專案規則由管理者維護。"));
     else {
       const f = box.appendChild(el("div", "field"));
       const inp = f.appendChild(el("input")); inp.placeholder = "新增一條規則,例如:回答都要附檔案路徑";
@@ -988,16 +1024,27 @@ async function renderPage() {
       inp.onkeydown = (ev) => { if (ev.key === "Enter" && !ev.isComposing) go(); };
       f.appendChild(button("加入", "pill dark", go));
     }
-    section(box, "上網");
-    box.appendChild(el("p", "lead", `${state.status || ""}。要開關請改專案資料夾 .env 的 ALLOW_WEB(true / false),改完重新打開 HSUAN。`));
-    section(box, "模型");
-    box.appendChild(el("p", "lead", `${state.model || ""}(換模型改 models.yaml)`));
-  } else if (name === "more") {
-    if (r.ok) renderPhone(box, r.data);  // 只有桌面版、而且是電腦自己看才有(手機上看不到 PIN)
+  } else if (name === "settings") {
+    section(box, "今天的用量");
+    if (state.usage) {
+      const { used, limit } = state.usage;
+      const big = box.appendChild(el("div", "usage-big", fmtTok(used)));
+      big.appendChild(el("small", "", ` / ${fmtTok(limit)} tokens(${Math.min(100, used / limit * 100).toFixed(1)}%)`));
+      const bar = box.appendChild(el("div", "usage-bar"));
+      paintBar(bar, used, limit);
+      box.appendChild(el("p", "lead", (state.guest ? "這是訪客自己的額度。" : "")
+        + "每天台灣時間午夜重算;用完當天就不能再問。每題回答下面也會寫這一題用了多少。"));
+    } else box.appendChild(el("p", "lead", "這裡沒有用量資料。"));
     section(box, "外觀");
     const look = box.appendChild(el("div", "actions"));
     for (const [t, label] of [["dark", "深色"], ["light", "淺色"], ["system", "跟著系統"]])
       look.appendChild(button(label, "pill" + (theme() === t ? " dark" : ""), () => { setTheme(t); renderPage(); }));
+    if (r.ok) renderPhone(box, r.data);  // 只有桌面版、而且是電腦自己看才有(手機上看不到 PIN)
+    section(box, "模型");
+    box.appendChild(el("p", "lead", `預設 ${state.model || ""}。每段對話可以在輸入框右下角換模型;要改有哪些模型,改 models.yaml。`));
+    section(box, "上網");
+    box.appendChild(el("p", "lead", `${state.status || ""}。要開關請改專案資料夾 .env 的 ALLOW_WEB(true / false),改完重新打開 HSUAN。`));
+  } else if (name === "more") {
     section(box, "這段對話");
     const a = box.appendChild(el("div", "actions"));
     a.appendChild(button("整理對話(摘要前面的內容,省 token)", "pill", async () => {
@@ -1083,7 +1130,7 @@ loadDesk();
 loadPending();
 setInterval(() => {  // 別段對話在背景跑完、有事等你,側邊欄也會更新;「更多」開著時更新配對的手機數
   loadDesk(); loadPending();
-  if (page === "more") renderPage();
+  if (page === "settings") renderPage();  // 配對的手機數、用量
 }, 10000);
 </script>
 </body>

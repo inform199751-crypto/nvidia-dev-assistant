@@ -53,7 +53,7 @@ flowchart LR
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
 | 難度分類器(10/9) | 14 題示範問題(一般 7、難題 7,含「繼續」「好」這種要看前文的短回覆) | 14/14 符合預期;Super 關思考每次 0.6–1.1 秒、約 300 tokens。題目是自己出的,真實準確度要看影子模式的紀錄 |
-| 離線測試 | 假模型,不需金鑰 | 105 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 109 個全過 |
 
 ## 實測與審查抓到的 31 個問題
 
@@ -98,8 +98,10 @@ python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
 cp .env.example .env                              # 填 NVIDIA_API_KEY,AGENT_WORKSPACE 指向要分析的 repo
 docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python desktop_app.py --install     # 桌面版:在桌面建立「HSUAN」捷徑,雙擊就開獨立視窗(像 Claude 桌面版)
-                                                  # 手機:「更多 → 手機」打開手機連線,手機掃 QR code、輸入 PIN,再「加到主畫面」就像 app
+                                                  # 手機:「設定 → 手機」打開手機連線,手機掃 QR code、輸入 PIN,再「加到主畫面」就像 app
                                                   # (配對過的手機會記住;電腦上的小助理要開著,手機和電腦要同一個 Wi-Fi)
+                                                  # 給別人用就給「訪客 PIN」:訪客有自己的空間,看不到你的對話和專案,每天 20 萬 tokens
+                                                  # 左下角顯示今天用了多少 tokens(存在 output/state/usage.json,重開不歸零)
 .venv/Scripts/python webui.py                     # 網頁介面(只開在本機):回答邊產生邊顯示,套用 / 上網前用按鈕確認
                                                   # 側邊欄:新增 / 成品(文件、patch)/ 待命(等你處理的草稿、確認、計畫)/ 自訂 / 更多,
                                                   # 下面是專案和它們的對話(自動存檔,關掉再開還在)

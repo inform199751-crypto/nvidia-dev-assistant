@@ -173,10 +173,12 @@ def run(headless: bool = False) -> None:
 
     url = f"http://127.0.0.1:{PORT}/"
     registry, quota, tools, allow_web = agent.prepare()
-    desk = webui.local_desk(registry, quota, tools, agent.web_status(allow_web),
-                            registry.spec(registry.routing["default_role"]).model.split("/")[-1])
+    status, model = agent.web_status(allow_web), registry.spec(registry.routing["default_role"]).model.split("/")[-1]
+    desk = webui.local_desk(registry, quota, tools, status, model)
     token = secrets.token_urlsafe(24)
-    phone = webui.PhoneLink(desk, token, PHONE_PORT, store=toolbox.OUTPUT_DIR / "state")  # 「更多」的手機連線
+    # 「設定」的手機連線:你的手機看同一份對話;訪客 PIN 配對的手機各自有自己的空間
+    phone = webui.PhoneLink(desk, token, PHONE_PORT, store=toolbox.OUTPUT_DIR / "state",
+                            guests=webui.guest_desks(registry, tools, status, model))
     try:
         server = webui.serve(desk, PORT, token=token, phone=phone)
     except OSError:  # 已經有一個桌面版在跑:只多開一個視窗
@@ -191,7 +193,7 @@ def run(headless: bool = False) -> None:
     seen, empty = False, 0
     while True:
         time.sleep(POLL)
-        if desk.listeners:  # 有視窗連著(任何一段對話)
+        if desk.listeners or phone.guest_listeners:  # 有視窗連著(任何一段對話,含訪客手機)
             seen, empty = True, 0
             continue
         empty += 1

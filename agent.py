@@ -666,7 +666,8 @@ def prepare() -> tuple[ModelRegistry, TokenQuota, list, bool]:
     logging.getLogger("httpx").setLevel(logging.WARNING)  # 不然每次上網都多印一行 HTTP Request
     registry = ModelRegistry.from_yaml()
     quota = make_quota(registry.limits["daily_tokens_per_user"], registry.limits["max_concurrent_per_user"],
-                       os.getenv("REDIS_URL"))  # 多台伺服器時用 Redis 共用額度
+                       os.getenv("REDIS_URL"),  # 多台伺服器時用 Redis 共用額度
+                       store=toolbox.OUTPUT_DIR / "state" / "usage.json")  # 今天的用量存檔:重開不歸零、畫面上顯示
     allow_web = os.getenv("ALLOW_WEB", "").strip().lower() in ("1", "true", "yes")
     tools = ALL_TOOLS + (web.web_tools() if allow_web else [])  # 上網預設關閉
     return registry, quota, tools, allow_web

@@ -74,18 +74,25 @@ class LanAccess:
     MAX_FAILS, WINDOW = 5, 60
     REMEMBER = 365 * 24 * 3600  # 配對的 cookie 留一年
 
-    def __init__(self, ips: list[str], pin: str | None = None, store: Path | None = None):
+    def __init__(self, ips: list[str], pin: str | None = None, store: Path | None = None, guests: bool = False):
+        """guests:另外產生一組訪客 PIN —— 用它配對的手機是訪客(自己的空間,看不到主人的對話和檔案)。
+        身分由「輸入哪一組 PIN」決定,手機自己沒辦法升級成主人。"""
         self.ips = ips
         self.pin = pin or f"{secrets.randbelow(10**6):06d}"
-        self.sessions: set[str] = set()
+        self.guest_pin = None
+        while guests and self.guest_pin in (None, self.pin):
+            self.guest_pin = f"{secrets.randbelow(10**6):06d}"
+        self.sessions: dict[str, str] = {}  # session id → owner / guest
         self.fails: list[float] = []
         self.lock = threading.Lock()
         self.store = store
         self.open = True
-        self.devices: set[str] = set()
+        self.devices: dict[str, str] = {}   # cookie 的雜湊 → owner / guest(存檔的只有雜湊)
         if store:
             try:
-                self.devices = set(json.loads(store.read_text(encoding="utf-8")))
+                saved = json.loads(store.read_text(encoding="utf-8"))
+                # 舊格式是雜湊的清單(那時只有主人的手機)
+                self.devices = {h: "owner" for h in saved} if isinstance(saved, list) else dict(saved)
             except (OSError, ValueError, TypeError):
                 pass
 
@@ -96,13 +103,17 @@ class LanAccess:
     def _save(self) -> None:
         if self.store:
             self.store.parent.mkdir(parents=True, exist_ok=True)
-            self.store.write_text(json.dumps(sorted(self.devices)), encoding="utf-8")
+            self.store.write_text(json.dumps(self.devices, sort_keys=True), encoding="utf-8")
 
-    def forget(self) -> None:
-        """「忘記所有手機」:配對過的都要重新輸入 PIN。"""
+    def count(self, kind: str) -> int:
         with self.lock:
-            self.sessions.clear()
-            self.devices.clear()
+            return sum(k == kind for k in self.devices.values())
+
+    def forget(self, kind: str | None = None) -> None:
+        """「忘記所有手機」(kind=None)或「忘記所有訪客」(kind="guest"):要重新輸入 PIN。"""
+        with self.lock:
+            self.sessions = {s: k for s, k in self.sessions.items() if kind and k != kind}
+            self.devices = {h: k for h, k in self.devices.items() if kind and k != kind}
             self._save()
 
     def login(self, pin: str) -> str | None:
@@ -112,19 +123,34 @@ class LanAccess:
             self.fails = [t for t in self.fails if now - t < self.WINDOW]
             if len(self.fails) >= self.MAX_FAILS:
                 raise PermissionError("PIN 錯太多次,請一分鐘後再試")
-            if not secrets.compare_digest(str(pin).strip(), self.pin):
+            pin = str(pin).strip()
+            if secrets.compare_digest(pin, self.pin):
+                kind = "owner"
+            elif self.guest_pin and secrets.compare_digest(pin, self.guest_pin):
+                kind = "guest"
+            else:
                 self.fails.append(now)
                 return None
             sid = secrets.token_urlsafe(24)
-            self.sessions.add(sid)
+            self.sessions[sid] = kind
             if self.store:
-                self.devices.add(self._digest(sid))
+                self.devices[self._digest(sid)] = kind
                 self._save()
             return sid
 
-    def valid(self, sid: str | None) -> bool:
+    def identify(self, sid: str | None) -> str | None:
+        """這個 cookie 是誰:"owner"、"guest:<這支手機的代號>",或 None(沒登入、被忘記、手機連線關了)。"""
+        if not sid:
+            return None
+        digest = self._digest(sid)
         with self.lock:
-            return bool(sid) and self.open and (sid in self.sessions or self._digest(sid) in self.devices)
+            kind = self.sessions.get(sid) or self.devices.get(digest)
+            if not (self.open and kind):
+                return None
+        return "owner" if kind == "owner" else f"guest:{digest[:12]}"
+
+    def valid(self, sid: str | None) -> bool:
+        return self.identify(sid) is not None
 
 
 class PhoneLink:
@@ -133,11 +159,19 @@ class PhoneLink:
     手機第一次輸入 PIN 配對,之後記住;開關狀態也記著,下次打開小助理自動恢復。只綁需要的時候,
     沒打開就不對區域網路開 port(Windows 防火牆也是打開時才會問)。"""
 
-    def __init__(self, desk: Desk, token: str, port: int, store: Path | None = None, host: str = "0.0.0.0"):
+    def __init__(self, desk: Desk, token: str, port: int, store: Path | None = None, host: str = "0.0.0.0",
+                 guests: Callable[[str], Desk] | None = None):
+        """guests:給訪客手機的桌面(guest_desks());給了才有訪客 PIN。"""
         self.desk, self.token, self.port, self.store, self.host = desk, token, port, store, host
-        self.lan = LanAccess([], store=store / "phones.json" if store else None)
+        self.guests = guests
+        self.lan = LanAccess([], store=store / "phones.json" if store else None, guests=guests is not None)
         self.server: ThreadingHTTPServer | None = None
         self.lock = threading.Lock()
+
+    @property
+    def guest_listeners(self) -> int:
+        """訪客手機連著的頁面數(桌面版判斷「還有沒有人在用」時也算進去)。"""
+        return sum(d.listeners for d in getattr(self.guests, "desks", {}).values())
 
     def _remember(self, on: bool) -> None:
         if self.store:
@@ -163,7 +197,7 @@ class PhoneLink:
                 return "找不到這台電腦的區域網路位址,請確認有連上 Wi-Fi"
             self.lan.ips = ips
             try:
-                server = serve(self.desk, self.port, token=self.token, lan=self.lan, host=self.host)
+                server = serve(self.desk, self.port, token=self.token, lan=self.lan, host=self.host, guests=self.guests)
             except OSError:
                 return f"port {self.port} 已經被別的程式占用(例如另外開著的 webui.py --lan),請先關掉它"
             self.port = server.server_address[1]  # port=0(測試)時看實際挑到哪個
@@ -188,8 +222,11 @@ class PhoneLink:
 
     def status(self) -> dict:
         urls = [f"http://{ip}:{self.port}" for ip in self.lan.ips] if self.server else []
-        return {"on": bool(self.server), "urls": urls, "pin": self.lan.pin if self.server else "",
-                "phones": len(self.lan.devices), "qr": qr.svg(urls[0]) if urls else ""}
+        on = bool(self.server)
+        return {"on": on, "urls": urls, "pin": self.lan.pin if on else "",
+                "guest_pin": (self.lan.guest_pin or "") if on else "",
+                "phones": self.lan.count("owner"), "guests": self.lan.count("guest"),
+                "qr": qr.svg(urls[0]) if urls else ""}
 
 
 ASSETS = Path(__file__).with_name("assets")
@@ -222,10 +259,12 @@ input{width:100%;box-sizing:border-box;font:600 28px ui-monospace,monospace;lett
 padding:10px;border:1px solid var(--line);border-radius:14px;background:transparent;color:var(--text)}
 button{margin-top:14px;width:100%;padding:12px;border:0;border-radius:999px;background:var(--btn);color:var(--btn-ink);font:inherit;font-weight:600}
 .err{color:var(--error);min-height:1.6em;margin-top:10px;font-size:14px}
+.note{margin-top:18px;font-size:12px;line-height:1.6}
 </style></head><body>
 <form id="f"><h1>HSUAN</h1><p>輸入電腦上顯示的 6 位數 PIN</p>
 <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required autofocus aria-label="PIN">
-<button type="submit">登入</button><div class="err" id="err" role="alert"></div></form>
+<button type="submit">登入</button><div class="err" id="err" role="alert"></div>
+<p class="note">用訪客 PIN 登入的話,你的對話只有你看得到,但會存在這台電腦上。</p></form>
 <script>
 document.getElementById("f").onsubmit = async (e) => {
   e.preventDefault();
@@ -909,7 +948,8 @@ class TeamAccess:
 
 
 def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess | None = None,
-                 team: TeamAccess | None = None, phone: PhoneLink | None = None) -> type[BaseHTTPRequestHandler]:
+                 team: TeamAccess | None = None, phone: PhoneLink | None = None,
+                 guests: Callable[[str], Desk] | None = None) -> type[BaseHTTPRequestHandler]:
     if isinstance(hubs, (Hub, Desk)):  # 單人:不管誰連進來都是同一張桌面
         single = hubs if isinstance(hubs, Desk) else Desk.single(hubs)
         hubs = Hubs(lambda user: single)
@@ -948,8 +988,21 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 return "local"
             return self.headers.get(team.user_header, "").strip() or None
 
+        def _guest(self) -> str | None:
+            """用訪客 PIN 配對的手機:回傳它的代號(每支手機一個自己的空間);其他人 None。"""
+            if team or lan is None or guests is None or self._local():
+                return None
+            morsel = SimpleCookie(self.headers.get("Cookie", "")).get(COOKIE)
+            who = lan.identify(morsel.value if morsel else None) or ""
+            return who.split(":", 1)[1] if who.startswith("guest:") else None
+
+        def _label(self) -> str:
+            """側邊欄左下角顯示的身分。"""
+            return self._user() if team else ("訪客" if self._guest() else "")
+
         def _desk(self) -> Desk:
-            return hubs.get(self._user())
+            gid = self._guest()
+            return guests(gid) if gid else hubs.get(self._user())
 
         def _hub(self) -> Hub:
             """這個請求是哪段對話:POST 看 X-Conv 標頭,GET(事件串流、下載)看網址的 c=;沒給就用最近的那段。"""
@@ -995,12 +1048,17 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 self._send(200, page.encode(), "text/html; charset=utf-8")
             elif url.path == "/api/state":
                 if self._token_ok(self.headers.get("X-Token")):
-                    hub = self._hub()
-                    state = {"workspace": str(hub.workspace), "status": hub.status, "busy": hub.busy,
+                    hub, guest = self._hub(), self._guest()
+                    quota, who = hub.session.quota, hub.session.user
+                    state = {"workspace": hub.workspace.name if guest else str(hub.workspace),  # 訪客不給電腦上的路徑
+                             "status": hub.status, "busy": hub.busy,
                              "model": hub.model, "draft": sorted(hub.bench.draft), "team": hub.team,
-                             "user": self._user() if team else "", "conv": self._desk().cid_of(hub),
+                             "user": self._label(), "guest": bool(guest), "conv": self._desk().cid_of(hub),
                              "instructions": hub.rules_file.is_file(),
-                             "role": hub.session.requested_role, "roles": hub.roles()}
+                             "role": hub.session.requested_role, "roles": hub.roles(),
+                             # 今天的 token 用量(側邊欄左下角);訪客看到的是自己的額度
+                             "usage": {"used": quota.used(who), "limit": quota.daily_tokens}
+                             if hasattr(quota, "used") else None}
                     if lan and self._local():  # 手機連線方式只給這台電腦看
                         state["lan"] = {"urls": [f"http://{ip}:{port}" for ip in lan.ips], "pin": lan.pin}
                     self._json(200, state)
@@ -1011,7 +1069,10 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                     self._json(200, phone.status())
             elif url.path == "/api/desk":  # 側邊欄:專案和對話清單
                 if self._token_ok(self.headers.get("X-Token")):
-                    self._json(200, {**self._desk().listing(), "user": self._user() if team else ""})
+                    listing = self._desk().listing()
+                    if self._guest():  # 訪客不給電腦上的路徑
+                        listing["projects"] = [{**p, "path": p["name"]} for p in listing["projects"]]
+                    self._json(200, {**listing, "user": self._label()})
             elif url.path == "/api/outputs":  # 成品
                 if self._token_ok(self.headers.get("X-Token")):
                     self._json(200, self._desk().outputs())
@@ -1112,7 +1173,7 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 if not phone or not self._local():
                     return self._json(404, {"error": "沒有手機連線功能"})
                 if path == "/api/phone/forget":
-                    phone.lan.forget()
+                    phone.lan.forget("guest" if body.get("who") == "guests" else None)
                 elif err := (phone.start() if body.get("on") else phone.stop()):
                     return self._json(409, {"error": err})
                 return self._json(200, phone.status())
@@ -1179,12 +1240,13 @@ class _Server(ThreadingHTTPServer):
 
 
 def serve(hubs: Hubs | Hub, port: int = 8765, token: str | None = None, lan: LanAccess | None = None,
-          host: str = "127.0.0.1", team: TeamAccess | None = None, phone: PhoneLink | None = None) -> ThreadingHTTPServer:
+          host: str = "127.0.0.1", team: TeamAccess | None = None, phone: PhoneLink | None = None,
+          guests: Callable[[str], Desk] | None = None) -> ThreadingHTTPServer:
     """建立伺服器(還沒開始跑);port=0 會自動挑一個空的(測試用)。port 被占用時丟 OSError。"""
     token = token or secrets.token_urlsafe(24)
-    server = _Server((host, port), make_handler(hubs, token, port, lan, team, phone))
+    server = _Server((host, port), make_handler(hubs, token, port, lan, team, phone, guests))
     if port == 0:  # 實際的 port 要等綁定後才知道,Host 檢查要用它
-        server.RequestHandlerClass = make_handler(hubs, token, server.server_address[1], lan, team, phone)
+        server.RequestHandlerClass = make_handler(hubs, token, server.server_address[1], lan, team, phone, guests)
     return server
 
 
@@ -1197,6 +1259,39 @@ def local_desk(registry, quota, tools: list, status: str, model: str, role: str 
                                                        on_event=on_event),
                    status=status, model=model, workspace=workspace)
     return Desk(make_hub, toolbox.WORKSPACE, store=toolbox.OUTPUT_DIR / "state", repos_dir=toolbox.OUTPUT_DIR / "repos")
+
+
+GUEST_DAILY_TOKENS = 200_000  # 每支訪客手機每天的額度(用的是主人的 API 金鑰)
+# 訪客用不到的工具:空資料夾沒有程式可以測、可以改、可以看 git;也不讓訪客在主人電腦上跑沙箱
+GUEST_BLOCKED_TOOLS = {"run_tests", "run_command", "propose_patch", "git_log", "git_blame"}
+
+
+def guest_desks(registry, tools: list, status: str, model: str, base: Path | None = None) -> Callable[[str], Desk]:
+    """訪客(用訪客 PIN 配對的手機)的桌面:每支手機一個 —— 工作區是自己的空資料夾(讀不到主人的專案)、
+    自己的對話和文件;跟多人模式一樣不能套用修改、改規則、加專案;另外一份比較小的每日額度。
+    都存在 OUTPUT_DIR/guests/<代號>/,主人的電腦上看得到(登入頁有告訴訪客)。"""
+    from token_guard import make_quota
+
+    base = base or toolbox.OUTPUT_DIR / "guests"
+    quota = make_quota(GUEST_DAILY_TOKENS, 1, store=base / "usage.json")
+    allowed = [t for t in tools if t.name not in GUEST_BLOCKED_TOOLS]
+    desks: dict[str, Desk] = {}
+    lock = threading.Lock()
+
+    def get(gid: str) -> Desk:
+        with lock:
+            if gid not in desks:
+                home = base / gid
+                space = home / "訪客空間"
+                space.mkdir(parents=True, exist_ok=True)
+                desks[gid] = Desk(lambda ws: Hub(lambda on_event: agent.AgentSession(
+                    registry, quota, user=f"guest-{gid}", tools=allowed, on_event=on_event),
+                    status=status, model=model, team=True, patch_dir=home / "patches", output_dir=home / "docs",
+                    workspace=ws), space, store=home / "state", can_add_projects=False, docs_dir=home / "docs")
+            return desks[gid]
+
+    get.desks = desks  # PhoneLink.guest_listeners 用
+    return get
 
 
 def main() -> None:
