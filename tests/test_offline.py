@@ -2977,3 +2977,40 @@ def test_dropped_folder_path_must_match_its_files(workspace, tmp_path_factory):
         desk.add_project(str(real), expect=[{"path": "app/missing.py", "size": 1}])
     proj = desk.add_project(str(real), expect=expect)
     assert Path(proj["path"]) == real.resolve() and "source" not in proj
+
+
+def test_dropped_folder_is_found_on_this_computer(workspace, tmp_path_factory, monkeypatch):
+    """10/10 使用者嫌拖資料夾每次都要貼路徑:HSUAN 跑在同一台電腦上,先自己在桌面、文件、下載裡找同名、
+    抽樣檔案大小都對得上的資料夾,找到就直接當專案;同名但內容不同的不算、太深的不找、沒有檔案可比對不猜。
+    只有這台電腦自己能用(手機連進來不行)。"""
+    import httpx
+    import webui
+    home = tmp_path_factory.mktemp("home")
+    real = home / "Desktop" / "程式代碼" / "鳥璇點餐"
+    (real / "app").mkdir(parents=True)
+    (real / "app" / "server.py").write_text("print('pos')\n", encoding="utf-8")
+    decoy = home / "Documents" / "鳥璇點餐"  # 同名,但是別的東西(先被找到也不能用)
+    (decoy / "app").mkdir(parents=True)
+    (decoy / "app" / "server.py").write_text("print('old version')\n", encoding="utf-8")
+    deep = home / "Downloads" / "a" / "b" / "c" / "d" / "e" / "深的資料夾"
+    deep.mkdir(parents=True)
+    (deep / "x.txt").write_text("x", encoding="utf-8")
+    expect = [{"path": "app/server.py", "size": (real / "app" / "server.py").stat().st_size}]
+    roots = [home / "Documents", home / "Desktop", home / "Downloads"]
+    assert webui.locate_folder("鳥璇點餐", expect, roots) == real.resolve()
+    assert webui.locate_folder("鳥璇點餐", [], roots) is None
+    assert webui.locate_folder("深的資料夾", [{"path": "x.txt", "size": 1}], roots) is None
+    desk = webui.Desk(lambda ws: None, workspace)
+    desk.locate_roots = roots
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    try:
+        proj = httpx.post(base + "/api/project/locate", headers=h, json={"name": "鳥璇點餐", "expect": expect}).json()["project"]
+        assert Path(proj["path"]) == real.resolve() and "source" not in proj
+        missing = httpx.post(base + "/api/project/locate", headers=h, json={"name": "沒有這個", "expect": expect})
+        assert missing.json() == {"project": None}
+        monkeypatch.setattr(webui, "LOCAL_ADDRS", set())
+        assert httpx.post(base + "/api/project/locate", headers=h, json={"name": "鳥璇點餐", "expect": expect}).status_code == 403
+    finally:
+        server.shutdown()
+        server.server_close()

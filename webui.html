@@ -1131,7 +1131,7 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/10", ["可以把資料夾直接拖進視窗:貼上路徑就能讓 HSUAN 改原本的檔案,留空就上傳一份副本給它分析",
+  ["10/10", ["可以把資料夾直接拖進視窗:放在桌面、文件、下載裡的會自動找到原本的位置(HSUAN 改的東西按「套用」才寫進去);找不到才問路徑,留空就上傳一份副本給它分析",
              "設定 → 外觀多了 7 種參考車廠官網的配色:黑金、賽道紅、深海藍、碳纖黑、純黑白、黃黑、電光藍;拿掉淺色、跟著系統",
              "回答語言拿掉簡體中文(以前選它的會回到繁體中文)",
              "上網讀到的網頁和訪客的問題先經過安全檢查(Nemotron 3.5 Content Safety),藏著要 AI 照做的指令會被擋下",
@@ -1491,7 +1491,7 @@ async function renderPage() {
       "掃描的 PDF(沒有文字層)也讀得到:HSUAN 會用看圖的模型一頁一頁讀出來,可能有錯字。",
       "想用說的:Windows 按 Win+H、手機用鍵盤上的麥克風,系統的語音輸入比較準(10/10 測過 HSUAN 自己的語音辨識,錯字太多)。",
       "左邊每個專案是一個資料夾,底下是它的對話;「新增專案」可以加你自己的資料夾或公開的 GitHub 專案。",
-      "也可以直接把資料夾拖進視窗:貼上它的路徑,HSUAN 就能改原本的檔案(套用前一樣會先給你看);留空就只上傳一份副本給它看。",
+      "也可以直接把資料夾拖進視窗:放在桌面、文件、下載裡的會自動找到原本的位置,HSUAN 就能改原本的檔案(套用前一樣會先給你看);找不到才問你路徑,留空就只上傳一份副本給它看。",
       "輸入框右下角可以換這段對話用的模型;回答語言在左下角的帳號選單換。",
       "對話會自動存檔,關掉再打開還在。",
     ]) ul.appendChild(el("li", "", t));
@@ -1656,7 +1656,13 @@ async function dropFolder(root) {
     files.push(x); total += x.file.size;
   }
   if (!files.length) return alert(`「${root.name}」裡沒有可以讀的檔案`);
-  const path = prompt(`要讓 HSUAN 能直接修改「${root.name}」裡的檔案,請貼上這個資料夾的完整路徑\n`
+  // 抽樣幾個檔案的大小:HSUAN 用它在這台電腦上找原本的資料夾、或檢查使用者貼的路徑對不對
+  const expect = files.filter((_, i) => i % Math.ceil(files.length / 20) === 0).map((x) => ({ path: x.path, size: x.file.size }));
+  const found = await api("/api/project/locate", { name: root.name, expect });
+  if (found.ok && found.data.project) {  // 自己找到了:直接用原本的資料夾,不用問(10/10 使用者嫌每次都要貼路徑)
+    return openDropped(found.data.project, `已找到「${root.name}」:${found.data.project.path}(HSUAN 改的東西,你按「套用到專案」才會寫進去)`);
+  }
+  const path = prompt(`HSUAN 在桌面、文件、下載裡找不到「${root.name}」。\n要讓 HSUAN 能直接修改裡面的檔案,請貼上這個資料夾的完整路徑\n`
     + "(在檔案總管上方的網址列按右鍵 →「複製位址」)。\n\n"
     + `留空按「確定」= 只上傳一份副本給 HSUAN 看(${files.length} 個檔案、${fmtSize(total)}),原本的檔案不會被改。`
     + (skipped ? `\n(會略過 ${skipped} 個隱藏檔、執行檔或太大的檔案)` : ""), "");
@@ -1664,7 +1670,6 @@ async function dropFolder(root) {
   let proj;
   try {
     if (path.trim()) {  // 用原本的資料夾:伺服器會比對幾個檔案的大小,貼錯資料夾就擋下來
-      const expect = files.filter((_, i) => i % Math.ceil(files.length / 20) === 0).map((x) => ({ path: x.path, size: x.file.size }));
       const r = await api("/api/project/add", { path, expect });
       if (!r.ok) return alert(r.data.error || "加入失敗");
       proj = r.data;
@@ -1684,10 +1689,16 @@ async function dropFolder(root) {
       proj = await flush(true);
     }
   } catch (e) { applyMode(); return alert(e.message); }
-  applyMode();  // 提示文字還原
+  openDropped(proj, proj.source === "upload" ? `已上傳「${root.name}」的副本(${proj.files} 個檔案),原本的資料夾不會被改`
+                                              : `已加入「${root.name}」:${proj.path}`);
+}
+async function openDropped(proj, note) {  // 資料夾一定是在「程式」模式看(對話模式讀不到檔案)
+  applyMode();
   await loadDesk();
-  await newConv(proj.id, "code");  // 資料夾一定是在「程式」模式看(對話模式讀不到檔案)
+  await newConv(proj.id, "code");
   input.value = "這個專案在做什麼?先看結構,再說明主要的檔案和流程。"; autosize(); updateSend();
+  $("hint").textContent = note;  // 下面那行小字說用的是哪個資料夾;幾秒後還原
+  later("drop-note", applyMode, 10000);
 }
 // 輸入框的「選模型」:上面是努力程度滑桿,下面是模型;這段對話之後都用它們。自動 = 依難度和長度選
 // 努力程度:[代碼, 名稱, 說明](伺服器端的實際設定在 agent.EFFORTS)

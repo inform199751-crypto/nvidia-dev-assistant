@@ -883,6 +883,46 @@ def upload_path(raw) -> PurePosixPath | None:
     return None if toolbox._is_secret(Path(parts[-1])) else PurePosixPath(*parts)
 
 
+def mismatch(folder: Path, expect: list) -> str | None:
+    """拖進來的檔案(瀏覽器量到的 [{path, size}],最多看 50 個)在 folder 裡找不到、或大小不同的第一個;都對得上回 None。"""
+    for f in expect[:50]:
+        rel = upload_path(f.get("path") if isinstance(f, dict) else None)
+        target = folder.joinpath(*rel.parts) if rel else None
+        if not (target and target.is_file() and target.stat().st_size == f.get("size")):
+            return str(f.get("path")) if isinstance(f, dict) else "?"
+    return None
+
+
+LOCATE_ROOTS = ("Desktop", "Documents", "Downloads", "OneDrive/Desktop", "OneDrive/Documents", "source/repos")
+LOCATE_DEPTH = 4         # 從這些地方往下找幾層(桌面/程式代碼/鳥璇點餐 是第 2 層)
+LOCATE_MAX_DIRS = 20000  # 最多看幾個資料夾、最多找幾秒:資料夾很多的電腦也不會卡住
+LOCATE_SECONDS = 3
+
+
+def locate_folder(name: str, expect: list, roots: list[Path]) -> Path | None:
+    """在 roots 底下找名字是 name、抽樣的檔案都對得上的資料夾。只看資料夾名稱和檔案大小,都在這台電腦上,不會送出去;
+    跳過隱藏資料夾和大型目錄(node_modules、.git…)。"""
+    if not name or not expect:  # 沒有檔案可以比對就不猜
+        return None
+    seen, queue, began = set(), [(r, 0) for r in roots], time.monotonic()
+    while queue and len(seen) < LOCATE_MAX_DIRS and time.monotonic() - began < LOCATE_SECONDS:
+        folder, depth = queue.pop(0)
+        try:
+            key = folder.resolve()
+            if key in seen or not folder.is_dir():
+                continue
+            seen.add(key)
+            if folder.name == name and not mismatch(folder, expect):
+                return key
+            if depth < LOCATE_DEPTH:
+                queue += [(Path(e.path), depth + 1) for e in os.scandir(folder)
+                          if e.is_dir(follow_symlinks=False) and not e.name.startswith(".") and e.name not in toolbox._SKIP_DIRS
+                          and e.name not in ("AppData", "$RECYCLE.BIN")]
+        except OSError:  # 沒有權限、路徑太長:這個資料夾跳過
+            continue
+    return None
+
+
 def _title(text: str) -> str:
     line = " ".join(text.split())
     return line[:28] + ("…" if len(line) > 28 else "") or "新對話"
@@ -904,6 +944,7 @@ class Desk:
         self.docs_dir = docs_dir  # 這個人的文件放哪;None = OUTPUT_DIR
         self.repos_dir = repos_dir  # 從 GitHub 下載的專案放哪;None = 不能下載
         self.uploads_dir = uploads_dir  # 拖進來的資料夾的副本放哪;None = 不能上傳
+        self.locate_roots: list[Path] | None = None  # 找拖進來的資料夾從哪裡找;None = LOCATE_ROOTS + 已加專案的上一層(測試會換)
         self.uploads: dict[str, dict] = {}  # 上傳到一半的資料夾:上傳代號 → {dest, name, files, bytes, skipped}
         self.embed = embed  # 知識庫算向量用的(registry.embedder());None = 只能用關鍵字搜尋
         self.kb_meta: list[dict] = []  # 知識庫:[{id, name, path}],存在 store/knowledge.json
@@ -1033,12 +1074,8 @@ class Desk:
         if not p.is_dir():
             raise ValueError(f"找不到資料夾:{path}")
         p = p.resolve()
-        for f in (expect or [])[:50]:
-            rel = upload_path(f.get("path") if isinstance(f, dict) else None)
-            target = p.joinpath(*rel.parts) if rel else None
-            if not (target and target.is_file() and target.stat().st_size == f.get("size")):
-                raise ValueError(f"這個路徑裡的檔案跟拖進來的不一樣(例如 {f.get('path') if isinstance(f, dict) else '?'}),"
-                                 "請確認是同一個資料夾")
+        if bad := mismatch(p, expect or []):
+            raise ValueError(f"這個路徑裡的檔案跟拖進來的不一樣(例如 {bad}),請確認是同一個資料夾")
         with self.lock:
             if existing := next((x for x in self.projects if Path(x["path"]) == p), None):
                 return existing
@@ -1068,6 +1105,16 @@ class Desk:
             self.projects.append(proj)
             self._save_projects()
             return proj
+
+    def locate_project(self, name: str, expect: list) -> dict | None:
+        """拖進來的資料夾在這台電腦的哪裡:瀏覽器不給路徑,但 HSUAN 就跑在同一台電腦上,可以自己找(10/10 使用者嫌
+        每次都要貼路徑)。找到就直接當專案(之後「套用」改原本的檔案),找不到回 None,再問使用者。"""
+        if not self.can_add_projects:
+            raise PermissionError("這裡不能加資料夾")
+        roots = self.locate_roots if self.locate_roots is not None else \
+            [Path.home() / r for r in LOCATE_ROOTS] + [Path(p["path"]).parent for p in self.projects if not p.get("source")]
+        found = locate_folder(name, expect, roots)
+        return self.add_project(str(found), expect=expect) if found else None
 
     def upload_project(self, name: str, files: list, upload: str | None = None, done: bool = False) -> dict:
         """拖進來的資料夾:瀏覽器拿不到它原本的路徑,只能把檔案內容傳上來,所以存一份副本當專案(10/10 使用者要的,
@@ -1637,6 +1684,14 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 expect = body.get("expect") if isinstance(body.get("expect"), list) else None
                 try:
                     return self._json(200, desk.add_project(str(body.get("path", "")), str(body.get("name", "")), expect))
+                except (ValueError, PermissionError) as e:
+                    return self._json(400, {"error": str(e)})
+            if path == "/api/project/locate":  # 拖進來的資料夾:HSUAN 自己在這台電腦上找原本的位置(只給這台電腦用)
+                if team or not self._local():
+                    return self._json(403, {"error": "只有這台電腦可以找資料夾"})
+                expect = body.get("expect") if isinstance(body.get("expect"), list) else []
+                try:
+                    return self._json(200, {"project": desk.locate_project(str(body.get("name", "")), expect)})
                 except (ValueError, PermissionError) as e:
                     return self._json(400, {"error": str(e)})
             if path == "/api/project/upload":  # 拖進來的資料夾,分批傳上來存成副本
