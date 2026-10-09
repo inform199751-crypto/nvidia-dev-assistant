@@ -94,6 +94,8 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 - 會改工作區的只有使用者下的指令:`/remember` 寫 `ASSISTANT.md`,以及 `tools.apply_patch()`,不是工具、模型叫不到:只有互動模式(`agent.chat`)在 patch 通過測試、使用者回答 y(或 `/apply`)之後才呼叫,下一輪問題前面會加 `<note>` 告訴模型檔案已經變了;「先不要」保留草稿(可以繼續請它改),`/discard` 或網頁「捨棄修改」才丟掉。
 - **規劃模式**:`ask(mode="plan")` 只綁 `WRITE_TOOLS` 以外的工具、問題後面接 `PLAN_MODE_NOTE`(3–6 步、繁中);使用者同意後 `ask(EXECUTE_TASK, mode="execute")` 多綁 `update_plan`(呼叫會變成 `plan` 事件畫進度清單,不顯示成一般工具列),步數上限用 `limits.max_execute_steps`。CLI `/plan 任務`,網頁輸入框的「先規劃」開關 → `offer_plan` 卡片 → `/api/execute`。10/9 實測:模型單獨呼叫 update_plan 會把步數耗光,所以 EXECUTE_TASK 要求跟下一個動作一起呼叫。
 
+**看圖**(`routing.vision_role` = `vision`,Nemotron 3 Nano Omni,備援 Llama 3.2 11B Vision):主模型看不懂圖片,所以有圖片的那一題,`AgentSession.ask` 先用 `_describe_images` 請看圖模型照 `VISION_PROMPT` 把圖轉成文字(字逐字抄、圖表數字配標籤),放進問題前面的 `<image>` 區塊;工具、路由、摘要、token 估算都照舊,對話紀錄只有文字。`registry.vision_model()` 關思考、每顆先重試 `VISION_RETRIES` 次(免費層常 503)再換備援;都失敗不擋這一題(告訴主模型有一張圖沒看到),`drop_repeats` 去掉重複的段落。圖片來源:網頁上傳(瀏覽器先縮到 1600px,`/api/ask` 的 `images` 由 `webui.parse_images` 檢查;事件和存檔只留縮圖)、`@圖片.png` / `-f` 附檔(`image_from_file`,過 `_safe_path`,上限 `MAX_IMAGE_BYTES`)。看圖的 tokens 算進這一輪和額度。
+
 **`--whole` 模式**:附檔全部內嵌、不綁工具、一次回答,交給路由決定要不要升級到 Ultra。給工具的話模型會分段重讀,每步重送全部內容。
 
 ## 不能破壞的規則

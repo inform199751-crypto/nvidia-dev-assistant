@@ -164,6 +164,8 @@
   .msg { overflow-wrap: anywhere; }
   .msg.user { align-self: flex-end; max-width: 75%; background: var(--user); border-radius: 22px; padding: 10px 18px; white-space: pre-wrap; }
   .msg.user .mode-tag { display: block; font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 2px; }
+  .msg-images { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
+  .msg-images img { display: block; max-width: 180px; max-height: 140px; border-radius: 12px; }
   .msg.bot > :first-child { margin-top: 0; }
   .msg.bot > :last-child { margin-bottom: 0; }
   .md p, .md ul, .md ol, .md pre, .md table, .md blockquote { margin: 10px 0; }
@@ -268,6 +270,15 @@
   textarea { width: 100%; resize: none; border: 0; outline: none; background: transparent; color: var(--text);
              font: inherit; line-height: 1.6; padding: 2px 2px; max-height: 200px; min-height: 28px; }
   .composer-bar { display: flex; align-items: center; gap: 6px; }
+  .composer.drop { border-color: var(--accent); }  /* 圖片拖進來的時候 */
+  /* 還沒送出的圖片:縮圖 + 右上角的 × */
+  .thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .thumbs:empty { display: none; }
+  .thumb { position: relative; width: 64px; height: 64px; border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px var(--line); }
+  .thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .thumb button { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%;
+                  background: rgba(0, 0, 0, .65); color: #fff; font-size: 13px; line-height: 20px; }
+  .thumbs-note { width: 100%; color: var(--faint); font-size: 12px; }
   .composer-bar .spacer { flex: 1; }
   .model-pick { display: inline-flex; align-items: center; gap: 4px; background: none; border: 0; border-radius: 8px;
                 padding: 4px 8px; font-size: 14px; font-weight: 600; color: var(--text); max-width: 46vw; }
@@ -379,9 +390,11 @@
   <section class="page" id="page" hidden><div class="page-in" id="page-in"></div></section>
   <footer id="composer-area">
     <form id="form" class="composer">
+      <div class="thumbs" id="thumbs" aria-label="要一起送出的圖片"></div>
+      <input type="file" id="image-input" accept="image/*" multiple hidden>
       <textarea id="input" rows="1" placeholder="請輸入訊息…" aria-label="輸入問題"></textarea>
       <div class="composer-bar">
-        <button type="button" class="round-btn" id="attach" aria-label="附加專案裡的檔案" title="附加專案裡的檔案(輸入 @檔名)">
+        <button type="button" class="round-btn" id="attach" aria-label="附加檔案或圖片" title="附加圖片,或專案裡的檔案(@檔名)">
           <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>
         </button>
         <button type="button" class="mode-btn" id="plan-mode" aria-pressed="false" title="開啟後,HSUAN 先只讀不改、交出計畫,你同意才照計畫做">
@@ -407,6 +420,7 @@ const $ = (id) => document.getElementById(id);
 const log = $("log"), input = $("input"), send = $("send");
 let bot = null;           // 目前這一輪的回答區塊
 let busy = false;
+let pendingImages = [];   // 還沒送出的圖片 [{name, data, thumb}]
 const tools = [];         // 依序等結果的工具區塊
 let cards = {};           // 確認 / 套用卡片:id → 元素
 let conv = null;          // 目前這段對話的 id
@@ -584,7 +598,7 @@ function dock() {  // 開始對話:輸入框回到最下面
 }
 
 // ---------- 送出 / 狀態 ----------
-function updateSend() { send.disabled = busy || !input.value.trim(); }
+function updateSend() { send.disabled = busy || (!input.value.trim() && !pendingImages.length); }
 function setBusy(b) {
   busy = b;
   send.classList.toggle("busy", b);
@@ -647,6 +661,10 @@ const handlers = {
     bot = null; tools.length = 0;
     const m = el("div", "msg user");
     if (e.mode === "plan") m.appendChild(el("span", "mode-tag", "先規劃"));
+    if (e.images?.length) {  // 附上的圖片(伺服器只留縮圖)
+      const row = m.appendChild(el("div", "msg-images"));
+      for (const src of e.images) Object.assign(row.appendChild(el("img")), { src, alt: "附上的圖片" });
+    }
     m.append(e.text);
     add(m).scrollIntoView({ block: "end" }); setBusy(true); refreshSoon();
   },
@@ -794,7 +812,7 @@ const convMeta = () => desk.conversations.find((c) => c.id === conv);
 function openConv(id) {
   conv = id; store.set("conv", id);
   sideMode = kindOf(convMeta()); store.set("mode", sideMode);
-  bot = null; tools.length = 0; cards = {}; dirty.clear();
+  bot = null; tools.length = 0; cards = {}; dirty.clear(); pendingImages = []; renderThumbs();
   closePage(); closeSide(); setPlanMode(false); setBusy(false); applyMode();
   showEmpty(); connect(); loadState(); renderSide();
   input.focus();
@@ -809,8 +827,9 @@ async function newConv(projectId, kind = sideMode) {
 function applyMode() {
   const chat = sideMode === "chat";
   document.querySelectorAll(".mode-switch button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === sideMode)));
-  $("attach").hidden = chat; $("plan-mode").hidden = chat;
-  $("hint").textContent = (chat ? "" : "用 @檔名 附上專案裡的檔案 · ") + "Enter 送出、Shift+Enter 換行 · HSUAN 也會出錯,重要的結果請自己確認";
+  $("plan-mode").hidden = chat;
+  $("hint").textContent = (chat ? "可以貼上或拖進圖片" : "用 @檔名 附上專案裡的檔案,也可以貼上圖片")
+    + " · Enter 送出、Shift+Enter 換行 · HSUAN 也會出錯,重要的結果請自己確認";
 }
 function switchMode(m) {  // 切過去就打開那種模式最近的對話,沒有就開一段新的
   if (m === sideMode) return;
@@ -1038,7 +1057,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/9 晚上", ["輸入框右下角的選模型多了「努力程度」滑桿:往左更快、往右更仔細",
+  ["10/9 晚上", ["可以附圖片了:截圖、圖表、照片(輸入框的「+」、貼上或拖進來),先用看圖的模型讀懂再回答",
+                 "輸入框右下角的選模型多了「努力程度」滑桿:往左更快、往右更仔細",
                  "帳號選單:點左下角打開,可以換回答語言、看說明和更新紀錄;手機上可以登出",
                  "側邊欄上面切換「對話 / 程式」:對話模式不綁專案,一般問答、寫作、翻譯更省 token",
                  "手機訪客模式:給別人訪客 PIN,訪客有自己的空間、看不到你的對話",
@@ -1263,6 +1283,7 @@ async function renderPage() {
     const ul = box.appendChild(el("ul", "help"));
     for (const t of [
       "用 @檔名 附上專案裡的檔案,例如:解釋 @calc.py(程式模式)。",
+      "附圖片:輸入框的「+」→ 上傳圖片,或直接貼上(Ctrl+V)、拖進輸入框。截圖、圖表、照片都可以,HSUAN 會先用看圖的模型讀懂再回答。",
       "修改先放在 HSUAN 的草稿上,你按「套用到專案」才會真的改檔案;還沒套用的會出現在「待命」。",
       "大任務打開「先規劃」:HSUAN 先只讀不改、交出計畫,你同意才照計畫做。",
       "上網前一定會先問你;公司內網和本機網址一律不准。",
@@ -1298,6 +1319,7 @@ async function renderPage() {
                   : "對話、草稿、文件都存在這台電腦的 output 資料夾,只有問題和需要的檔案內容會送給模型。",
       "HSUAN 不會自己改你的檔案:修改都先放在草稿,你按「套用到專案」才會改。程式只在沒有網路的沙箱裡跑。",
       "上網前每次都先問你;公司內網和本機網址一律不准連。",
+      "附上的圖片會送給看圖的模型(" + (state.backend === "nim" ? "公司內部的伺服器" : "一樣在 build.nvidia.com") + ");對話裡只留縮圖。",
     ]) ul.appendChild(el("li", "", t));
   }
 }
@@ -1309,14 +1331,79 @@ function setPlanMode(on) {
   $("plan-mode").setAttribute("aria-pressed", String(on));
   input.placeholder = on ? "要規劃什麼任務?" : "請輸入訊息…";
 }
-// 輸入框的「+」:插入 @,接著打專案裡的檔名(問題裡的 @檔名 會自動附上那個檔案)
-$("attach").onclick = () => {
+// 輸入框的「+」:上傳圖片;程式模式另外可以插入 @,接著打專案裡的檔名(問題裡的 @檔名 會自動附上那個檔案)
+function insertAt() {
   const at = input.selectionStart ?? input.value.length;
   const before = input.value.slice(0, at), sep = before && !/\s$/.test(before) ? " " : "";
   input.value = before + sep + "@" + input.value.slice(at);
   autosize(); updateSend(); input.focus();
   input.setSelectionRange(before.length + sep.length + 1, before.length + sep.length + 1);
+}
+$("attach").onclick = () => {
+  if (sideMode === "chat") return $("image-input").click();
+  popup($("attach"), [[["上傳圖片", "截圖、圖表、照片;也可以直接貼上或拖進來"], () => $("image-input").click()],
+                      [["附加專案裡的檔案", "輸入 @檔名"], insertAt]]);
 };
+
+// ---------- 圖片:先在瀏覽器縮小,再跟問題一起送出(伺服器請看圖的模型轉成文字) ----------
+const MAX_IMAGES = 4, MAX_SIDE = 1600, KEEP_BYTES = 1_500_000;
+function loadImage(file) {
+  return new Promise((ok, fail) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => { URL.revokeObjectURL(url); ok(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); fail(new Error("讀不出這張圖片(格式不支援?)")); };
+    img.src = url;
+  });
+}
+function drawJpeg(img, side, quality) {
+  const k = Math.min(1, side / Math.max(img.naturalWidth, img.naturalHeight));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
+  const g = c.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);  // 透明的地方變白(JPEG 沒有透明,不然會變黑)
+  g.drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", quality);
+}
+const readDataURL = (file) => new Promise((ok, fail) => {
+  const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => fail(new Error("讀不到檔案")); r.readAsDataURL(file);
+});
+async function prepareImage(file) {
+  const img = await loadImage(file);
+  // 不大的 PNG / JPEG / WebP 原檔送(截圖的字比較清楚);太大、或其他格式(HEIC、BMP…)縮成 1600px 的 JPEG
+  const keep = Math.max(img.naturalWidth, img.naturalHeight) <= MAX_SIDE && file.size <= KEEP_BYTES
+    && /^image\/(png|jpeg|webp)$/.test(file.type);
+  return { name: file.name || "貼上的圖片", data: keep ? await readDataURL(file) : drawJpeg(img, MAX_SIDE, 0.88),
+           thumb: drawJpeg(img, 240, 0.7) };
+}
+async function addImages(files) {
+  for (const f of files) {
+    if (!f.type.startsWith("image/")) continue;
+    if (pendingImages.length >= MAX_IMAGES) { alert(`一題最多 ${MAX_IMAGES} 張圖`); break; }
+    try { pendingImages.push(await prepareImage(f)); } catch (e) { alert(`${f.name}:${e.message}`); }
+  }
+  renderThumbs(); updateSend(); input.focus();
+}
+function renderThumbs() {
+  const box = $("thumbs"); box.innerHTML = "";
+  pendingImages.forEach((im, i) => {
+    const t = box.appendChild(el("div", "thumb"));
+    Object.assign(t.appendChild(el("img")), { src: im.thumb, alt: im.name, title: im.name });
+    const x = t.appendChild(button("×", "", () => { pendingImages.splice(i, 1); renderThumbs(); updateSend(); }));
+    x.setAttribute("aria-label", `拿掉 ${im.name}`);
+  });
+  if (pendingImages.length && state.backend !== "nim")  // 圖片一樣會送到 NVIDIA 的試用平台
+    box.appendChild(el("div", "thumbs-note", "圖片會送到 build.nvidia.com(NVIDIA 試用平台),不要放公司的截圖或客戶資料。"));
+}
+$("image-input").onchange = (ev) => { addImages([...ev.target.files]); ev.target.value = ""; };
+input.addEventListener("paste", (ev) => {  // Ctrl+V 貼上截圖
+  const files = [...(ev.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
+  if (!files.length) return;
+  if (!ev.clipboardData.getData("text/plain")) ev.preventDefault();  // 從 Word 之類複製的會同時有文字,文字照貼
+  addImages(files);
+});
+form.addEventListener("dragover", (ev) => { if ([...ev.dataTransfer.types].includes("Files")) { ev.preventDefault(); form.classList.add("drop"); } });
+form.addEventListener("dragleave", () => form.classList.remove("drop"));
+form.addEventListener("drop", (ev) => { ev.preventDefault(); form.classList.remove("drop"); addImages([...ev.dataTransfer.files]); });
 // 輸入框的「選模型」:上面是努力程度滑桿,下面是模型;這段對話之後都用它們。自動 = 依難度和長度選
 // 努力程度:[代碼, 名稱, 說明](伺服器端的實際設定在 agent.EFFORTS)
 const EFFORTS = [["low", "低", "不思考,最快、最省 token"], ["medium", "中", "平常的問題用這個就好"],
@@ -1357,12 +1444,15 @@ $("model-pick").onclick = () => popup($("model-pick"), [{ node: effortPanel() },
   }])]);
 $("plan-mode").onclick = () => { setPlanMode(!planMode); input.focus(); };
 async function submit() {
-  const text = input.value.trim();
-  if (!text || busy || !conv) return;
+  const text = input.value.trim(), images = pendingImages;
+  if ((!text && !images.length) || busy || !conv) return;
   const mode = planMode ? "plan" : "normal";
-  input.value = ""; autosize(); updateSend(); setPlanMode(false);
-  const r = await api("/api/ask", { text, mode });
-  if (!r.ok) { alert(r.data.error || "送出失敗"); input.value = text; autosize(); updateSend(); setPlanMode(mode === "plan"); }
+  input.value = ""; pendingImages = []; renderThumbs(); autosize(); updateSend(); setPlanMode(false);
+  const r = await api("/api/ask", { text, mode, images });
+  if (!r.ok) {  // 沒送出去:文字和圖片都放回去
+    alert(r.data.error || "送出失敗");
+    input.value = text; pendingImages = images; renderThumbs(); autosize(); updateSend(); setPlanMode(mode === "plan");
+  }
 }
 $("form").onsubmit = (ev) => { ev.preventDefault(); submit(); };
 input.addEventListener("keydown", (ev) => {

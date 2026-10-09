@@ -6,6 +6,8 @@
 #   qwen/qwen2.5-coder-32b-instruct                   → catalog 2026-05-12 EOL,只剩地端 NIM 1.x
 #   nvidia/nemotron-3-ultra-550b-a55b / super-120b    → 可用,tool calling 2026-10-05 實測通過
 #   deepseek-ai/deepseek-v4.1-flash                   → 可用,2026-10-06 冒煙測試四項全過
+#   nvidia/nemotron-3-nano-omni-30b-a3b-reasoning     → 看圖,2026-10-09 實測(見下面 vision)
+#   microsoft/phi-3-vision-128k-instruct、nvidia/cosmos-reason2-8b → 模型清單上有,實際呼叫 404
 #
 # context_window 填「我們允許用到」的長度,不是模型理論上限。
 # 地端跟 catalog 不同時另寫 nim_context_window(LLM_BACKEND=nim 時取代 context_window),
@@ -24,6 +26,7 @@ routing:
   default_role: code
   long_context_role: long_context
   safety_margin: 0.10   # 估算誤差 + 工具定義的 token,先扣掉 10%
+  vision_role: vision   # 有圖片的那一題,先請它把圖片轉成文字再交給主模型(agent.describe_images)
   # 依難度選模型(difficulty.py):每輪開始先請分類器判斷「一般 / 難題」,難題改用 hard_role。
   #   off 不判斷 · shadow 在背景判斷、只記錄「本來會選哪個」,實際仍用 default_role、不等它 · on 等判斷結果再切換
   # 先用 shadow 累積紀錄(output/routing_log.jsonl),python report_routing.py 看準不準再改 on。
@@ -110,3 +113,32 @@ roles:
     extra_body: {chat_template_kwargs: {force_nonempty_content: true}}
     thinking_on:  {chat_template_kwargs: {enable_thinking: true}}
     thinking_off: {chat_template_kwargs: {enable_thinking: false}}
+
+  # 看圖(截圖、圖表、照片):先把圖片轉成文字(圖裡的字逐字抄、畫面重點),主模型拿到的只有文字,工具和路由都照舊。
+  # 2026-10-09 實測(錯誤截圖、長條圖、1 MB 的 JPEG):
+  #   Nano Omni 關思考 1.4–6.8 秒、300–2,300 tokens,檔名 / 行號 / 數字 / 逐行抄寫全對;開思考 16–38 秒、多 700–1,600 tokens
+  #   免費層約一半回 503 忙線,重試 1–3 次通常就過(llm_registry.VISION_RETRIES)
+  #   Llama 3.2 90B Vision 把檔名講錯、長條圖逾時;Gemma 4 31B 兩題都逾時(120 秒)
+  vision:
+    model: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
+    nim_base_url: http://nim-nemotron-omni:8000/v1
+    context_window: 65536                   # 一題只有一張圖 + 問題,用不到更長
+    max_output: 1024                        # 說明通常 100–200 tokens;偶爾會重複,上限設低一點才不會一直寫下去
+    timeout_s: 90
+    temperature: 0.2                        # 抄字不需要創意,低一點比較穩
+    supports_tools: false
+    supports_images: true
+    thinking_on:  {chat_template_kwargs: {enable_thinking: true}}
+    thinking_off: {chat_template_kwargs: {enable_thinking: false}}
+    fallbacks: [vision_backup]
+
+  # 看圖的備援:10/9 實測約 7 秒,長條圖全對,錯誤截圖的行號講錯 → 只在 Nano Omni 一直忙線時用
+  vision_backup:
+    model: meta/llama-3.2-11b-vision-instruct
+    nim_base_url: http://nim-llama-vision:8000/v1
+    context_window: 65536
+    max_output: 1024
+    timeout_s: 90
+    temperature: 0.2
+    supports_tools: false
+    supports_images: true

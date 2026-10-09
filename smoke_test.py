@@ -6,14 +6,18 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import os
+import struct
 import sys
 import time
 import warnings
+import zlib
 from dataclasses import replace
 from pathlib import Path
 
 from dotenv import dotenv_values
+from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 
 from llm_registry import ModelRegistry
@@ -25,7 +29,23 @@ def get_weather(city: str) -> str:
     return "晴"
 
 
+def red_png(size: int = 32) -> str:
+    """純紅色的小 PNG(不用 Pillow):看圖模型的檢查只送這張,不送任何截圖。"""
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    rows = b"".join(b"\x00" + b"\xff\x00\x00" * size for _ in range(size))
+    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+    return "data:image/png;base64," + base64.b64encode(png).decode()
+
+
 def run_check(registry: ModelRegistry, role: str, check: str) -> tuple[bool, str, object]:
+    if check == "image":  # 看圖:跟正式使用一樣關思考
+        ai = registry.chat(role, thinking=False).invoke([HumanMessage(content=[
+            {"type": "text", "text": "這張圖是什麼顏色?只回答顏色。"},
+            {"type": "image_url", "image_url": {"url": red_png()}}])])
+        content = str(ai.content).strip()
+        return "紅" in content or "red" in content.lower(), f"回答={content[:24]!r}", ai
     if check == "tool":
         ai = registry.chat(role).bind_tools([get_weather]).invoke("台北現在天氣如何?請用工具查。")
         names = [c["name"] for c in ai.tool_calls]
@@ -55,7 +75,7 @@ def main() -> int:
     ap.add_argument("--roles", nargs="+", help="只測這些角色,例如 --roles code long_context")
     ap.add_argument("--out", default=str(Path(__file__).with_name("smoke_results.log")),
                     help="結果同步附加到這個檔案(終端機關掉也查得到)")
-    ap.add_argument("--checks", nargs="+", choices=["plain", "think_on", "think_off", "tool", "think_on_raw"],
+    ap.add_argument("--checks", nargs="+", choices=["plain", "think_on", "think_off", "tool", "image", "think_on_raw"],
                     help="只跑這些檢查;think_on_raw 是診斷用(不送 force_nonempty_content)")
     ap.add_argument("--full", action="store_true", help="印出完整回答與推理內容")
     args = ap.parse_args()
@@ -94,6 +114,8 @@ def main() -> int:
             checks += ["think_on", "think_off"]
         if spec.supports_tools:
             checks.append("tool")
+        if spec.supports_images:
+            checks.append("image")
         if args.checks:
             checks = [c for c in args.checks if c in checks or (c == "think_on_raw" and spec.thinking_on)]
         for check in checks:

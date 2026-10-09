@@ -43,7 +43,11 @@ import web
 PAGE = Path(__file__).with_name("webui.html")
 CONFIRM_TIMEOUT = 300  # 秒;沒人回答就當作不允許
 MAX_DIFF_CHARS = 20000
-MAX_BODY = 1_000_000  # POST 內容上限(問題文字、規則)
+MAX_BODY = 16_000_000  # POST 內容上限(問題文字、規則、上傳的圖片)
+MAX_IMAGES = 4  # 一題最多幾張圖
+MAX_IMAGE_CHARS = 7_000_000  # 一張圖的 data URL 上限(約 5 MB);瀏覽器會先把大圖縮到 1600px
+MAX_THUMB_CHARS = 80_000  # 對話裡顯示的縮圖(會存進對話紀錄)
+IMAGE_URL = re.compile(r"data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+")
 LOCAL_ADDRS = {"127.0.0.1", "::1"}  # 從這些位址連進來的是這台電腦自己,不用 PIN
 COOKIE = "da_session"
 
@@ -442,9 +446,11 @@ class Hub:
 
     # ---------- 對話 ----------
 
-    def ask(self, text: str, mode: str = "normal", shown: str | None = None, role: str | None = None) -> bool:
+    def ask(self, text: str, mode: str = "normal", shown: str | None = None, role: str | None = None,
+            images: list[dict] | None = None) -> bool:
         """shown:畫面上顯示的問題(照計畫執行時,送給模型的是 EXECUTE_TASK,畫面只顯示「照計畫執行」)。
-        role:只有這一輪換模型(做到步數上限後的「換模型接著做」)。"""
+        role:只有這一輪換模型(做到步數上限後的「換模型接著做」)。
+        images:上傳的圖片 [{"name","data","thumb"}](parse_images 檢查過);畫面和存檔只留縮圖,原圖只送給看圖模型。"""
         with self.cond:
             if self.busy:
                 return False
@@ -453,8 +459,12 @@ class Hub:
             stale, self.escalation = self.escalation, None
         if stale:  # 沒按「換模型接著做」就問了別的:那張卡片收起來
             self.publish("escalate_answered", {"go": False})
-        self.publish("user", {"text": shown or text, "mode": mode})
-        threading.Thread(target=self._run, args=(text, mode, role), daemon=True).start()
+        event = {"text": shown or text, "mode": mode}
+        if images:
+            event["images"] = [im["thumb"] for im in images]
+        self.publish("user", event)
+        pictures = [(im["name"], im["data"]) for im in images or []]
+        threading.Thread(target=self._run, args=(text, mode, role, pictures), daemon=True).start()
         return True
 
     def execute_plan(self, go: bool) -> bool:
@@ -475,13 +485,13 @@ class Hub:
             return "上一個問題還在回答中"
         return ""
 
-    def _run(self, text: str, mode: str = "normal", role: str | None = None) -> None:
+    def _run(self, text: str, mode: str = "normal", role: str | None = None, images: list | None = None) -> None:
         patches = self.bench.patches
         before, planned, offer = len(patches), False, None
         try:
             with self.gate.turn(self.publish) if self.gate else nullcontext(), toolbox.using(self.bench):
                 files = [] if self.chat else agent.file_mentions(text)  # 對話模式讀不到電腦上的檔案
-                r = self.session.ask(self.note + text, files, mode, role)
+                r = self.session.ask(self.note + text, files, mode, role, images or [])
             self.note = ""
             self.publish("done", {"role": r.role, "steps": r.steps, "tokens": r.tokens_used,
                                   "total": self.session.tokens_used, "answer": r.answer})
@@ -731,6 +741,24 @@ def version() -> str:
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def parse_images(raw) -> list[dict]:
+    """/api/ask 帶的圖片:只收 png / jpeg / webp / gif 的 data URL,限張數和大小;不合格丟 ValueError。"""
+    if not raw:
+        return []
+    if not isinstance(raw, list) or len(raw) > MAX_IMAGES:
+        raise ValueError(f"一題最多 {MAX_IMAGES} 張圖")
+    out = []
+    for i, im in enumerate(raw, 1):
+        data, thumb = (str(im.get("data", "")), str(im.get("thumb", ""))) if isinstance(im, dict) else ("", "")
+        if len(data) > MAX_IMAGE_CHARS:
+            raise ValueError("圖片太大,請縮小後再傳")
+        if not IMAGE_URL.fullmatch(data) or not IMAGE_URL.fullmatch(thumb) or len(thumb) > MAX_THUMB_CHARS:
+            raise ValueError("只能傳 PNG、JPEG、WebP、GIF 圖片")
+        name = re.sub(r'[<>"\r\n]', "_", str(im.get("name") or f"圖片{i}"))[:80]  # 會放進 <image name="…">,不能有引號和換行
+        out.append({"name": name, "data": data, "thumb": thumb})
+    return out
 
 
 def _title(text: str) -> str:
@@ -1306,9 +1334,14 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             hub = self._hub()
             if path == "/api/ask":
                 text = str(body.get("text", "")).strip()
-                if not text:
+                try:
+                    images = parse_images(body.get("images"))
+                except ValueError as e:
+                    return self._json(400, {"error": str(e)})
+                if not text and not images:
                     return self._json(400, {"error": "問題是空的"})
-                ok = hub.ask(text, "plan" if body.get("mode") == "plan" and not hub.chat else "normal")
+                text = text or "請說明這張圖。"
+                ok = hub.ask(text, "plan" if body.get("mode") == "plan" and not hub.chat else "normal", images=images)
                 self._json(202 if ok else 409, {} if ok else {"error": "上一個問題還在回答中"})
             elif path == "/api/execute":  # 規劃模式交出計畫後:照計畫執行 / 先不要
                 ok = hub.execute_plan(bool(body.get("go")))

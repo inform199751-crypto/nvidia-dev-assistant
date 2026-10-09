@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import logging
 import os
@@ -22,7 +23,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.runnables import Runnable
 
 from llm_registry import ModelRegistry
-from token_guard import (TAIPEI, TokenQuota, compact_history, estimate_tokens, make_quota, message_tokens,
+from token_guard import (TAIPEI, QuotaExceeded, TokenQuota, compact_history, estimate_tokens, make_quota, message_tokens,
                          outline, strip_stale_reasoning, strip_think_text, tool_tokens, truncate_middle)
 import difficulty
 import documents
@@ -71,8 +72,10 @@ def _numbered(text: str) -> str:
     return "\n".join(f"{n:>5}| {line}" for n, line in enumerate(text.splitlines(), 1))
 
 
-def build_user_prompt(task: str, attachments: list[str], inline_limit: int, whole: bool) -> str:
+def build_user_prompt(task: str, attachments: list[str], inline_limit: int, whole: bool,
+                      images: list[str] = ()) -> str:
     """長內容放前面、問題放最後(長文本模型對結尾的指令最敏感,也讓前綴快取命中)。
+    images:看圖模型寫好的圖片說明(describe_images 的 <image> 區塊),一樣放在問題前面。
 
     whole=False:小檔內嵌全文,大檔只給大綱 + 工具自己讀(省 token,幾乎所有改 bug 情境都夠用)。
     whole=True :全部內嵌,交給路由決定要不要升級到長文本模型(寫整份技術文件、全檔審查)。
@@ -95,6 +98,7 @@ def build_user_prompt(task: str, attachments: list[str], inline_limit: int, whol
         else:
             parts.append(f'<file_outline path="{rel}" total_lines="{n_lines}">\n{outline(text, rel)}\n'
                          f"</file_outline>\n(檔案太大未內嵌,請用 read_file 讀需要的行號範圍)")
+    parts += images
     if whole:  # 整檔模式不給工具:檔案都在上面了,給工具只會讓模型分段重讀、每步重送全部內容
         parts.append("<note>所有相關檔案都已完整附在上面。這次沒有工具可用,請直接根據附檔內容完成任務。</note>")
     parts.append(f"<task>\n{task}\n</task>")
@@ -117,6 +121,48 @@ def file_mentions(text: str) -> list[str]:
             except (ValueError, PermissionError, OSError):
                 continue
     return found
+
+
+# 看圖:附上的圖片先請看圖模型(routing.vision_role)轉成文字,主模型和對話紀錄裡只有文字(見 AgentSession._describe_images)
+IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}
+MAX_IMAGE_BYTES = 5_000_000  # 專案裡的圖片(@圖片.png)不縮小直接送,太大就不看;網頁上傳的會先在瀏覽器縮小
+IMAGE_TOKENS_GUESS = 3000    # 一張圖送給看圖模型大約多少 tokens(10/9 實測 300–3,300),檢查額度用
+
+# 10/9 實測:只說「抄字 + 描述」時,偶爾會把同一段描述重複好幾次(22 秒、3,800 tokens);
+# 改成分三段、寫完就停,並把圖表的數字和標籤配對(不然會抄成「120 六月 95 七月」)
+VISION_PROMPT = """You are the eyes of an assistant that cannot see images. The user attached an image to the question below. Write a description that lets the assistant answer without seeing the image:
+1. One sentence: what the image is (screenshot, chart, diagram, photo, document page).
+2. All readable text, transcribed verbatim with line breaks (code, error messages, file paths, line numbers, table cells, UI labels). For charts and tables, pair every value with its label (e.g. "June: 120"). Write [unreadable] for text you cannot read; do not guess.
+3. Only the visual details that matter for the question (highlighted or red items, arrows, trends, UI state), as a short list.
+Do not answer the question and do not repeat yourself; stop after step 3. Use Traditional Chinese (zh-TW) for your own words and keep transcribed text in its original language.
+
+<question>
+{question}
+</question>"""
+
+
+def drop_repeats(text: str) -> str:
+    """看圖模型偶爾把同一段重複好幾次:一模一樣的段落只留第一次。"""
+    seen, out = set(), []
+    for para in re.split(r"\n\s*\n", text.strip()):
+        key = " ".join(para.split())
+        if key not in seen:
+            seen.add(key)
+            out.append(para)
+    return "\n\n".join(out)
+
+
+def is_image(rel: str) -> bool:
+    return Path(rel).suffix.lower() in IMAGE_TYPES
+
+
+def image_from_file(rel: str) -> tuple[str, str]:
+    """專案裡的圖片(@圖片.png、-f 附檔)→ (名稱, data URL)。一樣要過機密檔檢查。"""
+    path = toolbox._safe_path(rel)
+    data = path.read_bytes()
+    if len(data) > MAX_IMAGE_BYTES:
+        raise ValueError(f"圖片 {rel} 有 {len(data) / 1e6:.1f} MB,超過 {MAX_IMAGE_BYTES // 1_000_000} MB,請縮小後再附")
+    return rel, f"data:{IMAGE_TYPES[path.suffix.lower()]};base64,{base64.b64encode(data).decode()}"
 
 
 _WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -351,15 +397,22 @@ class AgentSession:
         except Exception as e:  # 摘要失敗不擋這一題:後面還有瘦身與升級模型兩道防線
             self._notice("整理摘要失敗,先照常繼續:%s", f"{type(e).__name__}: {e}")
 
-    def ask(self, task: str, attachments: list[str] = (), mode: str = "normal", role: str | None = None) -> AgentResult:
+    def ask(self, task: str, attachments: list[str] = (), mode: str = "normal", role: str | None = None,
+            images: list[tuple[str, str]] = ()) -> AgentResult:
         """問一輪。中途出錯(額度、伺服器全掛)就把這一輪的訊息退掉,對話停在上一輪結束的狀態。
 
         mode="plan":只給唯讀工具,請模型調查後交出編號計畫(像 Claude Code 的 plan mode),不准改東西;
         mode="execute":照上一輪的計畫做,多給 update_plan 讓它回報進度。
         role:只有這一輪換模型 —— 上一輪做到步數上限,使用者選擇換 escalation() 提議的模型接著做。
+        images:網頁上傳的圖片 [(名稱, data URL)];附檔裡的圖片檔也算(先轉成文字,見 _describe_images)。
         """
         self._maybe_compact()  # 要在記下 start 之前:摘要會把訊息變短
         start, began = len(self.messages), time.monotonic()
+        pictures = list(images) + [image_from_file(a) for a in attachments if is_image(a)]
+        attachments = [a for a in attachments if not is_image(a)]
+        before = self.tokens_used
+        seen = self._describe_images(task, pictures) if pictures else []
+        looked = self.tokens_used - before  # 看圖用掉的,算進這一輪
         # 自己訓練的小模型(ml/,還沒訓練就是 None):決策樹判斷難不難、線性回歸預估這一輪的用量
         feats = ml_features.extract(task, list(attachments), sum(isinstance(m, HumanMessage) for m in self.messages[1:]),
                                     mode)
@@ -369,13 +422,50 @@ class AgentSession:
         predicted = {"tree": tree and tree[0], "est_tokens": est and round(est[0]), "est_s": est and round(est[1], 1)}
         judging = self.judging = self._route(task, list(attachments), mode, role, feats)
         try:  # on 已經等到判斷結果;影子模式還在背景判斷就不等它(反正不換模型)
-            r = self._ask(task, list(attachments), mode, judging.result() if judging.done() else None)
+            r = self._ask(task, list(attachments), mode, judging.result() if judging.done() else None, seen)
+            r.tokens_used += looked
         except BaseException as e:
             del self.messages[start:]
             self._record_when_judged(judging, task, mode, began, None, type(e).__name__, feats, predicted)
             raise
         self._record_when_judged(judging, task, mode, began, r, "max_steps" if r.hit_limit else "done", feats, predicted)
         return r
+
+    def _describe_images(self, question: str, images: list[tuple[str, str]]) -> list[str]:
+        """有圖片的這一題:先請看圖模型把每張圖轉成文字(字逐字抄、畫面重點),回傳要放進問題的 <image> 區塊。
+        主模型(Super 等)看不懂圖片;這樣工具、路由、摘要、token 估算都照舊,對話紀錄裡也不會每步重送圖片。
+        看不到(這個環境沒有看圖模型、忙線)不擋這一題:告訴主模型有一張圖沒看到。用量算進這段對話和額度。"""
+        reg = self.registry
+        role = reg.routing.get("vision_role")
+        spec = reg.specs.get(role) if role else None
+        if not (spec and spec.supports_images and reg.backend in spec.available_on):
+            self._notice("這個環境沒有看圖的模型(models.yaml 的 routing.vision_role),圖片沒有看")
+            return [f'<image name="{name}">(沒有看圖的模型,你看不到這張圖;請跟使用者說明)</image>' for name, _ in images]
+        llm, model = reg.vision_model(role), spec.model.split("/")[-1]
+        q = truncate_middle(question, 2000)  # 問題裡可能貼了很長的程式碼,看圖只需要知道大概要問什麼
+        blocks = []
+        for name, url in images:
+            self.quota.check(self.user, IMAGE_TOKENS_GUESS + spec.max_output)
+            began = time.monotonic()
+            try:
+                ai = llm.invoke([HumanMessage(content=[{"type": "text", "text": VISION_PROMPT.format(question=q)},
+                                                       {"type": "image_url", "image_url": {"url": url}}])])
+                text = drop_repeats(strip_think_text(str(ai.content)))
+                if not text:
+                    raise RuntimeError("看圖模型沒有回傳說明")
+            except QuotaExceeded:
+                raise
+            except Exception as e:  # 忙線、逾時、圖片格式不支援:這張當作沒看到,繼續回答
+                self._notice("看不到圖片 %s:%s", name, str(e).splitlines()[0][:120])
+                blocks.append(f'<image name="{name}">(看圖模型這次沒有回應,你看不到這張圖;請跟使用者說明,請他再傳一次)</image>')
+                continue
+            tokens = (ai.usage_metadata or {}).get("total_tokens", 0)
+            self.tokens_used += tokens
+            self.quota.charge(self.user, tokens)
+            self._notice("用 %s 看了圖片 %s(%.1f 秒、%s tokens)", model, name, time.monotonic() - began, tokens)
+            blocks.append(f'<image name="{name}" note="described for you by a vision model; you cannot see the image itself">\n'
+                          f"{text}\n</image>")
+        return blocks
 
     def _route(self, task: str, attachments: list[str], mode: str, role: str | None, feats: dict | None = None) -> Future:
         """這一輪用一般還是難題模型。一輪只判斷一次(中途不換,換模型要重送整段對話);照計畫執行沿用規劃那輪。"""
@@ -423,7 +513,7 @@ class AgentSession:
         return self.tools
 
     def _ask(self, task: str, attachments: list[str], mode: str = "normal",
-             judged: difficulty.Decision | None = None) -> AgentResult:
+             judged: difficulty.Decision | None = None, images: list[str] = ()) -> AgentResult:
         """judged:這一輪的難度判斷(None = 還在背景判斷,照預設);使用者用 --role 指定的角色優先。"""
         reg, limits = self.registry, self.registry.limits
         tools = self._tools_for(mode)
@@ -434,7 +524,7 @@ class AgentSession:
         if mode == "plan":
             task += PLAN_MODE_NOTE
         self.messages.append(HumanMessage(
-            build_user_prompt(task, attachments, limits["inline_file_max_tokens"], self.whole)))
+            build_user_prompt(task, attachments, limits["inline_file_max_tokens"], self.whole, list(images))))
         routed = judged.role if judged else None
         role = reg.pick_role(prompt_tokens=self.sized(), needs_tools=bool(tools),
                              requested=self.requested_role or routed)

@@ -23,6 +23,7 @@ class ModelSpec:
     context_window: int
     max_output: int
     supports_tools: bool = True
+    supports_images: bool = False         # 看得懂圖片(routing.vision_role 用)
     nim_base_url: str | None = None
     temperature: float | None = None
     top_p: float | None = None
@@ -39,6 +40,7 @@ class ModelSpec:
 
 
 ChatFactory = Callable[..., BaseChatModel]
+VISION_RETRIES = 2  # 看圖模型忙線時,換備援前先重試幾次(每次等 1–3 秒)
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -134,6 +136,16 @@ class ModelRegistry:
         primary = build(role)
         backups = [build(fb) for fb in spec.fallbacks if not tools or self.spec(fb).supports_tools]
         return primary.with_fallbacks(backups) if backups else primary
+
+    def vision_model(self, role: str) -> Runnable:
+        """看圖:關思考(10/9 實測 Nano Omni 開思考慢 5 倍、多花上千 tokens,看圖說明用不到)。
+        免費層常回 503 忙線(10/9 實測約一半),等一下再送通常就過:每顆先重試 VISION_RETRIES 次再換備援。"""
+        def build(r: str) -> Runnable:
+            model = self.chat(r, thinking=False)
+            return model.with_retry(stop_after_attempt=1 + VISION_RETRIES) if VISION_RETRIES else model
+
+        backups = [build(fb) for fb in self.spec(role).fallbacks if self.spec(fb).supports_images]
+        return build(role).with_fallbacks(backups) if backups else build(role)
 
     # ---------- 路由 ----------
 

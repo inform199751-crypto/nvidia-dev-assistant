@@ -2424,3 +2424,102 @@ def test_effort_slider_sets_thinking_steps_and_care(workspace, tmp_path_factory)
     assert "Effort" not in medium_q and "Effort: low" in low_q and "Effort: high" in high_q
     again = make_desk()  # 重開:「新對話」之後選的高還在
     assert again.hub(cid).session.effort == "high" and set(agent.EFFORTS) == {"low", "medium", "high", "max"}
+
+
+def vision_config() -> dict:
+    """測試設定加上看圖模型(主要 + 備援,都不能用工具)。"""
+    cfg = copy.deepcopy(CONFIG)
+    cfg["routing"]["vision_role"] = "vision"
+    cfg["roles"]["vision"] = {"model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "context_window": 65536,
+                              "max_output": 2048, "supports_tools": False, "supports_images": True,
+                              "thinking_off": {"chat_template_kwargs": {"enable_thinking": False}},
+                              "fallbacks": ["vision_backup"]}
+    cfg["roles"]["vision_backup"] = {"model": "meta/llama-3.2-11b-vision-instruct", "context_window": 65536,
+                                     "max_output": 2048, "supports_tools": False, "supports_images": True}
+    return cfg
+
+
+PNG_URL = "data:image/png;base64,iVBORw0KGgo="
+THUMB_URL = "data:image/jpeg;base64,/9j/4AAQ"
+
+
+def test_uploaded_image_is_described_then_answered(workspace, tmp_path_factory):
+    """網頁上傳圖片:先請看圖模型(關思考、不綁工具)把圖轉成文字,主模型拿到的是 <image> 說明,不是圖片本身;
+    畫面和存檔只留縮圖;看圖的 tokens 算進這一輪。只傳圖片不打字也可以;格式、張數不對擋下來。"""
+    import httpx
+    import webui
+    store = tmp_path_factory.mktemp("state")
+    script = [ai("圖裡是 ZeroDivisionError,calc.py 第 12 行", tokens=300), ai("原因是除以零")]
+    seen, made = [], []
+
+    def factory(spec, **kw):
+        made.append((spec.role, kw["model_kwargs"]))
+        return ScriptedChat(role=spec.role, script=script, seen=seen)
+
+    reg = ModelRegistry(vision_config(), backend="nim", chat_factory=factory)
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=store)
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    try:
+        cid = httpx.post(base + "/api/conv/new", json={"kind": "chat"}, headers=h).json()["id"]
+        h["X-Conv"] = cid
+        image = {"name": "shot.png", "data": PNG_URL, "thumb": THUMB_URL}
+        assert httpx.post(base + "/api/ask", json={"text": "", "images": [{**image, "data": "data:image/svg+xml;base64,PHN2Zz4="}]},
+                          headers=h).status_code == 400
+        assert httpx.post(base + "/api/ask", json={"text": "x", "images": [image] * 5}, headers=h).status_code == 400
+        assert httpx.post(base + "/api/ask", json={"text": "", "images": [image]}, headers=h).status_code == 202
+        events = _events_until(base, cid, "done")
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert events[0] == {"seq": 1, "kind": "user", "text": "請說明這張圖。", "mode": "normal", "images": [THUMB_URL]}
+    assert any(e["kind"] == "notice" and "看了圖片 shot.png" in e["text"] for e in events)
+    assert events[-1]["tokens"] == 400  # 看圖 300 + 回答 100
+    (vision_role, vision_msgs, vision_tools), (main_role, main_msgs, _) = seen
+    assert vision_role == "vision" and vision_tools is None
+    assert vision_msgs[0].content[1] == {"type": "image_url", "image_url": {"url": PNG_URL}}
+    assert ("vision", {"chat_template_kwargs": {"enable_thinking": False}}) in made  # 看圖關思考
+    question = main_msgs[-1].content
+    assert main_role == "code" and '<image name="shot.png"' in question and "calc.py 第 12 行" in question
+    assert PNG_URL not in question
+    saved = (store / "conversations" / f"{cid}.json").read_text(encoding="utf-8")
+    assert THUMB_URL in saved and PNG_URL not in saved  # 原圖不存
+
+
+def test_project_image_and_vision_failure_do_not_block_the_answer(workspace, monkeypatch):
+    """@專案裡的圖片也先給看圖模型(不當文字讀);看圖模型和備援都失敗、或這個環境沒有看圖模型,
+    照樣回答,並告訴主模型有一張圖沒看到;太大的圖片直接說要縮小。"""
+    import agent
+    import llm_registry
+    monkeypatch.setattr(llm_registry, "VISION_RETRIES", 0)  # 不要真的等重試
+    (workspace / "screen.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    reg, seen = scripted_registry([RuntimeError("[503] busy"), RuntimeError("[503] busy"), ai("文字的部分先回答")],
+                                  vision_config())
+    session = AgentSession(reg, TokenQuota(10**6, 2))
+    r = session.ask("看 @screen.png", file_mentions("看 @screen.png"))
+    assert [role for role, _, _ in seen] == ["vision", "vision_backup", "code"] and r.answer == "文字的部分先回答"
+    question = seen[-1][1][-1].content
+    assert '<image name="screen.png">' in question and "看圖模型這次沒有回應" in question and "fake" not in question
+    reg2, seen2 = scripted_registry([ai("好")])  # 沒有 vision_role 的設定
+    AgentSession(reg2, TokenQuota(10**6, 2)).ask("這是什麼", images=[("a.png", PNG_URL)])
+    assert "沒有看圖的模型" in seen2[-1][1][-1].content
+    monkeypatch.setattr(agent, "MAX_IMAGE_BYTES", 4)
+    with pytest.raises(ValueError, match="請縮小"):
+        session.ask("看 @screen.png", ["screen.png"])
+
+
+def test_shipped_vision_models():
+    """models.yaml:有看圖的角色,它和備援都看得懂圖片。"""
+    reg = ModelRegistry.from_yaml(backend="catalog")
+    spec = reg.spec(reg.routing["vision_role"])
+    assert spec.supports_images and spec.fallbacks and all(reg.spec(f).supports_images for f in spec.fallbacks)
+    assert spec.thinking_off  # 看圖要能關思考(10/9 實測開思考慢 5 倍)
+
+
+def test_vision_description_repeats_are_dropped():
+    """10/9 完整流程實測:看圖模型把同一段描述重複了好幾次(一張圖 22 秒、3,800 tokens)。
+    一模一樣的段落只留第一次(空白不同也算一樣),不同的段落都留著、順序不變。"""
+    import agent
+    text = "這是終端機的截圖。\n\nE   ZeroDivisionError\n\n這是終端機的截圖。\n\n  這是終端機的截圖。 \n\n第 12 行"
+    assert agent.drop_repeats(text) == "這是終端機的截圖。\n\nE   ZeroDivisionError\n\n第 12 行"
