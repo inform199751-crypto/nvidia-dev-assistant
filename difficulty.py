@@ -6,10 +6,12 @@
 
 models.yaml 的 routing.difficulty.mode:
   off    不分類(只依長度)
-  shadow 分類並記錄「本來會選哪個」,實際仍用 default_role —— 先量準不準,再決定要不要開
-  on     照分類結果選模型
+  shadow 在背景分類並記錄「本來會選哪個」,實際仍用 default_role、也不等它 —— 先量準不準,再決定要不要開
+  on     等分類結果,照判斷選模型
 環境變數 DIFFICULTY_ROUTING 優先於 YAML(緊急關閉:設成 off;寫錯也當 off)。
 每輪寫一行到 OUTPUT_DIR/routing_log.jsonl,report_routing.py 產生報表。
+
+另一條路(不用分類器):一般模型做到步數上限時,讓使用者決定要不要換 hard_role 接著做(AgentSession.escalation)。
 """
 from __future__ import annotations
 
@@ -19,6 +21,7 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -53,14 +56,23 @@ class Decision:
     pick: str | None = None  # 判斷要用的角色;None = 沒判斷(手動指定、分類失敗)
     reason: str = ""
     by: str = "classifier"   # classifier / manual(使用者指定角色)/ plan(照計畫執行,沿用規劃時的判斷)
+    #                          / escalate(做到步數上限後,使用者選擇換模型接著做)
     ms: int = 0
     tokens: int = 0
     error: str = ""
+    forced: bool = False     # 使用者自己選的(escalate):不管 mode 都照用
 
     @property
     def role(self) -> str | None:
         """這一輪實際要用的角色;None = 照預設。影子模式只記錄、不切換。"""
-        return self.pick if self.mode == "on" else None
+        return self.pick if self.forced or self.mode == "on" else None
+
+    @property
+    def why(self) -> str:
+        """換模型時給使用者看的理由。"""
+        if self.by == "plan":
+            return "照計畫執行,沿用規劃那輪的模型"
+        return self.reason if self.forced else f"判斷這題比較難({self.reason or '分類器判斷'})"
 
 
 def settings(routing: dict) -> tuple[str, dict]:
@@ -141,9 +153,27 @@ def classify(registry, quota: TokenQuota, user: str, messages: list[BaseMessage]
     return d
 
 
-def skipped(routing: dict, by: str, pick: str | None = None, reason: str = "") -> Decision:
-    """不問分類器的一輪(手動指定角色、照計畫執行),一樣記下來,報表的總數才對。"""
-    return Decision(settings(routing)[0], pick=pick, reason=reason, by=by)
+_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="difficulty")
+
+
+def ready(d: Decision) -> Future:
+    f: Future = Future()
+    f.set_result(d)
+    return f
+
+
+def judge(registry, quota: TokenQuota, user: str, messages: list[BaseMessage], task: str,
+          attachments: list[str]) -> Future:
+    """開始判斷這一輪。on 要照結果選模型,只能等;shadow 只是記錄,丟到背景、這一輪不等它
+    (10/9 審查:影子模式原本也在回答前同步問分類器,每題多等約 1 秒、伺服器卡住最多 20 秒,答案卻沒有任何改變)。"""
+    if settings(registry.routing)[0] == "shadow":
+        return _pool.submit(classify, registry, quota, user, list(messages), task, list(attachments))
+    return ready(classify(registry, quota, user, messages, task, attachments))
+
+
+def skipped(routing: dict, by: str, pick: str | None = None, reason: str = "", forced: bool = False) -> Future:
+    """不問分類器的一輪(手動指定角色、照計畫執行、換模型接著做),一樣記下來,報表的總數才對。"""
+    return ready(Decision(settings(routing)[0], pick=pick, reason=reason, by=by, forced=forced))
 
 
 _lock = threading.Lock()

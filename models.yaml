@@ -25,14 +25,14 @@ routing:
   long_context_role: long_context
   safety_margin: 0.10   # 估算誤差 + 工具定義的 token,先扣掉 10%
   # 依難度選模型(difficulty.py):每輪開始先請分類器判斷「一般 / 難題」,難題改用 hard_role。
-  #   off 不判斷 · shadow 只記錄「本來會選哪個」、實際仍用 default_role · on 照判斷切換
+  #   off 不判斷 · shadow 在背景判斷、只記錄「本來會選哪個」,實際仍用 default_role、不等它 · on 等判斷結果再切換
   # 先用 shadow 累積紀錄(output/routing_log.jsonl),python report_routing.py 看準不準再改 on。
   # 緊急關閉不用改這裡:環境變數 DIFFICULTY_ROUTING=off。使用者用 --role 指定時不判斷。
   difficulty:
     mode: shadow
     classifier_role: code   # Super 關思考,約 1 秒;資料不出公司(地端一樣用自己的 NIM)
-    hard_role: code_deep
-    timeout_s: 20           # 分類器逾時就照預設,不讓整題卡住
+    hard_role: code_deep    # 也用在:一般模型做到步數上限時,問使用者要不要換它接著做(不管 mode)
+    timeout_s: 20           # 分類器逾時就照預設,不讓整題卡住(只有 on 會等它)
 
 limits:
   max_agent_steps: 15

@@ -702,6 +702,24 @@ const handlers = {
     card.appendChild(el("div", "result", e.go ? "✓ 照計畫執行" : "沒有執行這個計畫"));
     cards.plan = null;
   },
+  offer_escalate(e) {  // 一般模型做到步數上限:問要不要換難題模型接著做(比較慢,所以讓使用者決定)
+    const card = add(el("div", "card"));
+    const q = card.appendChild(el("div", "q"));
+    q.append(el("span", "tag warn", "還沒完成"), `${e.used} 做到 ${e.steps} 步上限還沒完成。要換 ${e.model}(難題模型,比較慢)接著做嗎?`);
+    const go = (yes) => async () => {
+      const r = await api("/api/escalate", { go: yes });
+      if (!r.ok) { alert(r.data.error || "失敗"); return false; }
+    };
+    cardButtons(card, [[`換 ${e.model} 接著做`, "primary", go(true)], ["先不要", "", go(false)]]);
+    cards.escalate = card;
+    card.scrollIntoView({ block: "end", behavior: "smooth" });
+  },
+  escalate_answered(e) {
+    const card = cards.escalate; if (!card) return;
+    card.querySelector(".actions")?.remove();
+    card.appendChild(el("div", "result", e.go ? "✓ 換模型接著做" : "沒有換模型"));
+    cards.escalate = null;
+  },
   offer_apply(e) {
     const card = add(el("div", "card"));
     const q = card.appendChild(el("div", "q"));

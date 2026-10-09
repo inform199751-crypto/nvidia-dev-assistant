@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import time
+from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -171,6 +172,9 @@ PLAN MODE: do not change anything yet. Investigate with the read-only tools, the
 EXECUTE_TASK = ("照上面的計畫執行。用 update_plan 回報進度,但要跟下一個實際動作放在同一次回應裡一起呼叫(可以同時呼叫多個工具),"
                 "不要單獨呼叫;一次可以把多個步驟標成 done。全部做完後總結結果。")
 
+# 一般模型做到步數上限、使用者選擇換難題模型的那一輪:前面查到的東西都還在對話裡,接著做就好
+CONTINUE_TASK = "上一輪做到步數上限,還沒完成。請接著完成上面原本的任務:沿用已經查到的內容和草稿裡的修改,不要重做已經做過的步驟。"
+
 SUMMARY_PROMPT = """You are compacting a long conversation between a user and an engineering assistant so the work can continue in a fresh context. Write a concise summary in Traditional Chinese (zh-TW) covering: the user's goals and requests; key findings with file paths and line numbers; decisions made; patches proposed (file names, whether tests passed, whether the user applied them); open questions and next steps. Keep code identifiers, paths and error messages verbatim. Do not invent anything that is not in the conversation. At most about 400 words."""
 
 
@@ -233,7 +237,7 @@ class AgentSession:
         self.scale = 1.0  # 估算偏低時,用伺服器回報的實際 input tokens 往上修正
         self.tokens_used = 0  # 整段對話累計
         self.on_event = on_event
-        self.decision: difficulty.Decision | None = None  # 這一輪的難度判斷;照計畫執行時沿用規劃那輪的
+        self.judging: Future | None = None  # 這一輪的難度判斷(影子模式在背景跑);照計畫執行時沿用規劃那輪的
 
     def _emit(self, kind: str, **data) -> None:
         if self.on_event:
@@ -302,39 +306,61 @@ class AgentSession:
         except Exception as e:  # 摘要失敗不擋這一題:後面還有瘦身與升級模型兩道防線
             self._notice("整理摘要失敗,先照常繼續:%s", f"{type(e).__name__}: {e}")
 
-    def ask(self, task: str, attachments: list[str] = (), mode: str = "normal") -> AgentResult:
+    def ask(self, task: str, attachments: list[str] = (), mode: str = "normal", role: str | None = None) -> AgentResult:
         """問一輪。中途出錯(額度、伺服器全掛)就把這一輪的訊息退掉,對話停在上一輪結束的狀態。
 
         mode="plan":只給唯讀工具,請模型調查後交出編號計畫(像 Claude Code 的 plan mode),不准改東西;
         mode="execute":照上一輪的計畫做,多給 update_plan 讓它回報進度。
+        role:只有這一輪換模型 —— 上一輪做到步數上限,使用者選擇換 escalation() 提議的模型接著做。
         """
         self._maybe_compact()  # 要在記下 start 之前:摘要會把訊息變短
         start, began = len(self.messages), time.monotonic()
-        d = self.decision = self._route(task, list(attachments), mode)
-
-        def record(**kw) -> None:
-            difficulty.record(d, task=task, turn=mode, ms=int((time.monotonic() - began) * 1000), **kw)
-
-        try:
-            r = self._ask(task, list(attachments), mode, d.role)
+        judging = self.judging = self._route(task, list(attachments), mode, role)
+        try:  # on 已經等到判斷結果;影子模式還在背景判斷就不等它(反正不換模型)
+            r = self._ask(task, list(attachments), mode, judging.result() if judging.done() else None)
         except BaseException as e:
             del self.messages[start:]
-            record(used=None, steps=0, tokens=None, outcome=type(e).__name__)
+            self._record_when_judged(judging, task, mode, began, None, type(e).__name__)
             raise
-        r.tokens_used += d.tokens  # 分類器也是真的用量
-        record(used=r.role, steps=r.steps, tokens=r.tokens_used, outcome="max_steps" if r.hit_limit else "done")
+        self._record_when_judged(judging, task, mode, began, r, "max_steps" if r.hit_limit else "done")
         return r
 
-    def _route(self, task: str, attachments: list[str], mode: str) -> difficulty.Decision:
+    def _route(self, task: str, attachments: list[str], mode: str, role: str | None) -> Future:
         """這一輪用一般還是難題模型。一輪只判斷一次(中途不換,換模型要重送整段對話);照計畫執行沿用規劃那輪。"""
         routing = self.registry.routing
+        if role:
+            return difficulty.skipped(routing, "escalate", role, "上一輪做到步數上限", forced=True)
         if self.requested_role:
             return difficulty.skipped(routing, "manual", self.requested_role)
-        if mode == "execute" and self.decision:
-            return difficulty.skipped(routing, "plan", self.decision.pick, self.decision.reason)
-        d = difficulty.classify(self.registry, self.quota, self.user, self.messages, task, attachments)
-        self.tokens_used += d.tokens
-        return d
+        if mode == "execute" and self.judging and self.judging.done():
+            prev = self.judging.result()
+            return difficulty.skipped(routing, "plan", prev.pick, prev.reason, prev.forced)
+        return difficulty.judge(self.registry, self.quota, self.user, self.messages, task, attachments)
+
+    def _record_when_judged(self, judging: Future, task: str, mode: str, began: float, r: AgentResult | None,
+                            outcome: str) -> None:
+        """分類器的用量算進累計、寫路由紀錄。影子模式的判斷可能比回答晚完成,就等它完成時再補。"""
+        ms, answered = int((time.monotonic() - began) * 1000), r and r.tokens_used
+        if r and judging.done():
+            r.tokens_used += judging.result().tokens  # 分類器也是真的用量
+
+        def write(f: Future) -> None:
+            d = f.result()
+            self.tokens_used += d.tokens
+            difficulty.record(d, task=task, turn=mode, ms=ms, used=r and r.role, steps=r.steps if r else 0,
+                              tokens=None if r is None else answered + d.tokens, outcome=outcome)
+
+        judging.add_done_callback(write)
+
+    def escalation(self, r: AgentResult) -> str | None:
+        """一般模型做到步數上限還沒完成時,提議換哪個模型接著做(routing.difficulty.hard_role);None = 不提議。
+        只提議、不自動換:難題模型慢很多(10/6 冒煙測試 DeepSeek 每次 18–27 秒、Super 0.4–2.6 秒),值不值得等由使用者決定。"""
+        reg = self.registry
+        hard = (reg.routing.get("difficulty") or {}).get("hard_role")
+        if not (r.hit_limit and hard and not self.requested_role and r.role == reg.routing["default_role"] != hard):
+            return None
+        spec = reg.specs.get(hard)
+        return hard if spec and spec.supports_tools and reg.backend in spec.available_on else None
 
     def _tools_for(self, mode: str) -> list:
         if mode == "plan":
@@ -343,8 +369,9 @@ class AgentSession:
             return self.tools + [toolbox.update_plan]
         return self.tools
 
-    def _ask(self, task: str, attachments: list[str], mode: str = "normal", routed: str | None = None) -> AgentResult:
-        """routed:難度判斷選的角色(None = 照預設);使用者指定的角色優先。"""
+    def _ask(self, task: str, attachments: list[str], mode: str = "normal",
+             judged: difficulty.Decision | None = None) -> AgentResult:
+        """judged:這一輪的難度判斷(None = 還在背景判斷,照預設);使用者用 --role 指定的角色優先。"""
         reg, limits = self.registry, self.registry.limits
         tools = self._tools_for(mode)
         tool_map = {t.name: t for t in tools}
@@ -353,11 +380,11 @@ class AgentSession:
             task += PLAN_MODE_NOTE
         self.messages.append(HumanMessage(
             build_user_prompt(task, attachments, limits["inline_file_max_tokens"], self.whole)))
+        routed = judged.role if judged else None
         role = reg.pick_role(prompt_tokens=self.sized(), needs_tools=bool(tools),
                              requested=self.requested_role or routed)
         if not self.requested_role and routed and role == routed != reg.routing["default_role"]:
-            self._notice("判斷這題比較難(%s),改用 %s(%s)", self.decision.reason or "分類器判斷", role,
-                         reg.spec(role).model.split("/")[-1])
+            self._notice("%s,改用 %s(%s)", judged.why, role, reg.spec(role).model.split("/")[-1])
         llm = reg.agent_model(role, tools, thinking=self.thinking)
         used = 0
         max_steps = limits.get("max_execute_steps", 25) if mode == "execute" else limits["max_agent_steps"]
@@ -584,10 +611,11 @@ def chat(session_factory, first_files: list[str], banner: str = "") -> None:
             if not text:
                 print("用法:/plan 任務,例如 /plan 幫 calc.py 加上除法並補測試")
                 continue
-        while True:  # 規劃模式:交出計畫、使用者同意後,接著再跑一輪「照計畫執行」
+        role = None
+        while True:  # 規劃模式:交出計畫、使用者同意後,接著再跑一輪「照計畫執行」;做到步數上限可以換模型接著做
             before = len(toolbox.PATCHES)
             try:
-                r = session.ask(note + text, pending + [f for f in file_mentions(text) if f not in pending], mode)
+                r = session.ask(note + text, pending + [f for f in file_mentions(text) if f not in pending], mode, role)
             except KeyboardInterrupt:
                 print("\n(已中斷這一輪,對話保留在上一輪結束的狀態)")
                 break
@@ -604,7 +632,13 @@ def chat(session_factory, first_files: list[str], banner: str = "") -> None:
                     note = _offer_apply(patch, passed)
                 else:
                     print("(最後一個 patch 的沙箱測試沒過,先不問要不要套用;仍要套用請輸入 /apply)")
-            if mode != "plan" or not ask_yes_no("\n照這個計畫執行嗎?"):
+            if role := session.escalation(r):
+                model = session.registry.spec(role).model.split("/")[-1]
+                if not ask_yes_no(f"\n{r.role} 做到 {r.steps} 步上限還沒完成。要換 {role}({model},比較慢)接著做嗎?"):
+                    break
+                text = CONTINUE_TASK
+                continue
+            if mode != "plan" or r.hit_limit or not ask_yes_no("\n照這個計畫執行嗎?"):  # 做到上限 = 沒交出計畫
                 break
             text, mode = EXECUTE_TASK, "execute"
 
@@ -658,8 +692,11 @@ def main() -> None:
     if args.task is None:
         chat(new_session, args.file, f" · {web_status(allow_web)}")
         return
-    r = new_session().ask(args.task, args.file)
+    session = new_session()
+    r = session.ask(args.task, args.file)
     print(f"\n\n— {r.role} · {r.steps} 步 · {r.tokens_used:,} tokens")
+    if hard := session.escalation(r):
+        print(f"(還沒完成:可以加 --role {hard} 重問,或用互動模式問,做到上限時可以換 {hard} 接著做)")
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@
 改走 NVIDIA 生態系:開發期接 API Catalog(build.nvidia.com),正式環境換成地端 NIM 容器,**程式碼不用改**。
 
 重點不在「接上了模型」,而在:**依任務與 token 數動態切換模型、控制 token 與顯存、讓 agent 只能在沙箱裡動手**,
-而且每個設計都用真模型實測過。實測與審查抓到 26 個問題,見下方。
+而且每個設計都用真模型實測過。實測與審查抓到 29 個問題,見下方。
 
 ## 架構
 
@@ -51,9 +51,9 @@ flowchart LR
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
 | 難度分類器(10/9) | 14 題示範問題(一般 7、難題 7,含「繼續」「好」這種要看前文的短回覆) | 14/14 符合預期;Super 關思考每次 0.6–1.1 秒、約 300 tokens。題目是自己出的,真實準確度要看影子模式的紀錄 |
-| 離線測試 | 假模型,不需金鑰 | 92 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 97 個全過 |
 
-## 實測與審查抓到的 28 個問題
+## 實測與審查抓到的 29 個問題
 
 | # | 問題 | 怎麼發現 | 處理 |
 |---|---|---|---|
@@ -85,6 +85,7 @@ flowchart LR
 | 26 | 難度分類器把「test_add 失敗了,找出 bug」判成難題(這題 Super 7 步就修好);開成 on 的話,最常見的改 bug 請求都會丟給慢約 10 倍的 DeepSeek | 分類器實測(10/9) | 判斷標準改成「單一測試或錯誤訊息」算一般、「跨多個檔案且沒有頭緒」才算難題;同 14 題重跑全部符合預期 |
 | 27 | 從 GitHub 加專案用一般的 `git clone`,會自動用電腦上存的 GitHub 登入(系統的 Git Credential Manager、gh 設的 helper):私人 / 公司 repo 會被抓下來,再送到 build.nvidia.com | 做 GitHub 下載前實測(10/9,本機要求帳密的假伺服器 + 會留記號的假 helper:兩個都被叫到) | clone 時清掉 credential helper 和 askpass、關掉終端機提示;同一個實驗兩個 helper 都沒被叫到,私人 repo 0.5 秒就失敗 |
 | 28 | 下載的 repo 自帶 `ASSISTANT.md` 的話會直接進系統提示:別人寫的內容被當成「團隊規則」照做 | 做 GitHub 下載時審查 | 下載的專案規則改存在 repo 外面(`output/repos/<名稱>.rules.md`),repo 自帶的那份只是一般檔案 |
+| 29 | 影子模式也在回答前同步問分類器:每題多等約 1 秒、伺服器卡住最多 20 秒,答案卻不會變(影子模式只記錄) | 審查(10/9) | 影子模式改在背景判斷、這一輪不等它,判斷完才補寫紀錄;只有 `on` 會等結果 |
 
 ## 執行
 
@@ -115,18 +116,21 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 長度路由只管「放不放得下」;`difficulty.py` 每輪開始再問一次「難不難」。作法參考 jev-codex-router,
 但它把每一步的任務摘要送到外部的 TypeSafe 做判斷,這裡改用自己的模型,**資料不出公司,地端 NIM 也一樣能用**:
 
-- `models.yaml` 的 `routing.difficulty.mode`:`off` 不判斷、`shadow` 只記錄「本來會選哪個」(實際仍用 Super)、`on` 照判斷切換。
+- `models.yaml` 的 `routing.difficulty.mode`:`off` 不判斷、`shadow` 在背景判斷、只記錄「本來會選哪個」(實際仍用 Super,也不等它)、`on` 等判斷結果再切換。
 - 分類器只看這次的問題、上一個問題和回答的結尾、附檔名稱(不看檔案內容和工具輸出)。一輪只判斷一次,照計畫執行沿用規劃那輪的判斷。
 - 分類失敗(逾時 20 秒、伺服器掛掉、回答看不懂)就照預設模型回答,不擋這一題;`--role` 指定時不判斷。
 - 緊急關閉不用改設定檔:環境變數 `DIFFICULTY_ROUTING=off`。
 - 每輪一行記在 `output/routing_log.jsonl`(只留問題開頭 80 字,不記使用者;8 MB 輪替)。`report_routing.py` 會依判斷分組比較步數、tokens、秒數;
   判斷為難題的那組如果明顯比較吃力,再人工抽查列出的題目,確認準了才改 `on`。
+- 另一條路,不用猜難不難:Super 做到步數上限還沒完成時,問使用者要不要換 DeepSeek 接著做(網頁是卡片、互動模式是 y/N)。
+  接著做的那一輪沿用前面查到的內容,只有那一輪換模型;跟 `mode` 無關,`off` 也會問。報表會列出換了之後完成幾輪,
+  這才是「難題模型真的比較好」的證據(分組比較只證明分類器分得出難易)。
 
 ## 還沒做 / 限制
 
 - **地端 NIM 沒實際部署過**:需要 GPU 伺服器。Ultra 550B 要 8×B200/H200 等級,建議第一階段用 Super 120B(FP8 約 2×H100)。
 - 多人部署(`deploy/`)已在本機 Docker 實測(兩個身分同時問、Redis 額度正確、唯讀工作區提 patch),但**還沒在公司 SSO 和 GPU 主機上實際跑過**;對話存在每人的資料夾,多台伺服器要設 sticky session。
-- 依難度選模型還在影子模式:分類器只用 14 題自己出的題目測過,每輪多約 1 秒、300 tokens;要累積真實紀錄、抽查準確後才改 `on`。
+- 依難度選模型還在影子模式:分類器只用 14 題自己出的題目測過,每輪多約 300 tokens(在背景跑,不拖慢回答);要累積真實紀錄、抽查準確後才改 `on`。
 - 模型清單會汰換,上線前用 `ChatNVIDIA.get_available_models()` 或 `smoke_test.py` 再對一次。
 - `requirements.txt` 鎖在實測過的版本:程式依賴 langchain-nvidia-ai-endpoints 的內部行為,升版前先跑離線測試和 `smoke_test.py`。
 - 地端的 `nim_context_window`(Ultra / Super 備援 256K)是規劃值,部署時 `NIM_MAX_MODEL_LEN` 要設成一樣。

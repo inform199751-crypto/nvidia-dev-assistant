@@ -137,6 +137,7 @@ class Hub:
         self.bench = toolbox.Workbench(patch_dir=patch_dir, output_dir=output_dir,  # 這段對話自己的草稿 / patch / 文件
                                        confirm=self.confirm, workspace=workspace)
         self.plan_waiting = False  # 交出計畫、還沒按「照計畫執行 / 先不要」
+        self.escalation: dict | None = None  # 做到步數上限、還沒按「換模型接著做 / 先不要」(offer_escalate 的內容)
         self.cond = threading.Condition()
         self.events: list[dict] = []
         self.view_start = 0  # 最近一次「新對話」之後的第一個事件
@@ -199,6 +200,9 @@ class Hub:
             events.append({"kind": "error", "text": "上次關掉程式時這一輪還沒答完,請再問一次"})
         turn = next((ev["kind"] for ev in reversed(events) if ev["kind"] in ("user", "offer_plan", "plan_answered")), None)
         self.plan_waiting = turn == "offer_plan"
+        offer = next((ev for ev in reversed(events) if ev["kind"] in ("user", "offer_escalate", "escalate_answered")), {})
+        self.escalation = {k: v for k, v in offer.items() if k not in ("kind", "seq")} \
+            if offer.get("kind") == "offer_escalate" else None
         with self.cond:
             self.events = [{**ev, "seq": i} for i, ev in enumerate(events, 1)]
         if data.get("messages"):
@@ -218,15 +222,19 @@ class Hub:
 
     # ---------- 對話 ----------
 
-    def ask(self, text: str, mode: str = "normal", shown: str | None = None) -> bool:
-        """shown:畫面上顯示的問題(照計畫執行時,送給模型的是 EXECUTE_TASK,畫面只顯示「照計畫執行」)。"""
+    def ask(self, text: str, mode: str = "normal", shown: str | None = None, role: str | None = None) -> bool:
+        """shown:畫面上顯示的問題(照計畫執行時,送給模型的是 EXECUTE_TASK,畫面只顯示「照計畫執行」)。
+        role:只有這一輪換模型(做到步數上限後的「換模型接著做」)。"""
         with self.cond:
             if self.busy:
                 return False
             self.busy = True
             self.plan_waiting = False  # 問了別的,或已經照計畫執行:之前的計畫不再等
+            stale, self.escalation = self.escalation, None
+        if stale:  # 沒按「換模型接著做」就問了別的:那張卡片收起來
+            self.publish("escalate_answered", {"go": False})
         self.publish("user", {"text": shown or text, "mode": mode})
-        threading.Thread(target=self._run, args=(text, mode), daemon=True).start()
+        threading.Thread(target=self._run, args=(text, mode, role), daemon=True).start()
         return True
 
     def execute_plan(self, go: bool) -> bool:
@@ -234,16 +242,32 @@ class Hub:
         self.publish("plan_answered", {"go": go})
         return self.ask(agent.EXECUTE_TASK, "execute", shown="照計畫執行") if go else True
 
-    def _run(self, text: str, mode: str = "normal") -> None:
+    def escalate(self, go: bool) -> str:
+        """做到步數上限後:換模型接著做 / 先不要。回傳錯誤訊息,空字串 = 成功。"""
+        with self.cond:
+            if self.busy:
+                return "上一個問題還在回答中"
+            offer, self.escalation = self.escalation, None
+        if not offer:
+            return "這個提議已經過期了"
+        self.publish("escalate_answered", {"go": go})
+        if go and not self.ask(agent.CONTINUE_TASK, offer["mode"], shown=f"換 {offer['model']} 接著做", role=offer["role"]):
+            return "上一個問題還在回答中"
+        return ""
+
+    def _run(self, text: str, mode: str = "normal", role: str | None = None) -> None:
         patches = self.bench.patches
-        before, planned = len(patches), False
+        before, planned, offer = len(patches), False, None
         try:
             with self.gate.turn(self.publish) if self.gate else nullcontext(), toolbox.using(self.bench):
-                r = self.session.ask(self.note + text, agent.file_mentions(text), mode)
+                r = self.session.ask(self.note + text, agent.file_mentions(text), mode, role)
             self.note = ""
             self.publish("done", {"role": r.role, "steps": r.steps, "tokens": r.tokens_used,
                                   "total": self.session.tokens_used, "answer": r.answer})
-            planned = mode == "plan"
+            planned = mode == "plan" and not r.hit_limit  # 做到上限 = 沒交出計畫
+            if hard := self.session.escalation(r):
+                offer = {"role": hard, "model": self.session.registry.spec(hard).model.split("/")[-1],
+                         "mode": mode, "used": r.role, "steps": r.steps}
             if len(patches) > before:  # 這一輪提了 patch:問要不要套用(沒通過測試也給看,但會警告)
                 patch, passed = patches[-1]
                 self.publish("offer_apply", {"patch": len(patches) - 1, "passed": passed, "team": self.team,
@@ -258,6 +282,9 @@ class Hub:
         if planned:  # 等不忙了才問,按下「照計畫執行」才不會被當成上一題還沒結束
             self.plan_waiting = True
             self.publish("offer_plan")
+        if offer:
+            self.escalation = offer
+            self.publish("offer_escalate", offer)
 
     def clear(self) -> bool:
         with self.cond:
@@ -265,7 +292,7 @@ class Hub:
                 return False
             with toolbox.using(self.bench):
                 self.session = self.new_session(self.publish)
-            self.note, self.plan_waiting = "", False
+            self.note, self.plan_waiting, self.escalation = "", False, None
         self.bench.draft.clear()  # 新對話不記得草稿,留著會混淆
         self.publish("clear")
         with self.cond:
@@ -403,7 +430,8 @@ class Gate:
             self.sem.release()
 
 
-SAVE_ON = {"user", "done", "error", "applied", "offer_apply", "offer_plan", "plan_answered", "confirm_done", "clear"}
+SAVE_ON = {"user", "done", "error", "applied", "offer_apply", "offer_plan", "plan_answered", "offer_escalate",
+           "escalate_answered", "confirm_done", "clear"}
 
 
 def doc_path(d: Path, name: str) -> Path | None:
@@ -948,6 +976,9 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             elif path == "/api/execute":  # 規劃模式交出計畫後:照計畫執行 / 先不要
                 ok = hub.execute_plan(bool(body.get("go")))
                 self._json(202 if ok else 409, {} if ok else {"error": "上一個問題還在回答中"})
+            elif path == "/api/escalate":  # 做到步數上限後:換模型接著做 / 先不要
+                msg = hub.escalate(bool(body.get("go")))
+                self._json(409 if msg else 202, {"error": msg} if msg else {})
             elif path == "/api/confirm":
                 ok = hub.answer(str(body.get("id")), str(body.get("answer")))
                 self._json(200 if ok else 404, {} if ok else {"error": "這個確認已經結束了"})

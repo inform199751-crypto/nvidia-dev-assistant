@@ -984,10 +984,19 @@ def difficulty_config(mode: str) -> dict:
 
 @pytest.fixture
 def routing_log(tmp_path_factory, monkeypatch):
+    """另外把影子模式的背景判斷改成當場做完:分類器和主模型共用一份劇本,順序才固定。"""
+    import difficulty
     out = tmp_path_factory.mktemp("output")
     monkeypatch.setattr(tools, "OUTPUT_DIR", out)
+    monkeypatch.setattr(difficulty, "_pool", _Inline())
     monkeypatch.delenv("DIFFICULTY_ROUTING", raising=False)
     return out / "routing_log.jsonl"
+
+
+class _Inline:
+    def submit(self, fn, *args):
+        import difficulty
+        return difficulty.ready(fn(*args))
 
 
 def log_entries(path) -> list[dict]:
@@ -1099,6 +1108,10 @@ def test_routing_report(tmp_path):
     assert "1 輪 · 平均 15.0 步 · 60,000 tokens · 90.0 秒 · 碰到步數上限 1" in shadow_hard
     assert "[跨檔除錯] 偶發的 race condition" in text and "TimeoutError: 20s" in text
     assert report_routing.report([])[0].startswith("還沒有紀錄")
+    escalated = {**base, "by": "escalate", "pick": "code_deep", "used": "code_deep", "classify_ms": 0,
+                 "classify_tokens": 0, "steps": 4, "tokens": 8000, "ms": 60000, "task": "上一輪做到步數上限…"}
+    text = "\n".join(report_routing.report([escalated]))
+    assert "做到上限後換模型 1 輪" in text and "  1 輪 · 平均 4.0 步 · 8,000 tokens · 60.0 秒 · 碰到步數上限 0" in text
 
 
 def test_shipped_difficulty_config():
@@ -1110,16 +1123,105 @@ def test_shipped_difficulty_config():
     assert reg.chat(cfg["classifier_role"], thinking=False, max_output=512).max_tokens == 512
 
 
+def test_difficulty_shadow_does_not_wait_for_classifier(workspace, routing_log, monkeypatch):
+    """10/9 審查:影子模式原本在回答前同步問分類器,每題多等約 1 秒(伺服器卡住最多 20 秒),答案卻不會變。
+    改成背景判斷:分類器卡住時這一輪照樣先回答,判斷完才補寫紀錄、把它的用量算進累計。"""
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    import difficulty
+    monkeypatch.setattr(difficulty, "_pool", ThreadPoolExecutor(1))
+    release = threading.Event()
+
+    class SlowJudge(ScriptedChat):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs: Any) -> ChatResult:
+            assert release.wait(5)
+            return ChatResult(generations=[ChatGeneration(message=ai('{"level": "hard", "reason": "並行"}', tokens=40))])
+
+    cfg = difficulty_config("shadow")
+    cfg["roles"]["judge"] = {"model": "nvidia/judge", "context_window": 8192, "max_output": 512}
+    cfg["routing"]["difficulty"]["classifier_role"] = "judge"
+    reg, _ = scripted_registry([ai("答案")], cfg,
+                               chat_cls=lambda **kw: (SlowJudge if kw["role"] == "judge" else ScriptedChat)(**kw))
+    s = AgentSession(reg, TokenQuota(10**6, 2))
+    r = s.ask("偶發的 race condition")
+    assert (r.answer, r.role, r.tokens_used) == ("答案", "code", 100) and not routing_log.exists()
+    release.set()
+    for _ in range(100):
+        if routing_log.is_file() and routing_log.read_text(encoding="utf-8").endswith("\n"):
+            break
+        time.sleep(0.05)
+    [entry] = log_entries(routing_log)
+    assert (entry["pick"], entry["used"], entry["tokens"], entry["outcome"]) == ("code_deep", "code", 140, "done")
+    assert s.tokens_used == 140
+
+
+def stuck(n: int) -> list[AIMessage]:
+    """n 步都在呼叫工具、沒有回答:做到步數上限(測試設定是 6 步)。"""
+    return [ai(tool_calls=[{"name": "nope", "args": {}, "id": f"s{i}"}]) for i in range(n)]
+
+
+def test_escalation_after_step_limit_continues_with_hard_model(workspace, routing_log):
+    """一般模型做到步數上限:提議換難題模型(只提議,使用者決定);接著做的那一輪看得到前面查過的東西、
+    只有那一輪換模型,紀錄記成 escalate。"""
+    from agent import CONTINUE_TASK
+    judge = ai('{"level": "normal", "reason": "一般"}', tokens=10)
+    reg, seen = scripted_registry([judge] + stuck(6) + [ai("接著做完了"), judge, ai("下一題的答案")],
+                                  difficulty_config("shadow"))
+    events = []
+    s = AgentSession(reg, TokenQuota(10**6, 2), on_event=lambda kind, data: events.append((kind, data)))
+    r = s.ask("找出偶發失敗的原因")
+    assert r.hit_limit and r.role == "code" and s.escalation(r) == "code_deep"
+    done = s.ask(CONTINUE_TASK, role="code_deep")
+    assert (done.answer, done.role) == ("接著做完了", "code_deep") and s.escalation(done) is None
+    assert "找出偶發失敗的原因" in seen[7][1][1].content and "沒有 nope 這個工具" in seen[7][1][-2].content
+    assert s.ask("下一題").role == "code"
+    assert [role for role, _, _ in seen] == ["code"] * 7 + ["code_deep", "code", "code"]
+    assert [d["text"] for k, d in events if k == "notice"] == ["上一輪做到步數上限,改用 code_deep(deepseek-v4.1-flash)"]
+    assert [(e["by"], e["used"], e["outcome"]) for e in log_entries(routing_log)] == [
+        ("classifier", "code", "max_steps"), ("escalate", "code_deep", "done"), ("classifier", "code", "done")]
+
+
+def test_escalation_only_when_it_can_help(workspace):
+    """不提議:沒做到上限、已經是難題模型或長文本模型、--role 指定了、沒設定 hard_role、這個環境沒有那顆模型。
+    跟分類器的 mode 無關(off 也提議)。"""
+    from agent import AgentResult
+    hit = AgentResult("[已達 6 步上限]", "code", 6, 0, hit_limit=True)
+    reg, _ = scripted_registry([], difficulty_config("off"))
+    s = AgentSession(reg, TokenQuota(10**6, 2))
+    assert s.escalation(hit) == "code_deep"
+    assert s.escalation(AgentResult("好", "code", 2, 0)) is None
+    assert s.escalation(AgentResult("[已達]", "code_deep", 6, 0, hit_limit=True)) is None
+    assert s.escalation(AgentResult("[已達]", "long_context", 6, 0, hit_limit=True)) is None
+    assert AgentSession(reg, TokenQuota(10**6, 2), role="code").escalation(hit) is None
+    assert AgentSession(scripted_registry([])[0], TokenQuota(10**6, 2)).escalation(hit) is None
+    cfg = difficulty_config("off")
+    cfg["roles"]["code_deep"]["available_on"] = ["catalog"]  # 測試的 registry 是地端(nim)
+    assert AgentSession(scripted_registry([], cfg)[0], TokenQuota(10**6, 2)).escalation(hit) is None
+
+
+def test_cli_offers_hard_model_after_step_limit(workspace, monkeypatch):
+    """互動模式:做到步數上限時問要不要換難題模型接著做(預設不要);規劃做到上限 = 沒交出計畫,不問要不要照計畫執行。"""
+    reg, seen = scripted_registry(stuck(6) + [ai("接著做完了")] + stuck(6), difficulty_config("off"))
+    prompts, inputs = [], iter(["找出偶發失敗的原因", "y", "/plan 重構 billing", "", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda p: prompts.append(p) or next(inputs))
+    chat(lambda: AgentSession(reg, TokenQuota(10**6, 2)), [])
+    assert [role for role, _, _ in seen] == ["code"] * 6 + ["code_deep"] + ["code"] * 6
+    assert "上一輪做到步數上限" in seen[6][1][-1].content
+    assert sum("要換 code_deep(deepseek-v4.1-flash,比較慢)接著做嗎" in p for p in prompts) == 2
+    assert not any("照這個計畫執行嗎" in p for p in prompts)
+
+
 # ---------- 網頁介面 ----------
 
 class _Web:
     """測試用的網頁介面:真的開 HTTP 伺服器(隨機 port),模型用照劇本回答的假模型。"""
     TOKEN = "t0k"
 
-    def __init__(self, script):
+    def __init__(self, script, config=CONFIG):
         import threading
         import webui
-        reg, self.seen = scripted_registry(script)
+        reg, self.seen = scripted_registry(script, config)
         self.hub = webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
                              status="上網:關")
         self.server = webui.serve(self.hub, 0, token=self.TOKEN)
@@ -1151,7 +1253,7 @@ class _Web:
 @pytest.fixture
 def webui_app(workspace):
     apps = []
-    yield lambda script: apps.append(_Web(script)) or apps[-1]
+    yield lambda script, config=CONFIG: apps.append(_Web(script, config)) or apps[-1]
     for app in apps:
         app.close()
 
@@ -1258,6 +1360,28 @@ def test_webui_plan_mode(webui_app):
     assert later[0] == {"seq": events[-1]["seq"] + 1, "kind": "plan_answered", "go": True}
     assert later[1]["kind"] == "user" and later[1]["text"] == "照計畫執行" and later[1]["mode"] == "execute"
     assert "照上面的計畫執行" in app.seen[1][1][-1].content and "update_plan" in app.seen[1][2]
+
+
+def test_webui_offers_hard_model_after_step_limit(webui_app):
+    """網頁:做到步數上限 → 卡片問要不要換難題模型 → 按了才用它接著做;沒按就問別的,卡片收起來、提議失效。"""
+    app = webui_app(stuck(6) + [ai("接著做完了")] + stuck(6) + [ai("別的答案")], difficulty_config("off"))
+    app.post("/api/ask", {"text": "找出偶發失敗的原因"})
+    offer = app.events_until("offer_escalate")[-1]
+    assert {k: offer[k] for k in ("role", "model", "mode", "used", "steps")} == {
+        "role": "code_deep", "model": "deepseek-v4.1-flash", "mode": "normal", "used": "code", "steps": 6}
+    assert app.post("/api/escalate", {"go": True}).status_code == 202
+    later = app.events_until("done", since=offer["seq"])
+    assert later[0] == {"seq": offer["seq"] + 1, "kind": "escalate_answered", "go": True}
+    assert later[1]["kind"] == "user" and later[1]["text"] == "換 deepseek-v4.1-flash 接著做"
+    assert later[-1]["role"] == "code_deep" and "上一輪做到步數上限" in app.seen[6][1][-1].content
+
+    app.post("/api/ask", {"text": "再找一次"})
+    second = app.events_until("offer_escalate", since=later[-1]["seq"])[-1]
+    app.post("/api/ask", {"text": "算了,問別的"})
+    rest = app.events_until("done", since=second["seq"])
+    assert [(e["kind"], e.get("go")) for e in rest[:2]] == [("escalate_answered", False), ("user", None)]
+    assert app.post("/api/escalate", {"go": True}).json()["error"] == "這個提議已經過期了"
+    assert app.seen[-1][0] == "code"
 
 
 def test_vscode_extension_package(tmp_path, monkeypatch):
@@ -1521,7 +1645,8 @@ def test_webui_desk_conversations_persist(workspace, tmp_path_factory):
 
 
 def test_webui_restore_closes_unfinished_turn(workspace):
-    """上次關掉時答到一半、確認還沒回答:讀回來要補上結尾,畫面才不會一直卡在「回答中」;等核准的計畫要還在等。"""
+    """上次關掉時答到一半、確認還沒回答:讀回來要補上結尾,畫面才不會一直卡在「回答中」;
+    等核准的計畫、還沒回答的「換模型接著做」要還在等。"""
     import webui
     reg, _ = scripted_registry([])
     make = lambda: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event))  # noqa: E731
@@ -1534,6 +1659,11 @@ def test_webui_restore_closes_unfinished_turn(workspace):
     hub.restore({"events": [{"kind": "user", "text": "規劃", "mode": "plan"}, {"kind": "done", "answer": "計畫"},
                             {"kind": "offer_plan"}]})
     assert hub.plan_waiting and [e["kind"] for e in hub.events][-1] == "offer_plan"
+    hub = make()
+    offer = {"kind": "offer_escalate", "role": "code_deep", "model": "deepseek-v4.1-flash", "mode": "normal",
+             "used": "code", "steps": 15}
+    hub.restore({"events": [{"kind": "user", "text": "查", "mode": "normal"}, {"kind": "done", "answer": "[已達]"}, offer]})
+    assert hub.escalation == {k: v for k, v in offer.items() if k != "kind"} and not hub.plan_waiting
 
 
 def test_desk_shared_store_keeps_each_default(workspace, tmp_path_factory):

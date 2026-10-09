@@ -4,6 +4,8 @@
 紀錄由 agent 每輪寫一行(difficulty.record)。影子模式時 pick 是「本來會選的」、used 是實際用的,
 所以「判斷為難題、實際還是用一般模型」那組如果明顯比較吃力(步數多、tokens 多、碰到步數上限),
 就是分類器分得出難易的證據;再抽查題目確認,才把 mode 改成 on。
+但這只證明分類器分得出難易,不證明難題模型答得比較好:那要看「做到上限後換模型接著做」那組救回多少,
+或挑幾題讓兩顆模型各跑一次比較。
 """
 from __future__ import annotations
 
@@ -71,7 +73,8 @@ def report(entries: list[dict], hard_role: str = "code_deep", examples: int = 10
 
     picks = Counter(e["pick"] or "分類失敗" for e in classified)
     lines.append("分類器判斷:" + " · ".join(f"{k} {_share(n, len(classified))}" for k, n in picks.most_common())
-                 + f"(另有手動指定 {by['manual']} 輪、照計畫執行沿用 {by['plan']} 輪)")
+                 + f"(另有手動指定 {by['manual']} 輪、照計畫執行沿用 {by['plan']} 輪、"
+                   f"做到上限後換模型 {by['escalate']} 輪)")
     if classified:
         spent = sum(e["classify_tokens"] for e in classified)
         total = sum(e["tokens"] or 0 for e in entries)
@@ -92,6 +95,9 @@ def report(entries: list[dict], hard_role: str = "code_deep", examples: int = 10
     if shadow:
         lines.append("影子模式依判斷分組(實際都用預設模型;判斷為難題的那組應該明顯比較吃力):")
         lines += [f"  判斷 {pick:<11}{_stats(rows)}" for pick, rows in sorted(shadow.items())]
+    if escalated := [e for e in entries if e["by"] == "escalate"]:
+        lines.append("一般模型做到步數上限、使用者選擇換模型接著做(沒再碰到上限的,就是難題模型救回來的):")
+        lines.append(f"  {_stats(escalated)}")
 
     hard = [e for e in classified if e["pick"] == hard_role][-examples:]
     if hard:
