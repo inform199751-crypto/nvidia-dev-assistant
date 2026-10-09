@@ -26,6 +26,7 @@ import re
 import webbrowser
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
+from functools import cache
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -137,6 +138,15 @@ class LanAccess:
                 self.devices[self._digest(sid)] = kind
                 self._save()
             return sid
+
+    def logout(self, sid: str | None) -> None:
+        """帳號選單的「登出」:只忘記這一支手機,下次要重新輸入 PIN;其他手機不受影響。"""
+        if not sid:
+            return
+        with self.lock:
+            self.sessions.pop(sid, None)
+            if self.devices.pop(self._digest(sid), None):
+                self._save()
 
     def identify(self, sid: str | None) -> str | None:
         """這個 cookie 是誰:"owner"、"guest:<這支手機的代號>",或 None(沒登入、被忘記、手機連線關了)。"""
@@ -301,8 +311,15 @@ class Hub:
         self.listeners = 0  # 現在有幾個頁面連著事件串流(桌面版用來判斷視窗是不是都關了)
         self.always: set[str] = set()
         self.on_event: Callable[[str], None] | None = None  # Desk 用來在重要事件後存檔
+        self.chat = False  # 「對話」模式(側邊欄切到「對話」開的):不綁專案,見 use_chat()
+        self.session = self._new_session()
+
+    def _new_session(self) -> agent.AgentSession:
         with toolbox.using(self.bench):  # 系統提示要讀這個專案的 ASSISTANT.md
-            self.session = new_session(self.publish)
+            session = self.new_session(self.publish)
+            if self.chat:
+                session.to_chat()
+        return session
 
     @property
     def workspace(self) -> Path:
@@ -315,6 +332,18 @@ class Hub:
     def use_rules(self, path: Path) -> None:
         """改用 path 當專案規則檔(從 GitHub 下載的專案:不信任 repo 自帶的 ASSISTANT.md)。"""
         self.bench.rules = path
+        with toolbox.using(self.bench):
+            self.session.refresh_system_prompt()
+
+    def use_chat(self) -> None:
+        """換成「對話」模式:短的系統提示、只有上網和存文件的工具,不附加 @檔案、不能改專案規則。"""
+        self.chat = True
+        with toolbox.using(self.bench):
+            self.session.to_chat()
+
+    def use_lang(self, lang: str | None) -> None:
+        """帳號選單的「回答語言」:改了馬上生效(下一步送出的系統提示就換了)。"""
+        self.bench.lang = lang
         with toolbox.using(self.bench):
             self.session.refresh_system_prompt()
 
@@ -349,6 +378,16 @@ class Hub:
             self.session.requested_role = role
         return ""
 
+    def set_effort(self, effort: str) -> str:
+        """「選模型」裡的努力程度(agent.EFFORTS),這段對話之後都用它;回傳錯誤訊息,空字串 = 成功。"""
+        if effort not in agent.EFFORTS:
+            return "沒有這個努力程度"
+        with self.cond:
+            if self.busy:
+                return "HSUAN 還在回答,等這一輪結束再換"
+            self.session.effort = effort
+        return ""
+
     # ---------- 存檔 / 讀檔(Desk 用:關掉程式再打開,對話還在) ----------
 
     def export(self) -> dict:
@@ -364,7 +403,8 @@ class Hub:
                     events.append(dict(ev))
         return {"messages": messages_to_dict(self.session.messages), "events": events,
                 "tokens_used": self.session.tokens_used, "draft": dict(self.bench.draft),
-                "patches": [[str(p), ok] for p, ok in self.bench.patches], "role": self.session.requested_role}
+                "patches": [[str(p), ok] for p, ok in self.bench.patches], "role": self.session.requested_role,
+                "effort": self.session.effort}
 
     def restore(self, data: dict) -> None:
         events = [dict(ev) for ev in data.get("events", [])]
@@ -388,6 +428,8 @@ class Hub:
         self.session.tokens_used = data.get("tokens_used", 0)
         if "role" in data:  # 輸入框選的模型;模型清單改過、已經沒有這個角色就回到自動
             self.session.requested_role = data["role"] if data["role"] in {r["role"] for r in self.roles()} else None
+        if data.get("effort") in agent.EFFORTS:
+            self.session.effort = data["effort"]
         self.bench.draft.update(data.get("draft", {}))
         self.bench.patches.extend((Path(p), ok) for p, ok in data.get("patches", []) if Path(p).is_file())
 
@@ -438,7 +480,8 @@ class Hub:
         before, planned, offer = len(patches), False, None
         try:
             with self.gate.turn(self.publish) if self.gate else nullcontext(), toolbox.using(self.bench):
-                r = self.session.ask(self.note + text, agent.file_mentions(text), mode, role)
+                files = [] if self.chat else agent.file_mentions(text)  # 對話模式讀不到電腦上的檔案
+                r = self.session.ask(self.note + text, files, mode, role)
             self.note = ""
             self.publish("done", {"role": r.role, "steps": r.steps, "tokens": r.tokens_used,
                                   "total": self.session.tokens_used, "answer": r.answer})
@@ -468,10 +511,9 @@ class Hub:
         with self.cond:
             if self.busy:
                 return False
-            role = self.session.requested_role  # 選好的模型留著
-            with toolbox.using(self.bench):
-                self.session = self.new_session(self.publish)
-            self.session.requested_role = role
+            role, effort = self.session.requested_role, self.session.effort  # 選好的模型和努力程度留著
+            self.session = self._new_session()
+            self.session.requested_role, self.session.effort = role, effort
             self.note, self.plan_waiting, self.escalation = "", False, None
         self.bench.draft.clear()  # 新對話不記得草稿,留著會混淆
         self.publish("clear")
@@ -495,6 +537,8 @@ class Hub:
     def remember(self, rule: str) -> str:
         if self.team:
             return "多人模式的專案規則由管理者維護(工作區的 ASSISTANT.md),不能從這裡改"
+        if self.chat:
+            return "對話模式不綁專案,沒有專案規則;請切到「程式」,在那個專案的對話裡加"
         with toolbox.using(self.bench):  # 寫進這段對話所在專案的 ASSISTANT.md
             path = agent.remember(rule)
             self.session.refresh_system_prompt()
@@ -678,6 +722,17 @@ def clone_public(url: str, dest: Path) -> str:
     return "下載失敗:" + (err.splitlines()[-1] if err else f"git 結束代碼 {r.returncode}")
 
 
+@cache
+def version() -> str:
+    """「了解更多」顯示的版本:最近一次 commit 的代碼和日期;不是用 git 拿到的(例如 ZIP)就空白。"""
+    try:
+        r = subprocess.run(["git", "-C", str(Path(__file__).parent), "log", "-1", "--format=%h · %cd", "--date=short"],
+                           capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
 def _title(text: str) -> str:
     line = " ".join(text.split())
     return line[:28] + ("…" if len(line) > 28 else "") or "新對話"
@@ -699,8 +754,10 @@ class Desk:
         self.repos_dir = repos_dir  # 從 GitHub 下載的專案放哪;None = 不能下載
         self.lock = threading.RLock()
         self.hubs: dict[str, Hub] = {}
-        self.meta: dict[str, dict] = {}  # 對話 id → {"id","title","project","created","updated"}
+        # 對話 id → {"id","title","project","kind","created","updated"};kind:code(綁專案)/ chat(對話模式,project 是 None)
+        self.meta: dict[str, dict] = {}
         self.projects: list[dict] = []
+        self.settings: dict = {}  # 這個人的設定(帳號選單的回答語言),存在 store/settings.json
         self.focus: str | None = None  # 畫面上最近打開的對話(開事件串流時記下)
         if store:
             self._load()
@@ -737,10 +794,36 @@ class Desk:
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 self.meta[data["id"]] = {k: data[k] for k in ("id", "title", "project", "created", "updated")}
+                self.meta[data["id"]]["kind"] = data.get("kind", "code")         # 以前的對話都是綁專案的
                 self.meta[data["id"]]["draft"] = sorted(data.get("draft", {}))  # 還沒套用的草稿,「待命」要列
                 self.meta[data["id"]]["plan"] = bool(data.get("plan"))           # 等核准的計畫
             except (OSError, ValueError, KeyError):
                 continue  # 壞掉的檔案略過,不擋其他對話
+        self._read_settings()
+
+    def _read_settings(self) -> None:
+        """桌面版和 VS Code 外掛共用同一份:每次開對話都重讀,另一邊改的語言新對話就會用到。"""
+        try:
+            self.settings = json.loads((self.store / "settings.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            pass
+
+    @property
+    def lang(self) -> str:
+        lang = self.settings.get("lang")
+        return lang if lang in agent.ANSWER_LANGS else "zh-TW"
+
+    def set_lang(self, lang: str) -> None:
+        """帳號選單的「回答語言」:存起來,已經打開的對話也馬上換。"""
+        if lang not in agent.ANSWER_LANGS:
+            raise ValueError("沒有這個語言")
+        with self.lock:
+            self.settings["lang"] = lang
+            if self.store:
+                self.store.mkdir(parents=True, exist_ok=True)
+                (self.store / "settings.json").write_text(json.dumps(self.settings, ensure_ascii=False), encoding="utf-8")
+            for hub in self.hubs.values():
+                hub.use_lang(lang)
 
     def _save_projects(self) -> None:
         if self.store:
@@ -818,7 +901,12 @@ class Desk:
             self._save_projects()
             return proj
 
-    def _make(self, proj: dict) -> Hub:
+    def _make(self, meta: dict) -> Hub:
+        if meta.get("kind") == "chat":  # 不綁專案:工具裡沒有讀檔的,工作區只是佔位
+            hub = self.make_hub(Path(self.project(self.default_pid)["path"]))
+            hub.use_chat()
+            return hub
+        proj = self.project(meta["project"]) or self.project(self.default_pid)  # 專案被拿掉了:放回預設專案
         hub = self.make_hub(Path(proj["path"]))
         if proj.get("rules"):
             hub.use_rules(Path(proj["rules"]))
@@ -826,16 +914,22 @@ class Desk:
 
     def _attach(self, cid: str, hub: Hub) -> Hub:
         hub.on_event = lambda kind: self.save(cid) if kind in SAVE_ON else None
+        if self.store:
+            self._read_settings()
+        if self.lang != "zh-TW":
+            hub.use_lang(self.lang)
         self.hubs[cid] = hub
         return hub
 
-    def new_conversation(self, pid: str | None = None) -> str:
+    def new_conversation(self, pid: str | None = None, kind: str = "code") -> str:
+        """kind:code = 綁專案(pid,沒給用預設專案);chat = 對話模式,不綁專案。"""
         with self.lock:
-            proj = self.project(pid or self.default_pid) or self.project(self.default_pid)
+            chat = kind == "chat"
+            proj = None if chat else self.project(pid or self.default_pid) or self.project(self.default_pid)
             cid = f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
-            self.meta[cid] = {"id": cid, "title": "新對話", "project": proj["id"],
-                              "created": time.time(), "updated": time.time()}
-            self._attach(cid, self._make(proj))
+            self.meta[cid] = {"id": cid, "title": "新對話", "project": proj["id"] if proj else None,
+                              "kind": "chat" if chat else "code", "created": time.time(), "updated": time.time()}
+            self._attach(cid, self._make(self.meta[cid]))
             return cid
 
     def hub(self, cid: str | None) -> Hub:
@@ -847,9 +941,7 @@ class Desk:
                     max(self.meta, key=lambda c: self.meta[c]["updated"], default=None) or self.new_conversation()
             if cid in self.hubs:
                 return self.hubs[cid]
-            meta = self.meta[cid]
-            proj = self.project(meta["project"]) or self.project(self.default_pid)  # 專案被拿掉了:放回預設專案
-            hub = self._attach(cid, self._make(proj))
+            hub = self._attach(cid, self._make(self.meta[cid]))
             try:
                 hub.restore(json.loads((self._conv_dir() / f"{cid}.json").read_text(encoding="utf-8")))
             except (OSError, ValueError, TypeError) as e:
@@ -988,12 +1080,16 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 return "local"
             return self.headers.get(team.user_header, "").strip() or None
 
+        def _sid(self) -> str | None:
+            """手機登入的 cookie。"""
+            morsel = SimpleCookie(self.headers.get("Cookie", "")).get(COOKIE)
+            return morsel.value if morsel else None
+
         def _guest(self) -> str | None:
             """用訪客 PIN 配對的手機:回傳它的代號(每支手機一個自己的空間);其他人 None。"""
             if team or lan is None or guests is None or self._local():
                 return None
-            morsel = SimpleCookie(self.headers.get("Cookie", "")).get(COOKIE)
-            who = lan.identify(morsel.value if morsel else None) or ""
+            who = lan.identify(self._sid()) or ""
             return who.split(":", 1)[1] if who.startswith("guest:") else None
 
         def _label(self) -> str:
@@ -1015,8 +1111,7 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 return self._user() is not None
             if self._local():
                 return True
-            morsel = SimpleCookie(self.headers.get("Cookie", "")).get(COOKIE)
-            return lan is not None and lan.valid(morsel.value if morsel else None)
+            return lan is not None and lan.valid(self._sid())
 
         def _token_ok(self, given: str | None) -> bool:
             if not self._signed_in():
@@ -1048,17 +1143,21 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 self._send(200, page.encode(), "text/html; charset=utf-8")
             elif url.path == "/api/state":
                 if self._token_ok(self.headers.get("X-Token")):
-                    hub, guest = self._hub(), self._guest()
+                    hub, guest, desk = self._hub(), self._guest(), self._desk()
                     quota, who = hub.session.quota, hub.session.user
-                    state = {"workspace": hub.workspace.name if guest else str(hub.workspace),  # 訪客不給電腦上的路徑
-                             "status": hub.status, "busy": hub.busy,
+                    state = {"workspace": "" if hub.chat else hub.workspace.name if guest else str(hub.workspace),  # 訪客不給電腦上的路徑
+                             "status": hub.status, "busy": hub.busy, "chat": hub.chat,
                              "model": hub.model, "draft": sorted(hub.bench.draft), "team": hub.team,
-                             "user": self._label(), "guest": bool(guest), "conv": self._desk().cid_of(hub),
-                             "instructions": hub.rules_file.is_file(),
-                             "role": hub.session.requested_role, "roles": hub.roles(),
+                             "user": self._label(), "guest": bool(guest), "conv": desk.cid_of(hub),
+                             "instructions": not hub.chat and hub.rules_file.is_file(),
+                             "role": hub.session.requested_role, "roles": hub.roles(), "effort": hub.session.effort,
                              # 今天的 token 用量(側邊欄左下角);訪客看到的是自己的額度
                              "usage": {"used": quota.used(who), "limit": quota.daily_tokens}
-                             if hasattr(quota, "used") else None}
+                             if hasattr(quota, "used") else None,
+                             # 帳號選單:回答語言、有沒有「手機與訪客」(只有桌面版、電腦自己看)、「登出」(只有手機)
+                             "lang": desk.lang, "phone": bool(phone and self._local()),
+                             "can_logout": bool(lan and not self._local()),
+                             "backend": hub.session.registry.backend, "version": version()}
                     if lan and self._local():  # 手機連線方式只給這台電腦看
                         state["lan"] = {"urls": [f"http://{ip}:{port}" for ip in lan.ips], "pin": lan.pin}
                     self._json(200, state)
@@ -1083,6 +1182,8 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 if self._token_ok(self.headers.get("X-Token")):
                     hub = self._hub()
                     f = hub.rules_file
+                    if hub.chat:  # 對話模式不綁專案,沒有專案規則
+                        return self._json(200, {"chat": True, "text": "", "project": "", "team": hub.team})
                     self._json(200, {"text": f.read_text(encoding="utf-8", errors="replace")[:20000] if f.is_file() else "",
                                      "project": hub.workspace.name, "team": hub.team,
                                      "downloaded": hub.bench.rules is not None})
@@ -1177,8 +1278,20 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 elif err := (phone.start() if body.get("on") else phone.stop()):
                     return self._json(409, {"error": err})
                 return self._json(200, phone.status())
-            if path == "/api/conv/new":  # 側邊欄的「新增」、專案旁邊的「+」
-                return self._json(200, {"id": desk.new_conversation(body.get("project"))})
+            if path == "/api/logout":  # 帳號選單的「登出」:只有用 PIN 登入的手機有
+                if not lan or self._local():
+                    return self._json(404, {"error": "這台電腦不用登出"})
+                lan.logout(self._sid())
+                return self._json(200, {}, {"Set-Cookie": f"{COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"})
+            if path == "/api/settings":  # 帳號選單的「回答語言」
+                try:
+                    desk.set_lang(str(body.get("lang", "")))
+                except ValueError as e:
+                    return self._json(400, {"error": str(e)})
+                return self._json(200, {"lang": desk.lang})
+            if path == "/api/conv/new":  # 側邊欄的「新增」、專案旁邊的「+」;kind=chat 是「對話」模式
+                kind = "chat" if body.get("kind") == "chat" else "code"
+                return self._json(200, {"id": desk.new_conversation(body.get("project"), kind)})
             if path == "/api/conv/rename":
                 desk.rename(str(body.get("id")), str(body.get("title", "")))
                 return self._json(200, {})
@@ -1195,7 +1308,7 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 text = str(body.get("text", "")).strip()
                 if not text:
                     return self._json(400, {"error": "問題是空的"})
-                ok = hub.ask(text, "plan" if body.get("mode") == "plan" else "normal")
+                ok = hub.ask(text, "plan" if body.get("mode") == "plan" and not hub.chat else "normal")
                 self._json(202 if ok else 409, {} if ok else {"error": "上一個問題還在回答中"})
             elif path == "/api/execute":  # 規劃模式交出計畫後:照計畫執行 / 先不要
                 ok = hub.execute_plan(bool(body.get("go")))
@@ -1217,6 +1330,11 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                     return self._json(409, {"error": msg})
                 desk.save(desk.cid_of(hub) or "")
                 self._json(200, {"role": hub.session.requested_role})
+            elif path == "/api/effort":  # 「選模型」裡的努力程度滑桿:這段對話之後都用它
+                if msg := hub.set_effort(str(body.get("effort", ""))):
+                    return self._json(409 if hub.busy else 400, {"error": msg})
+                desk.save(desk.cid_of(hub) or "")
+                self._json(200, {"effort": hub.session.effort})
             elif path == "/api/compact":
                 msg = hub.compact()  # 成功時摘要通知會從事件串流送出
                 self._json(200, {"text": msg})

@@ -2240,3 +2240,187 @@ def test_guest_phone_gets_its_own_space(workspace, tmp_path_factory, monkeypatch
         phone.close()
         main.shutdown()
         main.server_close()
+
+
+def _serve(app, **kw):
+    """在背景開一個測試用的網頁伺服器(token 是 t0k),回傳 (server, 網址)。"""
+    import threading
+    import webui
+    server = webui.serve(app, 0, token="t0k", **kw)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+
+def _events_until(base: str, cid: str, kind: str, n: int = 1) -> list[dict]:
+    """從這段對話開頭重播事件,直到第 n 個 kind。"""
+    import httpx
+    events = []
+    with httpx.stream("GET", f"{base}/api/events?token=t0k&c={cid}", timeout=10) as r:
+        for line in r.iter_lines():
+            if line.startswith("data: "):
+                events.append(json.loads(line[6:]))
+                if sum(e["kind"] == kind for e in events) == n:
+                    return events
+    raise AssertionError(f"沒有等到 {kind}:{events}")
+
+
+def test_chat_mode_has_no_project_files_or_code_tools(workspace, tmp_path_factory):
+    """側邊欄的「對話」模式不綁專案:短的系統提示、不讀 ASSISTANT.md、不附加 @檔案、工具只有上網和存文件、
+    不能先規劃 / 改規則;存檔重開、按「新對話」都還是對話模式。同一張桌面的程式模式照舊。"""
+    import httpx
+    import agent
+    import webui
+    (workspace / "calc.py").write_text("SECRET_CODE = 1\n", encoding="utf-8")
+    (workspace / "ASSISTANT.md").write_text("測試用 pytest\n", encoding="utf-8")
+    store = tmp_path_factory.mktemp("state")
+    reg, seen = scripted_registry([ai("對話的答案"), ai("程式的答案")])
+
+    def make_desk():
+        return webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(
+            reg, TokenQuota(10**6, 2), tools=tools.ALL_TOOLS + [web.fetch_url], on_event=on_event), workspace=ws),
+            workspace, store=store)
+
+    desk = make_desk()
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    try:
+        chat_id = httpx.post(base + "/api/conv/new", json={"kind": "chat"}, headers=h).json()["id"]
+        code_id = httpx.post(base + "/api/conv/new", json={}, headers=h).json()["id"]
+        listed = {c["id"]: (c["kind"], c["project"]) for c in httpx.get(base + "/api/desk", headers=h).json()["conversations"]}
+        assert listed == {chat_id: ("chat", None), code_id: ("code", desk.default_pid)}
+        in_chat = {**h, "X-Conv": chat_id}
+        st = httpx.get(base + "/api/state", headers=in_chat).json()
+        assert st["chat"] and st["workspace"] == "" and not st["instructions"]
+        assert httpx.get(base + "/api/instructions", headers=in_chat).json()["chat"]
+        assert httpx.post(base + "/api/remember", json={"rule": "x"}, headers=in_chat).status_code == 403
+        httpx.post(base + "/api/ask", json={"text": "看 @calc.py", "mode": "plan"}, headers=in_chat)
+        assert _events_until(base, chat_id, "done")[0]["mode"] == "normal"  # 對話模式沒有「先規劃」
+        httpx.post(base + "/api/ask", json={"text": "看 @calc.py"}, headers={**h, "X-Conv": code_id})
+        _events_until(base, code_id, "done")
+    finally:
+        server.shutdown()
+        server.server_close()
+    (_, chat_msgs, chat_tools), (_, code_msgs, code_tools) = seen
+    assert sorted(chat_tools) == ["fetch_url", "save_document"] and "propose_patch" in code_tools
+    assert chat_msgs[0].content.startswith(agent.CHAT_PROMPT) and "pytest" not in chat_msgs[0].content
+    assert "SECRET_CODE" not in chat_msgs[-1].content  # @檔案沒有附上
+    assert "pytest" in code_msgs[0].content and "SECRET_CODE" in code_msgs[-1].content
+    again = make_desk()  # 重開程式
+    assert again.meta[chat_id]["kind"] == "chat" and again.hub(chat_id).session.chat
+    again.hub(chat_id).clear()
+    assert again.hub(chat_id).session.chat and not again.hub(code_id).session.chat
+
+
+def test_answer_language_from_account_menu(workspace, tmp_path_factory):
+    """帳號選單的「回答語言」:存在這個人的 settings.json;打開中的對話馬上換,新對話、「新對話」按鈕、
+    共用存檔的另一個行程(VS Code 外掛)開的新對話也用它;選回繁中(預設)系統提示跟以前一字不差。"""
+    import httpx
+    import webui
+    store = tmp_path_factory.mktemp("state")
+    reg, _ = scripted_registry([])
+
+    def make_desk():
+        return webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                               workspace=ws), workspace, store=store)
+
+    def prompt(d, cid):
+        return d.hub(cid).session.messages[0].content
+
+    desk, other = make_desk(), make_desk()
+    code_id, chat_id = desk.new_conversation(), desk.new_conversation(kind="chat")
+    before = prompt(desk, code_id)
+    assert "Answer language" not in before
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    try:
+        assert httpx.post(base + "/api/settings", json={"lang": "xx"}, headers=h).status_code == 400
+        assert httpx.post(base + "/api/settings", json={"lang": "en"}, headers=h).json() == {"lang": "en"}
+        assert httpx.get(base + "/api/state", headers={**h, "X-Conv": code_id}).json()["lang"] == "en"
+    finally:
+        server.shutdown()
+        server.server_close()
+    english = "Reply in English"
+    assert english in prompt(desk, code_id) and english in prompt(desk, chat_id)
+    assert english in prompt(desk, desk.new_conversation()) and english in prompt(other, other.new_conversation())
+    desk.hub(code_id).clear()
+    assert english in prompt(desk, code_id) and make_desk().lang == "en"
+    desk.set_lang("zh-TW")
+    assert prompt(desk, code_id) == before
+
+
+def test_phone_logout_forgets_only_that_phone(workspace, tmp_path_factory, monkeypatch):
+    """帳號選單的「登出」只有手機有:這支手機的配對刪掉、cookie 清掉,之後要重新輸入 PIN;
+    另一支手機照常;電腦自己沒有登出。"""
+    import httpx
+    import webui
+    store = tmp_path_factory.mktemp("state") / "phones.json"
+    reg, _ = scripted_registry([])
+    hub = webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event))
+    server, base = _serve(hub, lan=webui.LanAccess(["127.0.0.1"], pin="123456", store=store))
+    h = {"X-Token": "t0k"}
+    try:
+        assert httpx.get(base + "/api/state", headers=h).json()["can_logout"] is False
+        assert httpx.post(base + "/api/logout", json={}, headers=h).status_code == 404
+        monkeypatch.setattr(webui, "LOCAL_ADDRS", set())  # 接下來的連線都當成手機
+        cookies = [httpx.post(base + "/api/login", json={"pin": "123456"}).cookies for _ in range(2)]
+        first, second = (httpx.Client(base_url=base, headers=h, cookies=c) for c in cookies)
+        assert first.get("/api/state").json()["can_logout"] is True and len(json.loads(store.read_text())) == 2
+        r = first.post("/api/logout", json={})
+        assert r.status_code == 200 and "Max-Age=0" in r.headers["set-cookie"]
+        with httpx.Client(base_url=base, headers=h, cookies=cookies[0]) as kept:  # 留著舊 cookie 也沒用
+            assert kept.get("/api/state").status_code == 403
+        assert second.get("/api/state").status_code == 200 and len(json.loads(store.read_text())) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_effort_slider_sets_thinking_steps_and_care(workspace, tmp_path_factory):
+    """「選模型」裡的努力程度:低 = 關思考、步數 ×0.6;中(預設)什麼都不改;高 / 超高 = 開思考、步數變多、
+    問題後面加一句要多仔細。每段對話各自記住,「新對話」保留、存檔重開還在;回答中不能換。"""
+    import httpx
+    import agent
+    import webui
+    store = tmp_path_factory.mktemp("state")
+    script = [ai("中的答案")] + stuck(4) + [ai("高的答案")]
+    seen, kwargs = [], []
+
+    def factory(spec, **kw):
+        kwargs.append(kw["model_kwargs"])
+        return ScriptedChat(role=spec.role, script=script, seen=seen)
+
+    reg = ModelRegistry(copy.deepcopy(CONFIG), backend="nim", chat_factory=factory)
+
+    def make_desk():
+        return webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                               workspace=ws), workspace, store=store)
+
+    desk = make_desk()
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    try:
+        cid = httpx.post(base + "/api/conv/new", json={}, headers=h).json()["id"]
+        h["X-Conv"] = cid
+        assert httpx.get(base + "/api/state", headers=h).json()["effort"] == "medium"
+        httpx.post(base + "/api/ask", json={"text": "中"}, headers=h)
+        _events_until(base, cid, "done")
+        assert httpx.post(base + "/api/effort", json={"effort": "huge"}, headers=h).status_code == 400
+        assert httpx.post(base + "/api/effort", json={"effort": "low"}, headers=h).json() == {"effort": "low"}
+        httpx.post(base + "/api/ask", json={"text": "低"}, headers=h)
+        assert _events_until(base, cid, "done", n=2)[-1]["steps"] == 4  # 測試設定 6 步 × 0.6
+        httpx.post(base + "/api/clear", json={}, headers=h)
+        assert httpx.post(base + "/api/effort", json={"effort": "high"}, headers=h).status_code == 200
+        httpx.post(base + "/api/ask", json={"text": "高"}, headers=h)
+        _events_until(base, cid, "done")
+        desk.hubs[cid].busy = True
+        assert httpx.post(base + "/api/effort", json={"effort": "max"}, headers=h).status_code == 409
+        desk.hubs[cid].busy = False
+    finally:
+        server.shutdown()
+        server.server_close()
+    think = [kw.get("chat_template_kwargs", {}).get("thinking") for kw in kwargs if kw is not None]
+    assert None in think and False in think and True in think  # 中 = 伺服器預設、低 = 關、高 = 開
+    medium_q, low_q, high_q = (msgs[-1].content for _, msgs, _ in (seen[0], seen[1], seen[-1]))
+    assert "Effort" not in medium_q and "Effort: low" in low_q and "Effort: high" in high_q
+    again = make_desk()  # 重開:「新對話」之後選的高還在
+    assert again.hub(cid).session.effort == "high" and set(agent.EFFORTS) == {"low", "medium", "high", "max"}

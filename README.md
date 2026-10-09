@@ -36,7 +36,7 @@ flowchart LR
 | `token_guard.py` | token 估算(實測校準)、截斷、歷史瘦身、大檔大綱、每人配額 |
 | `tools.py` | 列檔 / 讀檔 / 搜尋 / git 紀錄 / 沙箱測試與指令 / 提 patch / 存文件,含機密檔封鎖 |
 | `documents.py` | PDF / Word / Excel 轉文字,給 `read_document` 和 `@附檔` 用 |
-| `webui.py` + `webui.html` | 網頁介面:標準函式庫的 HTTP 伺服器 + Server-Sent Events,只聽 127.0.0.1,API 要帶啟動時產生的 token;側邊欄(新增 / 成品 / 待命 / 自訂 / 更多 + 專案和對話),對話存在 `output/state/` |
+| `webui.py` + `webui.html` | 網頁介面:標準函式庫的 HTTP 伺服器 + Server-Sent Events,只聽 127.0.0.1,API 要帶啟動時產生的 token;側邊欄(新增 / 成品 / 待命 / 自訂 / 更多 + 專案和對話,左上角切換「對話 / 程式」,左下角帳號選單),對話存在 `output/state/` |
 | `desktop_app.py` | 桌面版:背景啟動 webui(port 8780)+ Edge app 模式開獨立視窗,視窗都關了就結束;`--install` 建桌面捷徑,圖示 `assets/` 用純 Python 畫;「更多 → 手機」打開手機連線(QR code + PIN 配對) |
 | `qr.py` | QR code 產生器(標準函式庫):手機連線的網址畫成 QR code |
 | `ml/` + `train_models.py` | 自己訓練的小模型(照課程教材寫):ID3 決策樹判斷題目難不難、線性回歸預估每一輪的 tokens 和時間,跟 scikit-learn 的決策樹 / 邏輯回歸 / 隨機森林 / 神經網路比較;執行時讀 JSON,純 Python |
@@ -53,7 +53,7 @@ flowchart LR
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
 | 難度分類器(10/9) | 14 題示範問題(一般 7、難題 7,含「繼續」「好」這種要看前文的短回覆) | 14/14 符合預期;Super 關思考每次 0.6–1.1 秒、約 300 tokens。題目是自己出的,真實準確度要看影子模式的紀錄 |
-| 離線測試 | 假模型,不需金鑰 | 109 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 113 個全過 |
 
 ## 實測與審查抓到的 31 個問題
 
@@ -105,6 +105,9 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python webui.py                     # 網頁介面(只開在本機):回答邊產生邊顯示,套用 / 上網前用按鈕確認
                                                   # 側邊欄:新增 / 成品(文件、patch)/ 待命(等你處理的草稿、確認、計畫)/ 自訂 / 更多,
                                                   # 下面是專案和它們的對話(自動存檔,關掉再開還在)
+                                                  # 左上角切換「對話 / 程式」:對話模式不綁專案(一般問答、寫作、翻譯,只有上網和存文件的工具)
+                                                  # 左下角帳號選單:設定(Ctrl+,)、回答語言、使用說明、更新紀錄、了解更多;手機上可以登出
+                                                  # 輸入框右下角選模型和「努力程度」(低 / 中 / 高 / 超高:思考開關、步數上限、要多仔細)
                                                   # 「新增專案」可以貼公開的 GitHub 網址(下載到 output/repos/,只抓公開的);
                                                   # 開了上網的話,對話裡貼 PR / issue / 檔案網址,會讀成純文字(PR 附 diff)
 .venv/Scripts/python webui.py --lan               # 不用桌面版時:同一個 Wi-Fi 的手機也能開,終端機印出網址和 6 位數 PIN(不要和桌面版同時開)

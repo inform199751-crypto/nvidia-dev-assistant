@@ -63,8 +63,13 @@
     font-size: 14px; line-height: 1.5; border-right: 1px solid var(--line);
   }
   .side-scroll { flex: 1; overflow-y: auto; padding: 8px 8px 12px; }
-  .side-top { display: flex; align-items: center; justify-content: space-between; padding: 6px 6px 10px; }
+  .side-top { display: flex; align-items: center; gap: 6px; padding: 6px 6px 10px; }
   .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+  /* 對話 / 程式切換(像 Claude 桌面版左上角那兩個圖示) */
+  .mode-switch { display: flex; gap: 2px; padding: 2px; margin-left: auto; border-radius: 10px; background: var(--hover); }
+  .mode-switch button { border: 0; background: none; border-radius: 8px; padding: 4px 8px; color: var(--faint); }
+  .mode-switch button:hover { color: var(--text); }
+  .mode-switch button[aria-pressed="true"] { background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
   .brand img { width: 22px; height: 22px; border-radius: 6px; box-shadow: 0 0 0 1px var(--line); }  /* 圖示本身是黑的,黑底上要一圈邊才看得到 */
   .nav-btn, .conv {
     display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
@@ -94,14 +99,20 @@
   .conv .menu-btn { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); opacity: 0; }
   .conv:hover .menu-btn, .conv:focus-within .menu-btn { opacity: 1; }
   .empty-proj { color: var(--faint); font-size: 13px; padding: 2px 10px 2px 26px; }
+  .recent .project-head { padding: 2px 8px; }
+  .recent .empty-proj { padding-left: 8px; }
   .add-project { color: var(--muted); margin-top: 10px; font-size: 13px; }
-  .side-user { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--line); }
+  /* 左下角:點了打開帳號選單 */
+  .side-user { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 0; border-top: 1px solid var(--line);
+               background: none; color: var(--text); text-align: left; font-size: 14px; line-height: 1.3; }
+  .side-user:hover { background: var(--hover); }
   .side-user img { width: 28px; height: 28px; border-radius: 8px; box-shadow: 0 0 0 1px var(--line); }
-  .side-user .who { flex: 1; min-width: 0; line-height: 1.3; }
-  .side-user .who div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .side-user .who { flex: 1; min-width: 0; }
+  .side-user .who-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .side-user .who small { color: var(--faint); font-size: 12px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .side-user > svg { color: var(--faint); }
   /* 今天的 token 用量:八成以上變橘、用完變紅 */
-  .usage-bar { height: 4px; border-radius: 2px; background: var(--line); margin-top: 4px; overflow: hidden; }
+  .usage-bar { display: block; height: 4px; border-radius: 2px; background: var(--line); margin-top: 4px; overflow: hidden; }
   .usage-bar i { display: block; height: 100%; width: 0; background: var(--accent); }
   .usage-bar.high i { background: var(--warn); }
   .usage-bar.full i { background: var(--error); }
@@ -114,10 +125,19 @@
   #close-side, #open-side { display: none; }
   .popup { position: fixed; z-index: 30; background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
            box-shadow: var(--shadow); padding: 4px; min-width: 140px; }
-  .popup button { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 8px;
-                  padding: 6px 10px; font-size: 14px; }
+  .popup button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 0;
+                  border-radius: 8px; padding: 6px 10px; font-size: 14px; }
   .popup button:hover { background: var(--hover); }
   .popup button.danger { color: var(--error); }
+  .popup button .label { flex: 1; min-width: 0; }
+  .popup button .right { color: var(--faint); font-size: 12.5px; white-space: nowrap; }
+  .popup button svg { color: var(--muted); }
+  .popup hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }
+  .popup .head { padding: 6px 10px 4px; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+  .popup .head small { display: block; color: var(--faint); font-size: 12.5px; font-weight: 400; }
+  .changelog h3 { color: var(--text); }
+  .changelog ul { margin: 0; padding-left: 22px; }
+  .changelog li { margin: 4px 0; font-size: 15px; }
 
   /* ---------- 主畫面 ---------- */
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -254,6 +274,15 @@
   .model-pick span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .model-pick:hover { background: var(--hover); }
   .popup button small { display: block; color: var(--faint); font-size: 12px; }
+  /* 「選模型」上面的努力程度滑桿(像 Claude 的):更快 ↔ 更聰明,「推薦」標在「中」下面 */
+  .effort { padding: 8px 10px 6px; min-width: 270px; font-size: 14px; }
+  .effort-head { display: flex; justify-content: space-between; align-items: baseline; }
+  .effort-head span { color: var(--faint); }
+  .effort-ends { display: flex; justify-content: space-between; color: var(--faint); font-size: 12.5px; margin-top: 8px; }
+  .effort input { width: 100%; margin: 6px 0 0; accent-color: var(--btn); }
+  .effort-ticks { display: flex; justify-content: space-between; margin: 0 -12px; font-size: 12px; color: var(--faint); }
+  .effort-ticks span { width: 40px; text-align: center; }  /* 滑桿的圓點寬約 16px:每格中心對到它停的位置 */
+  .effort small { display: block; color: var(--faint); font-size: 12.5px; margin-top: 2px; }
   textarea::placeholder { color: var(--faint); }
   .mode-btn { flex-shrink: 0; align-self: center; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line);
               background: transparent; border-radius: 999px; padding: 4px 12px 4px 9px; font-size: 13px; color: var(--muted); }
@@ -291,6 +320,14 @@
   <div class="side-scroll">
     <div class="side-top">
       <div class="brand"><img src="/favicon.ico" alt="">HSUAN</div>
+      <div class="mode-switch" role="group" aria-label="模式">
+        <button type="button" data-mode="chat" aria-pressed="false" aria-label="對話模式" title="對話:一般問答、寫作、翻譯、上網查(不綁專案)">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 4.5h12A1.5 1.5 0 0117.5 6v7a1.5 1.5 0 01-1.5 1.5H9l-3.5 3v-3H4A1.5 1.5 0 012.5 13V6A1.5 1.5 0 014 4.5z"/></svg>
+        </button>
+        <button type="button" data-mode="code" aria-pressed="true" aria-label="程式模式" title="程式:綁專案,讀檔、改程式、跑測試">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 6l-4 4 4 4M13 6l4 4-4 4"/></svg>
+        </button>
+      </div>
       <button type="button" class="icon-btn" id="close-side" aria-label="關閉側邊欄">
         <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
       </button>
@@ -317,14 +354,12 @@
       <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6.5V15a1.5 1.5 0 001.5 1.5h11A1.5 1.5 0 0017 15V8a1.5 1.5 0 00-1.5-1.5H10L8.5 4.5h-4A1.5 1.5 0 003 6v.5zM10 9.5v4M8 11.5h4"/></svg>新增專案(資料夾 / GitHub)
     </button>
   </div>
-  <div class="side-user">
+  <button type="button" class="side-user" id="account" aria-haspopup="menu" title="帳號選單(設定、語言、說明…)">
     <img src="/favicon.ico" alt="">
-    <div class="who"><div id="who">本機</div><small id="who-usage"></small>
-      <div class="usage-bar" id="usage-bar" hidden><i id="usage-fill"></i></div></div>
-    <button type="button" class="icon-btn" id="settings" aria-label="設定" title="設定">
-      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="2.6"/><path d="M10 2v2.2M10 15.8V18M2 10h2.2M15.8 10H18M4.3 4.3l1.6 1.6M14.1 14.1l1.6 1.6M4.3 15.7l1.6-1.6M14.1 5.9l1.6-1.6"/></svg>
-    </button>
-  </div>
+    <span class="who"><span class="who-name" id="who">本機</span><small id="who-usage"></small>
+      <span class="usage-bar" id="usage-bar" hidden><i id="usage-fill"></i></span></span>
+    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8l4-4 4 4M6 12l4 4 4-4"/></svg>
+  </button>
 </aside>
 <div class="scrim" id="scrim"></div>
 
@@ -354,7 +389,7 @@
           先規劃
         </button>
         <span class="spacer"></span>
-        <button type="button" class="model-pick" id="model-pick" aria-label="選擇模型" title="選擇這段對話用的模型">
+        <button type="button" class="model-pick" id="model-pick" aria-label="選擇模型和努力程度" title="這段對話用的模型和努力程度">
           <span id="model-name">自動</span>
           <svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l5 5 5-5"/></svg>
         </button>
@@ -363,7 +398,7 @@
         </button>
       </div>
     </form>
-    <div class="hint">用 @檔名 附上專案裡的檔案 · Enter 送出、Shift+Enter 換行 · HSUAN 也會出錯,重要的結果請自己確認</div>
+    <div class="hint" id="hint">用 @檔名 附上專案裡的檔案 · Enter 送出、Shift+Enter 換行 · HSUAN 也會出錯,重要的結果請自己確認</div>
   </footer>
 </div>
 <script>
@@ -385,6 +420,9 @@ const store = {
   get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* 無痕視窗等不能存,沒關係 */ } },
 };
+// 側邊欄上面的「對話 / 程式」:跟著目前打開的那段對話;chat 不綁專案,code 是專案底下的對話
+let sideMode = store.get("mode", "code") === "chat" ? "chat" : "code";
+const kindOf = (c) => (c && c.kind) || "code";
 
 const theme = () => document.documentElement.dataset.theme || "dark";
 function setTheme(t) {
@@ -487,14 +525,32 @@ const later = (key, fn, ms = 300) => { clearTimeout(timers[key]); timers[key] = 
 // ---------- 新對話的畫面:圖示、名稱、一句說明、輸入框、快捷按鈕都在中間 ----------
 const form = $("form");
 const icon = (d) => `<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
-// [名稱, 圖示, 填進輸入框的開頭(不直接送出,讓你補完), 要不要開「先規劃」]
-const CHIPS = [
-  ["找 bug", icon('<path d="M7 6l-4 4 4 4M13 6l4 4-4 4"/>'), "幫我找出這個錯誤的原因並修正:"],
-  ["解釋程式", icon('<path d="M3 4.5h5a2 2 0 012 2V16a1.5 1.5 0 00-1.5-1.5H3zM17 4.5h-5a2 2 0 00-2 2V16a1.5 1.5 0 011.5-1.5H17z"/>'), "解釋 @"],
-  ["寫文件", icon('<path d="M13.5 3.5l3 3L7 16H4v-3z"/>'), "幫我寫一份文件:"],
-  ["整理摘要", icon('<path d="M7 5h10M7 10h10M7 15h7M3 5h.01M3 10h.01M3 15h.01"/>'), "把下面的內容整理成重點摘要:\n"],
-];
-const MORE_CHIPS = [["上網查資料", "", "上網查:"], ["讀辦公檔案", "", "摘要 @"], ["先規劃再動手", "", "", true]];
+// [名稱, 圖示, 填進輸入框的開頭(不直接送出,讓你補完), 要不要開「先規劃」];對話 / 程式兩種模式各一組
+const CHIPS = {
+  code: [
+    ["找 bug", icon('<path d="M7 6l-4 4 4 4M13 6l4 4-4 4"/>'), "幫我找出這個錯誤的原因並修正:"],
+    ["解釋程式", icon('<path d="M3 4.5h5a2 2 0 012 2V16a1.5 1.5 0 00-1.5-1.5H3zM17 4.5h-5a2 2 0 00-2 2V16a1.5 1.5 0 011.5-1.5H17z"/>'), "解釋 @"],
+    ["寫技術文件", icon('<path d="M13.5 3.5l3 3L7 16H4v-3z"/>'), "幫這個專案寫一份技術文件,存成檔案:"],
+    ["專案導覽", icon('<path d="M3 6.5V15a1.5 1.5 0 001.5 1.5h11A1.5 1.5 0 0017 15V8a1.5 1.5 0 00-1.5-1.5H10L8.5 4.5h-4A1.5 1.5 0 003 6z"/>'), "這個專案在做什麼?先看結構,再說明主要的檔案和流程。"],
+  ],
+  chat: [
+    ["寫作", icon('<path d="M13.5 3.5l3 3L7 16H4v-3z"/>'), "幫我寫"],
+    ["翻譯", icon('<path d="M3 5h8M7 3v2M5 5c0 3 2 5.5 5 6.5M9 5c-.5 3-2.5 5.5-5.5 6.5M11 17l3-7 3 7M12 15h4"/>'), "翻譯成英文:\n"],
+    ["整理摘要", icon('<path d="M7 5h10M7 10h10M7 15h7M3 5h.01M3 10h.01M3 15h.01"/>'), "把下面的內容整理成重點摘要:\n"],
+    ["上網查", icon('<circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4"/>'), "上網查:"],
+  ],
+};
+const MORE_CHIPS = {
+  code: [["讀辦公檔案", "", "摘要 @"], ["寫測試", "", "幫 @ 寫測試,並在沙箱跑過:"], ["先規劃再動手", "", "", true]],
+  chat: [["寫 email", "", "幫我寫一封 email:"], ["解釋概念", "", "用簡單的話解釋:"], ["想點子", "", "幫我想幾個點子:"]],
+};
+const TAGLINE = {
+  chat: () => "日常問答、寫作、翻譯、上網查資料。",
+  code: () => {
+    const p = desk.projects.find((x) => x.id === convMeta()?.project);
+    return `你的 AI 研發助理${p ? `,專案「${p.name}」` : ""}:找 bug、改程式、寫技術文件。`;
+  },
+};
 function useChip([, , text, plan]) {
   if (plan) setPlanMode(true);
   input.value = text; autosize(); updateSend(); input.focus();
@@ -507,14 +563,14 @@ function showEmpty() {
   const logo = box.appendChild(el("img", "logo"));
   logo.src = "/icon-192.png"; logo.alt = "";
   box.appendChild(el("h1", "", "HSUAN"));
-  box.appendChild(el("p", "tagline", "你的 AI 研發助理:寫程式、整理文件、上網查資料。"));
+  box.appendChild(el("p", "tagline", TAGLINE[sideMode]()));
   box.appendChild(form);  // 輸入框搬到中間;開始對話時 dock() 搬回最下面
   const chips = box.appendChild(el("div", "chips"));
-  for (const c of CHIPS) {
+  for (const c of CHIPS[sideMode]) {
     const b = chips.appendChild(button("", "chip", () => useChip(c)));
     b.innerHTML = c[1]; b.append(c[0]);
   }
-  const more = chips.appendChild(button("", "chip more", () => popup(more, MORE_CHIPS.map((c) => [c[0], () => useChip(c)]))));
+  const more = chips.appendChild(button("", "chip more", () => popup(more, MORE_CHIPS[sideMode].map((c) => [c[0], () => useChip(c)]))));
   more.innerHTML = icon('<path d="M10 4v12M4 10h12"/>');
   more.setAttribute("aria-label", "更多"); more.title = "更多";
   log.appendChild(box);
@@ -737,47 +793,120 @@ function connect() {
 const convMeta = () => desk.conversations.find((c) => c.id === conv);
 function openConv(id) {
   conv = id; store.set("conv", id);
+  sideMode = kindOf(convMeta()); store.set("mode", sideMode);
   bot = null; tools.length = 0; cards = {}; dirty.clear();
-  closePage(); closeSide(); setPlanMode(false); setBusy(false);
+  closePage(); closeSide(); setPlanMode(false); setBusy(false); applyMode();
   showEmpty(); connect(); loadState(); renderSide();
   input.focus();
 }
-async function newConv(projectId) {
-  const r = await api("/api/conv/new", { project: projectId || convMeta()?.project });
+async function newConv(projectId, kind = sideMode) {
+  const project = kind === "code" ? projectId || convMeta()?.project : undefined;  // 對話模式不綁專案
+  const r = await api("/api/conv/new", { project, kind });
   if (!r.ok) return alert(r.data.error || "開新對話失敗");
   await loadDesk(); openConv(r.data.id);
 }
+// 對話模式沒有 @檔案和「先規劃」(不綁專案,沒有讀檔、改檔的工具)
+function applyMode() {
+  const chat = sideMode === "chat";
+  document.querySelectorAll(".mode-switch button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === sideMode)));
+  $("attach").hidden = chat; $("plan-mode").hidden = chat;
+  $("hint").textContent = (chat ? "" : "用 @檔名 附上專案裡的檔案 · ") + "Enter 送出、Shift+Enter 換行 · HSUAN 也會出錯,重要的結果請自己確認";
+}
+function switchMode(m) {  // 切過去就打開那種模式最近的對話,沒有就開一段新的
+  if (m === sideMode) return;
+  const drawer = document.body.classList.contains("side-open");  // 手機:抽屜開著切換,留著讓你挑對話
+  const recent = desk.conversations.find((c) => kindOf(c) === m);  // 清單是新的在前
+  if (recent) openConv(recent.id); else newConv(undefined, m);
+  if (drawer) document.body.classList.add("side-open");
+}
+document.querySelectorAll(".mode-switch button").forEach((b) => (b.onclick = () => switchMode(b.dataset.mode)));
 async function loadDesk() {
   const r = await api("/api/desk");
   if (!r.ok) return;
   desk = r.data;
-  $("add-project").hidden = !desk.can_add_projects;
   if (desk.user) $("who").textContent = desk.user;
   renderSide();
   if (!conv) {
     const saved = store.get("conv", "");
-    const pick = desk.conversations.find((c) => c.id === saved) || desk.conversations[0];
+    // 上次打開的;刪掉了就開同一種模式(對話 / 程式)最近的那段
+    const pick = desk.conversations.find((c) => c.id === saved) || desk.conversations.find((c) => kindOf(c) === sideMode);
     if (pick) openConv(pick.id); else newConv();  // 沒給專案:伺服器放進預設專案
   }
 }
-function popup(anchor, items) {
+// 小選單。每個項目是 [名稱, 動作, class, 右邊的小字, 圖示];名稱可以是 [名稱, 說明](說明用小字放第二行)。
+// null = 分隔線,{header, sub} = 不能按的標題。above:開在 anchor 上面、一樣寬(左下角的帳號選單)
+function popup(anchor, items, { above = false } = {}) {
   document.querySelector(".popup")?.remove();
   const box = el("div", "popup");
-  for (const [label, fn, cls] of items) {  // label 可以是 [名稱, 說明]:說明用小字放第二行
-    const b = box.appendChild(button(Array.isArray(label) ? label[0] : label, cls || "", () => { box.remove(); fn(); }));
-    if (Array.isArray(label)) b.appendChild(el("small", "", label[1]));
+  box.setAttribute("role", "menu"); box.anchor = anchor;
+  for (const it of items) {
+    if (!it) { box.appendChild(el("hr")); continue; }
+    if (it.node) { box.appendChild(it.node); continue; }  // 自己做好的區塊(努力程度滑桿)
+    if (it.header) { const h = box.appendChild(el("div", "head", it.header)); if (it.sub) h.appendChild(el("small", "", it.sub)); continue; }
+    const [label, fn, cls, right, ico] = it;
+    const b = box.appendChild(button("", cls || "", () => { box.remove(); fn(); }));
+    b.setAttribute("role", "menuitem");
+    if (ico) b.innerHTML = ico;
+    const name = b.appendChild(el("span", "label", Array.isArray(label) ? label[0] : label));
+    if (Array.isArray(label)) name.appendChild(el("small", "", label[1]));
+    if (right) b.appendChild(el("span", "right", right));
   }
   document.body.appendChild(box);
   const r = anchor.getBoundingClientRect();
-  box.style.left = Math.min(r.left, innerWidth - box.offsetWidth - 8) + "px";
-  box.style.top = Math.min(r.bottom + 4, innerHeight - box.offsetHeight - 8) + "px";
+  if (above) {
+    box.style.left = r.left + 8 + "px"; box.style.width = r.width - 16 + "px";
+    box.style.top = Math.max(8, r.top - box.offsetHeight - 6) + "px";
+  } else {  // 下面放不下(例如輸入框右下角的選模型)就開在上面
+    const h = box.offsetHeight;
+    box.style.left = Math.max(8, Math.min(r.left, innerWidth - box.offsetWidth - 8)) + "px";
+    box.style.top = (r.bottom + 4 + h > innerHeight - 8 ? Math.max(8, r.top - h - 4) : r.bottom + 4) + "px";
+  }
+  box.querySelector("button")?.focus({ preventScroll: true });
   setTimeout(() => document.addEventListener("click", function off(ev) {
     if (!box.contains(ev.target)) { box.remove(); document.removeEventListener("click", off); }
   }));
 }
+function convRow(list, c, waiting) {
+  const row = list.appendChild(el("div", "conv"));
+  row.setAttribute("role", "button"); row.tabIndex = 0;
+  row.setAttribute("aria-current", String(c.id === conv));
+  row.onclick = () => c.id !== conv && openConv(c.id);
+  row.onkeydown = (ev) => { if (ev.key === "Enter") row.onclick(); };
+  const dot = row.appendChild(el("span", "dot" + (c.busy ? " busy" : waiting.has(c.id) ? " wait" : c.id === conv ? " on" : "")));
+  dot.title = c.busy ? "回答中" : waiting.has(c.id) ? "有事等你處理" : "";
+  row.appendChild(el("span", "title", c.title));
+  const more = row.appendChild(button("", "icon-btn menu-btn", (ev) => {
+    ev.stopPropagation();
+    popup(more, [
+      ["重新命名", async () => {
+        const t = prompt("對話名稱", c.title);
+        if (t && t.trim()) { await api("/api/conv/rename", { id: c.id, title: t }); loadDesk(); }
+      }],
+      ["刪除", async () => {
+        if (!confirm(`刪除「${c.title}」?刪掉就找不回來了。`)) return;
+        const r = await api("/api/conv/delete", { id: c.id });
+        if (!r.ok) return alert(r.data.error || "刪除失敗");
+        if (c.id === conv) conv = null;
+        loadDesk();
+      }, "danger"],
+    ]);
+  }));
+  more.setAttribute("aria-label", "更多動作");
+  more.innerHTML = '<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>';
+}
 function renderSide() {
   const box = $("projects"); box.innerHTML = "";
   const waiting = new Set(pendingItems.map((p) => p.conv));
+  $("add-project").hidden = !desk.can_add_projects || sideMode === "chat";
+  if (sideMode === "chat") {  // 對話模式:不分專案,新的在前
+    const sec = box.appendChild(el("div", "project recent"));
+    sec.appendChild(el("div", "project-head", "最近的對話"));
+    const list = sec.appendChild(el("div", "conv-list"));
+    const convs = desk.conversations.filter((c) => kindOf(c) === "chat");
+    if (!convs.length) list.appendChild(el("div", "empty-proj", "還沒有對話"));
+    for (const c of convs) convRow(list, c, waiting);
+    return;
+  }
   const isDefault = (p) => p.id === desk.default_project;  // 預設專案(這個視窗開著的資料夾)放最上面
   for (const p of [...desk.projects].sort((a, b) => isDefault(b) - isDefault(a))) {
     const sec = box.appendChild(el("div", "project"));
@@ -793,36 +922,9 @@ function renderSide() {
     plus.title = `在 ${p.name} 開新對話`; plus.setAttribute("aria-label", plus.title);
     plus.innerHTML = '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>';
     const list = sec.appendChild(el("div", "conv-list"));
-    const convs = desk.conversations.filter((c) => c.project === p.id);
+    const convs = desk.conversations.filter((c) => kindOf(c) === "code" && c.project === p.id);
     if (!convs.length) list.appendChild(el("div", "empty-proj", "還沒有對話"));
-    for (const c of convs) {
-      const row = list.appendChild(el("div", "conv"));
-      row.setAttribute("role", "button"); row.tabIndex = 0;
-      row.setAttribute("aria-current", String(c.id === conv));
-      row.onclick = () => c.id !== conv && openConv(c.id);
-      row.onkeydown = (ev) => { if (ev.key === "Enter") row.onclick(); };
-      const dot = row.appendChild(el("span", "dot" + (c.busy ? " busy" : waiting.has(c.id) ? " wait" : c.id === conv ? " on" : "")));
-      dot.title = c.busy ? "回答中" : waiting.has(c.id) ? "有事等你處理" : "";
-      row.appendChild(el("span", "title", c.title));
-      const more = row.appendChild(button("", "icon-btn menu-btn", (ev) => {
-        ev.stopPropagation();
-        popup(more, [
-          ["重新命名", async () => {
-            const t = prompt("對話名稱", c.title);
-            if (t && t.trim()) { await api("/api/conv/rename", { id: c.id, title: t }); loadDesk(); }
-          }],
-          ["刪除", async () => {
-            if (!confirm(`刪除「${c.title}」?刪掉就找不回來了。`)) return;
-            const r = await api("/api/conv/delete", { id: c.id });
-            if (!r.ok) return alert(r.data.error || "刪除失敗");
-            if (c.id === conv) conv = null;
-            loadDesk();
-          }, "danger"],
-        ]);
-      }));
-      more.setAttribute("aria-label", "更多動作");
-      more.innerHTML = '<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>';
-    }
+    for (const c of convs) convRow(list, c, waiting);
   }
 }
 $("new-chat").onclick = () => newConv();
@@ -849,7 +951,7 @@ async function loadState() {
   renderUsage();
   renderModel();
   setBusy(state.busy);
-  if (["more", "custom", "settings"].includes(page)) renderPage();
+  if (["more", "custom", "settings", "about"].includes(page)) renderPage();
 }
 let pendingItems = [];
 async function loadPending() {
@@ -863,13 +965,14 @@ async function loadPending() {
 }
 
 // ---------- 側邊欄的頁面 ----------
-const PAGE_TITLES = { outputs: "成品", pending: "待命", custom: "自訂", more: "更多", settings: "設定" };
-function openPage(name) {
+const PAGE_TITLES = { outputs: "成品", pending: "待命", custom: "自訂", more: "更多", settings: "設定",
+                      help: "取得協助", changelog: "更新紀錄", about: "了解更多" };
+function openPage(name, focus) {  // focus:打開後捲到這個元素(例如設定頁的「手機」)
   page = name; closeSide();
   $("scroller").hidden = true; $("composer-area").hidden = true; $("page").hidden = false; $("back").hidden = false;
   $("top-title").textContent = PAGE_TITLES[name];
   document.querySelectorAll(".nav-btn[data-page]").forEach((b) => b.setAttribute("aria-current", b.dataset.page === name ? "page" : "false"));
-  renderPage();
+  renderPage().then(() => focus && $(focus)?.scrollIntoView({ block: "start" }));
 }
 function closePage() {
   if (!page) return;
@@ -880,11 +983,84 @@ function closePage() {
 }
 document.querySelectorAll(".nav-btn[data-page]").forEach((b) => (b.onclick = () => openPage(b.dataset.page)));
 $("back").onclick = closePage;
-$("settings").onclick = () => openPage("settings");
+
+// ---------- 帳號選單(點左下角):設定、回答語言、說明、手機與訪客、更新紀錄、了解更多、登出 ----------
+const LANGS = [["zh-TW", "繁體中文"], ["en", "English"], ["ja", "日本語"], ["zh-CN", "简体中文"]];
+const langName = () => (LANGS.find(([c]) => c === state.lang) || LANGS[0])[1];
+const MI = (d) => `<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const MENU_ICONS = {
+  settings: MI('<circle cx="10" cy="10" r="2.6"/><path d="M10 2v2.2M10 15.8V18M2 10h2.2M15.8 10H18M4.3 4.3l1.6 1.6M14.1 14.1l1.6 1.6M4.3 15.7l1.6-1.6M14.1 5.9l1.6-1.6"/>'),
+  lang: MI('<circle cx="10" cy="10" r="7.5"/><path d="M2.5 10h15M10 2.5c2 2.2 3 4.7 3 7.5s-1 5.3-3 7.5c-2-2.2-3-4.7-3-7.5s1-5.3 3-7.5z"/>'),
+  help: MI('<circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.8a2.3 2.3 0 114 1.5c-.8.6-1.8 1.1-1.8 2.2M10 14.2h.01"/>'),
+  phone: MI('<rect x="6" y="2.5" width="8" height="15" rx="1.8"/><path d="M9 15h2"/>'),
+  log: MI('<path d="M7 5h10M7 10h10M7 15h10M3 5h.01M3 10h.01M3 15h.01"/>'),
+  about: MI('<circle cx="10" cy="10" r="7.5"/><path d="M10 9v5M10 6.2h.01"/>'),
+  logout: MI('<path d="M8 3.5H4.5A1.5 1.5 0 003 5v10a1.5 1.5 0 001.5 1.5H8M12.5 6.5L16 10l-3.5 3.5M16 10H8"/>'),
+};
+function accountMenu() {
+  const u = state.usage;
+  const items = [
+    { header: $("who").textContent, sub: u ? `今天 ${fmtTok(u.used)} / ${fmtTok(u.limit)} tokens` : state.model || "" },
+    null,
+    ["設定", () => openPage("settings"), "", "Ctrl+,", MENU_ICONS.settings],
+    ["回答語言", langMenu, "", `${langName()} ›`, MENU_ICONS.lang],
+    ["取得協助", () => openPage("help"), "", "", MENU_ICONS.help],
+    null,
+  ];
+  if (state.phone) items.push(["手機與訪客", () => openPage("settings", "sec-phone"), "", "", MENU_ICONS.phone]);
+  items.push(["更新紀錄", () => openPage("changelog"), "", "", MENU_ICONS.log],
+             ["了解更多", () => openPage("about"), "", "", MENU_ICONS.about]);
+  if (state.can_logout) items.push(null, ["登出", logout, "danger", "", MENU_ICONS.logout]);
+  popup($("account"), items, { above: true });
+}
+function langMenu() {
+  popup($("account"), [{ header: "HSUAN 回答用的語言", sub: "介面文字不變;打開中的對話也馬上換" }, null,
+    ...LANGS.map(([code, name]) => [name, () => setLang(code), "", code === state.lang ? "✓" : ""])], { above: true });
+}
+async function setLang(code) {
+  const r = await api("/api/settings", { lang: code });
+  if (!r.ok) return alert(r.data.error || "設定失敗");
+  state.lang = r.data.lang;
+  if (page === "settings") renderPage();
+}
+async function logout() {
+  if (!confirm("登出這支手機?之後要重新輸入 PIN 才能用。")) return;
+  await api("/api/logout", {});
+  location.reload();  // 沒有登入了:拿到的是輸入 PIN 的頁面
+}
+$("account").onclick = () => {  // 再按一次就關掉
+  const open = document.querySelector(".popup");
+  if (open?.anchor === $("account")) open.remove(); else accountMenu();
+};
+document.addEventListener("keydown", (ev) => {
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === ",") { ev.preventDefault(); document.querySelector(".popup")?.remove(); openPage("settings"); }
+  if (ev.key === "Escape") document.querySelector(".popup")?.remove();
+});
+// 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
+const CHANGELOG = [
+  ["10/9 晚上", ["輸入框右下角的選模型多了「努力程度」滑桿:往左更快、往右更仔細",
+                 "帳號選單:點左下角打開,可以換回答語言、看說明和更新紀錄;手機上可以登出",
+                 "側邊欄上面切換「對話 / 程式」:對話模式不綁專案,一般問答、寫作、翻譯更省 token",
+                 "手機訪客模式:給別人訪客 PIN,訪客有自己的空間、看不到你的對話",
+                 "設定頁,以及左下角今天的 token 用量",
+                 "新對話畫面置中;輸入框可以選這段對話用的模型",
+                 "改名為 HSUAN",
+                 "自己訓練的小模型:決策樹判斷題目難不難、線性回歸預估要花多少 tokens",
+                 "桌面版可以打開手機連線:掃 QR code、輸入 PIN,還能加到手機主畫面"]],
+  ["10/9 下午", ["做到步數上限還沒完成時,可以換難題模型接著做",
+                 "可以加公開的 GitHub 專案;貼 GitHub 網址會讀成文字",
+                 "依題目難度選模型(先在背景記錄,還沒真的切換)"]],
+  ["10/9 上午", ["預設深色外觀", "像 Claude 的側邊欄:專案和存起來的對話,關掉再打開還在",
+                 "桌面版:雙擊桌面圖示,在自己的視窗打開"]],
+  ["10/9 凌晨", ["多人模式與 Docker 部署", "VS Code 外掛", "先規劃再動手;修改都累積在草稿上,你按了才套用",
+                 "手機在同一個 Wi-Fi 也能用", "長對話自動整理成摘要", "網頁介面", "專案規則(ASSISTANT.md)和「記住」",
+                 "回答邊產生邊顯示", "上網搜尋、讀網頁(每次都先問你)", "讀 PDF、Word、Excel", "把文件存成檔案"]],
+  ["10/8", ["第一版:找 bug、提出修改、在沙箱裡跑測試"]],
+];
 
 function section(box, title) { box.appendChild(el("h3", "", title)); return box; }
 function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 QR code、網址、PIN 和加到主畫面的步驟
-  section(box, "手機");
+  section(box, "手機與訪客").lastChild.id = "sec-phone";  // 帳號選單的「手機與訪客」捲到這裡
   const act = (body, path = "/api/phone") => async () => {
     const x = await api(path, body);
     if (!x.ok) alert(x.data.error || "失敗");
@@ -1006,6 +1182,11 @@ async function renderPage() {
     }
   } else if (name === "custom") {
     box.appendChild(el("p", "lead", "讓 HSUAN 照你的習慣做事。"));
+    if (r.data.chat) {
+      box.appendChild(el("div", "none", "對話模式不綁專案,沒有專案規則。要給專案加規則,請切到左上角的「程式」,打開那個專案的對話再來這裡。"
+        + "回答用的語言在左下角的帳號選單換。"));
+      return;
+    }
     section(box, `專案規則(${r.data.project} 的 ASSISTANT.md)`);
     box.appendChild(el("p", "lead", "每段對話開始時 HSUAN 都會先讀,例如「回答都要附檔案路徑」、「測試用 pytest」。"));
     if (r.data.downloaded) box.appendChild(el("p", "lead",
@@ -1039,6 +1220,10 @@ async function renderPage() {
     const look = box.appendChild(el("div", "actions"));
     for (const [t, label] of [["dark", "深色"], ["light", "淺色"], ["system", "跟著系統"]])
       look.appendChild(button(label, "pill" + (theme() === t ? " dark" : ""), () => { setTheme(t); renderPage(); }));
+    section(box, "回答語言");
+    box.appendChild(el("p", "lead", "HSUAN 回答用的語言(介面文字不變)。改了之後,打開中的對話也馬上換。"));
+    const langs = box.appendChild(el("div", "actions"));
+    for (const [code, label] of LANGS) langs.appendChild(button(label, "pill" + (state.lang === code ? " dark" : ""), () => setLang(code)));
     if (r.ok) renderPhone(box, r.data);  // 只有桌面版、而且是電腦自己看才有(手機上看不到 PIN)
     section(box, "模型");
     box.appendChild(el("p", "lead", `預設 ${state.model || ""}。每段對話可以在輸入框右下角換模型;要改有哪些模型,改 models.yaml。`));
@@ -1055,22 +1240,64 @@ async function renderPage() {
     section(box, "目前狀態");
     const dl = box.appendChild(el("dl", "kv"));
     const kv = (k, v) => { dl.appendChild(el("dt", "", k)); dl.appendChild(el("dd", "", v)); };
-    kv("專案資料夾", state.workspace || "");
+    kv("模式", state.chat ? "對話(不綁專案)" : "程式");
+    if (!state.chat) {
+      kv("專案資料夾", state.workspace || "");
+      kv("專案規則", state.instructions ? "已讀取 ASSISTANT.md" : "沒有 ASSISTANT.md");
+      kv("草稿", state.draft?.length ? `${state.draft.length} 個檔案還沒套用:${state.draft.join("、")}` : "沒有");
+    }
     kv("上網", state.status || "");
-    kv("專案規則", state.instructions ? "已讀取 ASSISTANT.md" : "沒有 ASSISTANT.md");
-    kv("草稿", state.draft?.length ? `${state.draft.length} 個檔案還沒套用:${state.draft.join("、")}` : "沒有");
     kv("模型", state.model || "");
+    kv("回答語言", langName());
     if (state.user) kv("登入", state.user);
     if (state.lan) { kv("手機開", state.lan.urls.join("、")); kv("手機 PIN", state.lan.pin); }
+    box.appendChild(el("div", "actions")).appendChild(button("使用說明", "pill", () => openPage("help")));
+  } else if (name === "help") {
+    section(box, "兩種模式(側邊欄左上角切換)");
+    const modes = box.appendChild(el("ul", "help"));
+    for (const t of [
+      "對話:一般問答、寫作、翻譯、整理摘要、上網查。不綁專案,讀不到你電腦上的檔案,每一步也比較省 token。",
+      "程式:綁一個專案資料夾,可以讀檔、找 bug、改程式、在沙箱跑測試、寫技術文件。",
+    ]) modes.appendChild(el("li", "", t));
     section(box, "使用說明");
     const ul = box.appendChild(el("ul", "help"));
     for (const t of [
-      "用 @檔名 附上專案裡的檔案,例如:解釋 @calc.py。",
+      "用 @檔名 附上專案裡的檔案,例如:解釋 @calc.py(程式模式)。",
       "修改先放在 HSUAN 的草稿上,你按「套用到專案」才會真的改檔案;還沒套用的會出現在「待命」。",
       "大任務打開「先規劃」:HSUAN 先只讀不改、交出計畫,你同意才照計畫做。",
       "上網前一定會先問你;公司內網和本機網址一律不准。",
-      "左邊每個專案是一個資料夾,底下是它的對話;「新增專案」可以加你自己的資料夾。",
+      "左邊每個專案是一個資料夾,底下是它的對話;「新增專案」可以加你自己的資料夾或公開的 GitHub 專案。",
+      "輸入框右下角可以換這段對話用的模型;回答語言在左下角的帳號選單換。",
       "對話會自動存檔,關掉再打開還在。",
+    ]) ul.appendChild(el("li", "", t));
+    section(box, "快捷鍵");
+    const keys = box.appendChild(el("dl", "kv"));
+    for (const [k, v] of [["Enter", "送出"], ["Shift+Enter", "換行"], ["Ctrl+,", "設定"], ["Esc", "關閉選單"]]) {
+      keys.appendChild(el("dt", "", k)); keys.appendChild(el("dd", "", v));
+    }
+  } else if (name === "changelog") {
+    box.appendChild(el("p", "lead", "HSUAN 最近改了什麼(新的在前)。桌面版要關掉再打開,才會用到新功能。"));
+    const wrap = box.appendChild(el("div", "changelog"));
+    for (const [when, items] of CHANGELOG) {
+      section(wrap, when);
+      const ul = wrap.appendChild(el("ul"));
+      for (const t of items) ul.appendChild(el("li", "", t));
+    }
+  } else if (name === "about") {
+    const dl = box.appendChild(el("dl", "kv"));
+    const kv = (k, v) => { dl.appendChild(el("dt", "", k)); dl.appendChild(el("dd", "", v)); };
+    kv("版本", state.version || "(不是用 git 下載的,沒有版本資訊)");
+    kv("模型", `${state.model || ""}(${state.backend === "nim" ? "公司內部的 NIM 伺服器" : "build.nvidia.com,開發測試用"})`);
+    section(box, "資料與隱私");
+    const ul = box.appendChild(el("ul", "help"));
+    for (const t of [
+      state.backend === "nim"
+        ? "模型在公司內部的伺服器上,問題和檔案內容不會離開公司網路。"
+        : "現在的模型在 build.nvidia.com:試用條款允許 NVIDIA 收集輸入和輸出,而且不能用在正式工作。不要貼公司的程式碼、客戶資料或密碼。",
+      state.guest ? "你是訪客:你的對話只有你看得到,但會存在主人的電腦上。"
+                  : "對話、草稿、文件都存在這台電腦的 output 資料夾,只有問題和需要的檔案內容會送給模型。",
+      "HSUAN 不會自己改你的檔案:修改都先放在草稿,你按「套用到專案」才會改。程式只在沒有網路的沙箱裡跑。",
+      "上網前每次都先問你;公司內網和本機網址一律不准連。",
     ]) ul.appendChild(el("li", "", t));
   }
 }
@@ -1090,17 +1317,44 @@ $("attach").onclick = () => {
   autosize(); updateSend(); input.focus();
   input.setSelectionRange(before.length + sep.length + 1, before.length + sep.length + 1);
 };
-// 輸入框的「選模型」:這段對話之後都用它;自動 = 依難度和長度選
+// 輸入框的「選模型」:上面是努力程度滑桿,下面是模型;這段對話之後都用它們。自動 = 依難度和長度選
+// 努力程度:[代碼, 名稱, 說明](伺服器端的實際設定在 agent.EFFORTS)
+const EFFORTS = [["low", "低", "不思考,最快、最省 token"], ["medium", "中", "平常的問題用這個就好"],
+                 ["high", "高", "開思考、可以多做幾步,回答前先查證"], ["max", "超高", "開思考、步數加倍,最仔細也最慢"]];
+const effortAt = () => Math.max(0, EFFORTS.findIndex(([k]) => k === (state.effort || "medium")));
 function renderModel() {
   const cur = (state.roles || []).find((r) => r.role === (state.role ?? null));
-  $("model-name").textContent = cur ? cur.name : "自動";
+  $("model-name").textContent = (cur ? cur.name : "自動") + (effortAt() === 1 ? "" : ` · ${EFFORTS[effortAt()][1]}`);
 }
-$("model-pick").onclick = () => popup($("model-pick"), (state.roles || []).map((r) => [
+function effortPanel() {
+  const box = el("div", "effort");
+  const head = box.appendChild(el("div", "effort-head"));
+  head.appendChild(el("span", "", "努力程度"));
+  const name = head.appendChild(el("b"));
+  const ends = box.appendChild(el("div", "effort-ends"));
+  ends.append(el("span", "", "更快"), el("span", "", "更聰明"));
+  const range = box.appendChild(el("input"));
+  Object.assign(range, { type: "range", min: 0, max: EFFORTS.length - 1, step: 1, value: effortAt() });
+  range.setAttribute("aria-label", "努力程度");
+  const ticks = box.appendChild(el("div", "effort-ticks"));
+  for (const [k] of EFFORTS) ticks.appendChild(el("span", "", k === "medium" ? "推薦" : ""));
+  const desc = box.appendChild(el("small"));
+  const show = (i) => { name.textContent = EFFORTS[i][1]; desc.textContent = EFFORTS[i][2]; };
+  show(effortAt());
+  range.oninput = () => show(+range.value);
+  range.onchange = async () => {
+    const x = await api("/api/effort", { effort: EFFORTS[+range.value][0] });
+    if (!x.ok) { alert(x.data.error || "換努力程度失敗"); range.value = effortAt(); show(effortAt()); return; }
+    state.effort = x.data.effort; renderModel();
+  };
+  return box;
+}
+$("model-pick").onclick = () => popup($("model-pick"), [{ node: effortPanel() }, null, ...(state.roles || []).map((r) => [
   [(r.role === (state.role ?? null) ? "✓ " : "") + r.name, r.desc], async () => {
     const x = await api("/api/role", { role: r.role });
     if (!x.ok) return alert(x.data.error || "換模型失敗");
     state.role = x.data.role; renderModel();
-  }]));
+  }])]);
 $("plan-mode").onclick = () => { setPlanMode(!planMode); input.focus(); };
 async function submit() {
   const text = input.value.trim();
