@@ -93,14 +93,18 @@ class LanAccess:
         self.lock = threading.Lock()
         self.store = store
         self.open = True
-        self.devices: dict[str, str] = {}   # cookie 的雜湊 → owner / guest(存檔的只有雜湊)
+        # cookie 的雜湊 → {kind: owner / guest, device: 「iPhone · 主畫面 App」, paired, seen}(存檔的只有雜湊,沒有 cookie)
+        self.devices: dict[str, dict] = {}
         if store:
             try:
                 saved = json.loads(store.read_text(encoding="utf-8"))
-                # 舊格式是雜湊的清單(那時只有主人的手機)
-                self.devices = {h: "owner" for h in saved} if isinstance(saved, list) else dict(saved)
-            except (OSError, ValueError, TypeError):
+                # 舊格式:雜湊的清單(那時只有主人的手機)、雜湊 → owner / guest(還沒記裝置和時間)
+                self.devices = {h: {"kind": "owner"} for h in saved} if isinstance(saved, list) else \
+                    {h: r if isinstance(r, dict) else {"kind": r} for h, r in saved.items()}
+            except (OSError, ValueError, TypeError, AttributeError):
                 pass
+
+    SEEN_EVERY = 300  # 「最後使用」幾秒更新一次存檔(每個請求都會檢查身分,不能每次都寫檔)
 
     @staticmethod
     def _digest(sid: str) -> str:
@@ -109,21 +113,28 @@ class LanAccess:
     def _save(self) -> None:
         if self.store:
             self.store.parent.mkdir(parents=True, exist_ok=True)
-            self.store.write_text(json.dumps(self.devices, sort_keys=True), encoding="utf-8")
+            self.store.write_text(json.dumps(self.devices, sort_keys=True, ensure_ascii=False), encoding="utf-8")
 
     def count(self, kind: str) -> int:
         with self.lock:
-            return sum(k == kind for k in self.devices.values())
+            return sum(r.get("kind") == kind for r in self.devices.values())
+
+    def device_list(self, kind: str) -> list[dict]:
+        """設定頁列出配對過的裝置(最近用過的在前)。舊的配對沒有記裝置和時間,下次連線時補上。"""
+        with self.lock:
+            rows = [{"id": h[:12], "device": r.get("device", ""), "paired": r.get("paired"), "seen": r.get("seen")}
+                    for h, r in self.devices.items() if r.get("kind") == kind]
+        return sorted(rows, key=lambda d: -(d["seen"] or d["paired"] or 0))
 
     def forget(self, kind: str | None = None) -> None:
         """「忘記所有手機」(kind=None)或「忘記所有訪客」(kind="guest"):要重新輸入 PIN。"""
         with self.lock:
             self.sessions = {s: k for s, k in self.sessions.items() if kind and k != kind}
-            self.devices = {h: k for h, k in self.devices.items() if kind and k != kind}
+            self.devices = {h: r for h, r in self.devices.items() if kind and r.get("kind") != kind}
             self._save()
 
-    def login(self, pin: str) -> str | None:
-        """PIN 對了回傳 session id;錯了回傳 None;錯太多次丟 PermissionError。"""
+    def login(self, pin: str, device: str = "") -> str | None:
+        """PIN 對了回傳 session id;錯了回傳 None;錯太多次丟 PermissionError。device:設定頁顯示的裝置類型。"""
         with self.lock:
             now = time.monotonic()
             self.fails = [t for t in self.fails if now - t < self.WINDOW]
@@ -140,29 +151,33 @@ class LanAccess:
             sid = secrets.token_urlsafe(24)
             self.sessions[sid] = kind
             if self.store:
-                self.devices[self._digest(sid)] = kind
+                self.devices[self._digest(sid)] = {"kind": kind, "device": device, "paired": time.time(), "seen": time.time()}
                 self._save()
             return sid
 
     def guest_ids(self) -> list[str]:
         """配對中的訪客手機代號(identify() 給的 guest:<代號>)。"""
         with self.lock:
-            ids = {h[:12] for h, k in self.devices.items() if k == "guest"}
+            ids = {h[:12] for h, r in self.devices.items() if r.get("kind") == "guest"}
             ids |= {self._digest(s)[:12] for s, k in self.sessions.items() if k == "guest"}
         return sorted(ids)
 
-    def forget_guest(self, gid: str) -> bool:
-        """只取消這一支訪客手機的配對(設定頁的「取消配對」);其他手機不受影響。"""
-        if not re.fullmatch(r"[0-9a-f]{12}", gid or ""):  # 空字串會對到每一支
+    def forget_device(self, did: str, kind: str | None = None) -> bool:
+        """只取消一個裝置的配對(設定頁每一筆的「取消」);其他手機不受影響。did 是 device_list 的 id(雜湊前 12 碼)。"""
+        if not re.fullmatch(r"[0-9a-f]{12}", did or ""):  # 空字串會對到每一支
             return False
         with self.lock:
-            sessions = {s: k for s, k in self.sessions.items() if not (k == "guest" and self._digest(s).startswith(gid))}
-            devices = {h: k for h, k in self.devices.items() if not (k == "guest" and h.startswith(gid))}
+            sessions = {s: k for s, k in self.sessions.items()
+                        if not (self._digest(s).startswith(did) and kind in (None, k))}
+            devices = {h: r for h, r in self.devices.items() if not (h.startswith(did) and kind in (None, r.get("kind")))}
             changed = (len(sessions), len(devices)) != (len(self.sessions), len(self.devices))
             self.sessions, self.devices = sessions, devices
             if changed:
                 self._save()
         return changed
+
+    def forget_guest(self, gid: str) -> bool:
+        return self.forget_device(gid, "guest")
 
     def logout(self, sid: str | None) -> None:
         """帳號選單的「登出」:只忘記這一支手機,下次要重新輸入 PIN;其他手機不受影響。"""
@@ -173,19 +188,48 @@ class LanAccess:
             if self.devices.pop(self._digest(sid), None):
                 self._save()
 
-    def identify(self, sid: str | None) -> str | None:
-        """這個 cookie 是誰:"owner"、"guest:<這支手機的代號>",或 None(沒登入、被忘記、手機連線關了)。"""
+    def identify(self, sid: str | None, device: str = "") -> str | None:
+        """這個 cookie 是誰:"owner"、"guest:<這支手機的代號>",或 None(沒登入、被忘記、手機連線關了)。
+        順便記「最後使用」(每 SEEN_EVERY 秒寫一次檔);舊的配對沒記裝置類型的,用這次的 device 補上。"""
         if not sid:
             return None
         digest = self._digest(sid)
         with self.lock:
-            kind = self.sessions.get(sid) or self.devices.get(digest)
+            rec = self.devices.get(digest)
+            kind = self.sessions.get(sid) or (rec or {}).get("kind")
             if not (self.open and kind):
                 return None
+            if rec is not None:
+                now, dirty = time.time(), False
+                if device and not rec.get("device"):
+                    rec["device"], dirty = device, True
+                if now - (rec.get("seen") or 0) > self.SEEN_EVERY:
+                    rec["seen"], dirty = now, True
+                if dirty:
+                    self._save()
         return "owner" if kind == "owner" else f"guest:{digest[:12]}"
 
-    def valid(self, sid: str | None) -> bool:
-        return self.identify(sid) is not None
+    def valid(self, sid: str | None, device: str = "") -> bool:
+        return self.identify(sid, device) is not None
+
+
+def device_label(ua: str, app: bool = False) -> str:
+    """從 User-Agent 猜是什麼裝置,設定頁列配對過的手機用(「iPhone · 主畫面 App」)。
+    同一支手機用瀏覽器和主畫面圖示打開,登入資料是分開存的,會算兩筆 —— 列出來才看得出是哪一筆(10/10 使用者問的)。
+    app:登入頁回報的「從主畫面打開」;iPhone 主畫面打開的 User-Agent 沒有 Safari/ 字樣,不靠它也認得出來。"""
+    ua = ua or ""
+    system = next((name for key, name in (("iPad", "iPad"), ("iPhone", "iPhone"), ("Android", "Android"),
+                                          ("Windows", "Windows"), ("Macintosh", "Mac"), ("Linux", "Linux")) if key in ua),
+                  "其他裝置")
+    if "Line/" in ua:  # LINE 裡點開的(iPhone 的也沒有 Safari/,要先判斷)
+        browser = "LINE 內建瀏覽器"
+    elif app or (system in ("iPhone", "iPad") and "Safari/" not in ua):
+        browser = "主畫面 App"
+    else:
+        browser = next((name for key, name in (("SamsungBrowser", "三星瀏覽器"), ("Edg", "Edge"), ("CriOS", "Chrome"),
+                                               ("Chrome/", "Chrome"), ("FxiOS", "Firefox"), ("Firefox/", "Firefox"),
+                                               ("Safari/", "Safari")) if key in ua), "瀏覽器")
+    return f"{system} · {browser}"
 
 
 class PhoneLink:
@@ -261,7 +305,8 @@ class PhoneLink:
         return {"on": on, "urls": urls, "pin": self.lan.pin if on else "",
                 "guest_pin": (self.lan.guest_pin or "") if on else "",
                 "phones": self.lan.count("owner"), "guests": self.lan.count("guest"),
-                "qr": qr.svg(urls[0]) if urls else "", "guest_usage": self.guest_usage()}
+                "qr": qr.svg(urls[0]) if urls else "", "guest_usage": self.guest_usage(),
+                "devices": self.lan.device_list("owner")}  # 你的手機:一筆一筆列出來,各自可以取消
 
     def guest_usage(self) -> dict | None:
         """每支訪客手機今天用了多少、幾段對話、最後什麼時候用。訪客的額度跟主人分開,但用的是主人的 NVIDIA 金鑰。
@@ -271,11 +316,12 @@ class PhoneLink:
             return None
         used = {u.removeprefix("guest-"): n for u, n in quota.everyone().items() if u.startswith("guest-")}
         paired = set(self.lan.guest_ids())
+        devices = {d["id"]: d["device"] for d in self.lan.device_list("guest")}
         rows = []
         for gid in paired | set(used):
             convs = list((base / gid / "state" / "conversations").glob("*.json")) if base else []
             rows.append({"id": gid, "used": used.get(gid, 0), "paired": gid in paired, "conversations": len(convs),
-                         "last": max((f.stat().st_mtime for f in convs), default=None)})
+                         "last": max((f.stat().st_mtime for f in convs), default=None), "device": devices.get(gid, "")})
         rows.sort(key=lambda r: (-r["used"], -(r["last"] or 0), r["id"]))
         return {"rows": rows, "limit": quota.daily_tokens, "total": sum(used.values())}
 
@@ -320,7 +366,8 @@ button{margin-top:14px;width:100%;padding:12px;border:0;border-radius:999px;back
 document.getElementById("f").onsubmit = async (e) => {
   e.preventDefault();
   const r = await fetch("/api/login", {method: "POST", headers: {"Content-Type": "application/json"},
-                                       body: JSON.stringify({pin: document.getElementById("pin").value})});
+                                       body: JSON.stringify({pin: document.getElementById("pin").value,
+                                                             app: matchMedia("(display-mode: standalone)").matches || navigator.standalone === true})});
   if (r.ok) location.reload();
   else document.getElementById("err").textContent = (await r.json().catch(() => ({}))).error || "登入失敗";
 };
@@ -1255,6 +1302,10 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 return "local"
             return self.headers.get(team.user_header, "").strip() or None
 
+        def _device(self, app: bool = False) -> str:
+            """設定頁顯示的裝置類型(從 User-Agent 猜)。"""
+            return device_label(self.headers.get("User-Agent", ""), app)
+
         def _sid(self) -> str | None:
             """手機登入的 cookie。"""
             morsel = SimpleCookie(self.headers.get("Cookie", "")).get(COOKIE)
@@ -1264,7 +1315,7 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             """用訪客 PIN 配對的手機:回傳它的代號(每支手機一個自己的空間);其他人 None。"""
             if team or lan is None or guests is None or self._local():
                 return None
-            who = lan.identify(self._sid()) or ""
+            who = lan.identify(self._sid(), self._device()) or ""
             return who.split(":", 1)[1] if who.startswith("guest:") else None
 
         def _label(self) -> str:
@@ -1286,7 +1337,7 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 return self._user() is not None
             if self._local():
                 return True
-            return lan is not None and lan.valid(self._sid())
+            return lan is not None and lan.valid(self._sid(), self._device())
 
         def _token_ok(self, given: str | None) -> bool:
             if not self._signed_in():
@@ -1394,8 +1445,8 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             if lan is None:
                 return self._json(404, {"error": "沒有開手機連線(--lan)"})
             try:
-                pin = str(json.loads(raw or b"{}").get("pin", ""))
-                sid = lan.login(pin)
+                body = json.loads(raw or b"{}")
+                sid = lan.login(str(body.get("pin", "")), self._device(bool(body.get("app"))))
             except PermissionError as e:
                 return self._json(429, {"error": str(e)})
             except (json.JSONDecodeError, AttributeError):
@@ -1455,8 +1506,8 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 if not phone or not self._local():
                     return self._json(404, {"error": "沒有手機連線功能"})
                 if path == "/api/phone/forget" and body.get("id"):  # 只取消一支訪客手機
-                    if not phone.lan.forget_guest(str(body["id"])):
-                        return self._json(404, {"error": "找不到這支訪客手機"})
+                    if not phone.lan.forget_device(str(body["id"])):
+                        return self._json(404, {"error": "找不到這支手機"})
                 elif path == "/api/phone/forget":
                     phone.lan.forget("guest" if body.get("who") == "guests" else None)
                 elif err := (phone.start() if body.get("on") else phone.stop()):

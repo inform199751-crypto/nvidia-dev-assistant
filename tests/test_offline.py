@@ -2689,3 +2689,69 @@ def test_owner_sees_each_guests_usage_and_can_cancel_one(workspace, tmp_path_fac
         phone.close()
         server.shutdown()
         server.server_close()
+
+
+IPHONE_SAFARI = ("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                 "Version/18.0 Mobile/15E148 Safari/604.1")
+IPHONE_APP = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
+
+
+def test_device_label_guesses_phone_and_browser():
+    """10/10 使用者問:同一支手機怎麼配對了 2 支 —— 瀏覽器和主畫面圖示的登入資料分開存,各算一筆。
+    設定頁要寫出是哪一種:iPhone 主畫面打開的沒有 Safari/ 字樣;LINE 裡點開的也沒有,要先認 LINE;
+    Android 的主畫面 App 跟 Chrome 一樣,要靠登入頁回報;三星瀏覽器的字串裡也有 Chrome。"""
+    import webui
+    android = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Mobile Safari/537.36"
+    cases = [(IPHONE_SAFARI, False, "iPhone · Safari"), (IPHONE_APP, False, "iPhone · 主畫面 App"),
+             (IPHONE_APP + " Safari Line/14.10.0", False, "iPhone · LINE 內建瀏覽器"),
+             (android, False, "Android · Chrome"), (android, True, "Android · 主畫面 App"),
+             (android.replace("Chrome/", "SamsungBrowser/27.0 Chrome/"), False, "Android · 三星瀏覽器"),
+             ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0 Safari/537.36 Edg/140.0", False, "Windows · Edge"),
+             ("", False, "其他裝置 · 瀏覽器")]
+    assert [webui.device_label(ua, app) for ua, app, _ in cases] == [want for _, _, want in cases]
+
+
+def test_paired_devices_are_listed_and_cancelled_one_by_one(workspace, tmp_path_factory, monkeypatch):
+    """配對紀錄多記裝置類型、配對時間、最後使用時間,設定頁一筆一筆列出來,各自可以取消;
+    舊格式(雜湊清單、雜湊 → owner)照樣讀得到,下次連線時補上裝置類型。"""
+    import httpx
+    import webui
+    store = tmp_path_factory.mktemp("state")
+    phones = store / "phones.json"
+    phones.write_text(json.dumps({webui.LanAccess._digest("old-cookie"): "owner"}), encoding="utf-8")
+    reg, _ = scripted_registry([])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=store)
+    monkeypatch.setattr(webui, "lan_ips", lambda: ["127.0.0.1"])
+    monkeypatch.setattr(webui.LanAccess, "SEEN_EVERY", 0)  # 每次都更新「最後使用」
+    phone = webui.PhoneLink(desk, "t0k", 0, store=store, host="127.0.0.1")
+    server, base = _serve(desk, phone=phone)
+    h = {"X-Token": "t0k"}
+    try:
+        st = httpx.post(base + "/api/phone", json={"on": True}, headers=h).json()
+        old = st["devices"][0]
+        assert len(st["devices"]) == 1 and (old["device"], old["paired"]) == ("", None)  # 舊的配對:還不知道是什麼
+        monkeypatch.setattr(webui, "LOCAL_ADDRS", set())  # 接下來的連線都當成手機
+        url = st["urls"][0]
+        safari = httpx.post(url + "/api/login", json={"pin": st["pin"]}, headers={"User-Agent": IPHONE_SAFARI}).cookies
+        app = httpx.post(url + "/api/login", json={"pin": st["pin"], "app": True}, headers={"User-Agent": IPHONE_APP}).cookies
+        with httpx.Client(base_url=url, cookies={webui.COOKIE: "old-cookie"}, headers={**h, "User-Agent": IPHONE_SAFARI}) as c:
+            assert c.get("/api/state").status_code == 200  # 舊的配對來連一次:補上裝置類型和最後使用
+        monkeypatch.setattr(webui, "LOCAL_ADDRS", {"127.0.0.1", "::1"})
+        devices = httpx.get(base + "/api/phone", headers=h).json()["devices"]
+        assert sorted(d["device"] for d in devices) == ["iPhone · Safari", "iPhone · Safari", "iPhone · 主畫面 App"]
+        assert all(d["seen"] for d in devices)
+        target = next(d for d in devices if d["device"] == "iPhone · 主畫面 App")
+        assert httpx.post(base + "/api/phone/forget", json={"id": target["id"]}, headers=h).status_code == 200
+        assert [d["device"] for d in httpx.get(base + "/api/phone", headers=h).json()["devices"]] == ["iPhone · Safari"] * 2
+        monkeypatch.setattr(webui, "LOCAL_ADDRS", set())
+        with httpx.Client(base_url=url, cookies=app, headers=h) as c:
+            assert c.get("/api/state").status_code == 403  # 取消的那筆要重新輸入 PIN
+        with httpx.Client(base_url=url, cookies=safari, headers=h) as c:
+            assert c.get("/api/state").status_code == 200  # 另一筆照常
+        saved = json.loads(phones.read_text(encoding="utf-8"))
+        assert all({"kind", "device", "seen"} <= set(r) for r in saved.values())  # 舊的那筆沒有配對時間
+    finally:
+        phone.close()
+        server.shutdown()
+        server.server_close()

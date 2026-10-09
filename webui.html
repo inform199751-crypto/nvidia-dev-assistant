@@ -1060,6 +1060,7 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
+  ["10/10", ["設定的「手機與訪客」把配對過的裝置一筆一筆列出來(iPhone · 主畫面 App、Windows · Chrome…),各自可以取消"]],
   ["10/9 晚上", ["設定的「手機與訪客」列出每支訪客手機今天用了多少,也可以只取消其中一支",
                  "知識庫:把文件資料夾建成索引,問問題時照意思找到相關段落,回答附出處(側邊欄「知識庫」)",
                  "可以附圖片了:截圖、圖表、照片(輸入框的「+」、貼上或拖進來),先用看圖的模型讀懂再回答",
@@ -1096,6 +1097,7 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
     box.appendChild(el("div", "actions")).appendChild(button("打開手機連線", "pill dark", act({ on: true })));
     box.appendChild(el("p", "lead", "第一次打開時 Windows 會問要不要讓 HSUAN 使用網路:請勾「私人網路」並按「允許」。"
       + (st.phones ? `已配對 ${st.phones} 支手機。` : "")));
+    renderDevices(box, st, act);
     renderGuestUsage(box, st, act);
     return;
   }
@@ -1129,7 +1131,24 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
   if (st.phones || st.guests) a.appendChild(button("忘記所有手機", "pill", () => {
     if (confirm("所有手機(含訪客)都要重新輸入 PIN 才能連。確定?")) act({}, "/api/phone/forget")();
   }));
+  renderDevices(box, st, act);
   renderGuestUsage(box, st, act);
+}
+// 用「你的手機 PIN」配對過的裝置,一筆一筆列出來(同一支手機的瀏覽器和主畫面圖示會各算一筆)
+function renderDevices(box, st, act) {
+  const mine = st.devices || [];
+  if (!mine.length) return;
+  box.appendChild(el("h3", "", `你的手機(${mine.length})`));
+  box.appendChild(el("p", "lead", "用「你的手機 PIN」配對過的裝置。同一支手機用瀏覽器和主畫面圖示各輸入過一次 PIN,"
+    + "會算兩筆(兩邊的登入資料分開存);不用的那筆可以取消。"));
+  const list = rows(box);
+  for (const d of mine) {
+    const sub = (d.paired ? `配對於 ${fmtTime(d.paired)}` : "還沒記錄裝置類型和時間,下次連線時補上")
+      + (d.seen ? ` · 最後使用 ${fmtTime(d.seen)}` : "");
+    row(list, d.device || "以前配對的裝置", sub, [button("取消", "pill", () => {
+      if (confirm(`取消「${d.device || "這個裝置"}」的配對?它要重新輸入 PIN 才能再連。`)) act({ id: d.id }, "/api/phone/forget")();
+    })]);
+  }
 }
 // 每支訪客手機今天用了多少:額度跟你分開,但用的是你的 NVIDIA 金鑰
 function renderGuestUsage(box, st, act) {
@@ -1146,7 +1165,7 @@ function renderGuestUsage(box, st, act) {
     const actions = g.paired ? [button("取消配對", "pill", () => {
       if (confirm(`取消訪客 ${g.id.slice(0, 6)} 的配對?那支手機要重新輸入訪客 PIN 才能再連。`)) act({ id: g.id }, "/api/phone/forget")();
     })] : [];
-    const r = row(list, `訪客 ${g.id.slice(0, 6)}`, sub, actions);
+    const r = row(list, `訪客 ${g.id.slice(0, 6)}` + (g.device ? ` · ${g.device}` : ""), sub, actions);
     paintBar(r.querySelector(".grow").appendChild(el("div", "usage-bar")), g.used, gu.limit);
   }
 }
