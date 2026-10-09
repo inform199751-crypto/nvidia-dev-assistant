@@ -25,7 +25,9 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
+
+from langchain_core.messages import messages_from_dict, messages_to_dict
 
 import agent
 import tools as toolbox
@@ -120,14 +122,17 @@ class Hub:
     """一段對話的狀態 + 事件紀錄。agent 在背景執行緒跑,事件記下來給瀏覽器(重新整理時從頭重播這段對話)。"""
 
     def __init__(self, new_session: Callable[[Callable], agent.AgentSession], status: str = "", model: str = "",
-                 team: bool = False, gate: Gate | None = None, patch_dir: Path | None = None):
+                 team: bool = False, gate: Gate | None = None, patch_dir: Path | None = None,
+                 output_dir: Path | None = None, workspace: Path | None = None):
         self.new_session = new_session
         self.status = status
         self.model = model  # 頁面上方顯示的模型名稱
         # team:多人共用伺服器。工作區是共用的(唯讀),所以不能套用修改、不能改 ASSISTANT.md,改成下載 patch
         self.team = team
         self.gate = gate  # 全部使用者共用的同時執行上限(保護 GPU);None = 不限
-        self.bench = toolbox.Workbench(patch_dir=patch_dir, confirm=self.confirm)  # 這個人自己的草稿 / patch
+        self.bench = toolbox.Workbench(patch_dir=patch_dir, output_dir=output_dir,  # 這段對話自己的草稿 / patch / 文件
+                                       confirm=self.confirm, workspace=workspace)
+        self.plan_waiting = False  # 交出計畫、還沒按「照計畫執行 / 先不要」
         self.cond = threading.Condition()
         self.events: list[dict] = []
         self.view_start = 0  # 最近一次「新對話」之後的第一個事件
@@ -136,7 +141,13 @@ class Hub:
         self.pending: dict[str, list] = {}  # 等使用者回答的確認:id → [threading.Event, 答案]
         self.listeners = 0  # 現在有幾個頁面連著事件串流(桌面版用來判斷視窗是不是都關了)
         self.always: set[str] = set()
-        self.session = new_session(self.publish)
+        self.on_event: Callable[[str], None] | None = None  # Desk 用來在重要事件後存檔
+        with toolbox.using(self.bench):  # 系統提示要讀這個專案的 ASSISTANT.md
+            self.session = new_session(self.publish)
+
+    @property
+    def workspace(self) -> Path:
+        return self.bench.workspace or toolbox.WORKSPACE
 
     # ---------- 事件 ----------
 
@@ -144,6 +155,45 @@ class Hub:
         with self.cond:
             self.events.append({"seq": len(self.events) + 1, "kind": kind, **(data or {})})
             self.cond.notify_all()
+        if self.on_event:
+            self.on_event(kind)
+
+    # ---------- 存檔 / 讀檔(Desk 用:關掉程式再打開,對話還在) ----------
+
+    def export(self) -> dict:
+        """要存到硬碟的內容。事件裡一個字一個字的 text 合併、thinking 丟掉,不然檔案會很大。"""
+        with self.cond:
+            events = []
+            for ev in self.events[self.view_start:]:
+                if ev["kind"] == "thinking":
+                    continue
+                if ev["kind"] == "text" and events and events[-1]["kind"] == "text":
+                    events[-1] = {**events[-1], "text": events[-1]["text"] + ev["text"]}
+                else:
+                    events.append(dict(ev))
+        return {"messages": messages_to_dict(self.session.messages), "events": events,
+                "tokens_used": self.session.tokens_used, "draft": dict(self.bench.draft),
+                "patches": [[str(p), ok] for p, ok in self.bench.patches]}
+
+    def restore(self, data: dict) -> None:
+        events = [dict(ev) for ev in data.get("events", [])]
+        # 上次關掉時沒收尾的:答到一半的這一輪、等回答的確認(那個執行緒已經不在了),補上結尾,畫面才不會卡在「回答中」
+        asked = {ev["id"] for ev in events if ev["kind"] == "confirm"} - {ev["id"] for ev in events if ev["kind"] == "confirm_done"}
+        events += [{"kind": "confirm_done", "id": cid, "answer": "n"} for cid in sorted(asked)]
+        last = next((ev["kind"] for ev in reversed(events) if ev["kind"] in ("user", "done", "error")), None)
+        if last == "user":
+            events.append({"kind": "error", "text": "上次關掉程式時這一輪還沒答完,請再問一次"})
+        turn = next((ev["kind"] for ev in reversed(events) if ev["kind"] in ("user", "offer_plan", "plan_answered")), None)
+        self.plan_waiting = turn == "offer_plan"
+        with self.cond:
+            self.events = [{**ev, "seq": i} for i, ev in enumerate(events, 1)]
+        if data.get("messages"):
+            self.session.messages = messages_from_dict(data["messages"])
+            with toolbox.using(self.bench):
+                self.session.refresh_system_prompt()  # 今天日期、專案規則用現在的
+        self.session.tokens_used = data.get("tokens_used", 0)
+        self.bench.draft.update(data.get("draft", {}))
+        self.bench.patches.extend((Path(p), ok) for p, ok in data.get("patches", []) if Path(p).is_file())
 
     def events_since(self, seq: int, timeout: float) -> list[dict]:
         with self.cond:
@@ -160,11 +210,13 @@ class Hub:
             if self.busy:
                 return False
             self.busy = True
+            self.plan_waiting = False  # 問了別的,或已經照計畫執行:之前的計畫不再等
         self.publish("user", {"text": shown or text, "mode": mode})
         threading.Thread(target=self._run, args=(text, mode), daemon=True).start()
         return True
 
     def execute_plan(self, go: bool) -> bool:
+        self.plan_waiting = False
         self.publish("plan_answered", {"go": go})
         return self.ask(agent.EXECUTE_TASK, "execute", shown="照計畫執行") if go else True
 
@@ -190,13 +242,16 @@ class Hub:
                 self.busy = False
                 self.cond.notify_all()
         if planned:  # 等不忙了才問,按下「照計畫執行」才不會被當成上一題還沒結束
+            self.plan_waiting = True
             self.publish("offer_plan")
 
     def clear(self) -> bool:
         with self.cond:
             if self.busy:
                 return False
-            self.session, self.note = self.new_session(self.publish), ""
+            with toolbox.using(self.bench):
+                self.session = self.new_session(self.publish)
+            self.note, self.plan_waiting = "", False
         self.bench.draft.clear()  # 新對話不記得草稿,留著會混淆
         self.publish("clear")
         with self.cond:
@@ -219,8 +274,9 @@ class Hub:
     def remember(self, rule: str) -> str:
         if self.team:
             return "多人模式的專案規則由管理者維護(工作區的 ASSISTANT.md),不能從這裡改"
-        path = agent.remember(rule)
-        self.session.refresh_system_prompt()
+        with toolbox.using(self.bench):  # 寫進這段對話所在專案的 ASSISTANT.md
+            path = agent.remember(rule)
+            self.session.refresh_system_prompt()
         self.publish("notice", {"text": f"已記住,寫進 {path.name}:{rule}"})
         return ""
 
@@ -232,7 +288,7 @@ class Hub:
             self.publish("notice", {"text": f"已允許{action}:{detail}"})
             return True
         cid = secrets.token_hex(4)
-        slot = [threading.Event(), "n"]
+        slot = [threading.Event(), "n", action, detail]  # 後兩個給「待命」頁面列出來
         with self.cond:
             self.pending[cid] = slot
         self.publish("confirm", {"id": cid, "action": action, "detail": detail})
@@ -258,6 +314,8 @@ class Hub:
         with self.cond:
             if self.busy:
                 return "小助理還在回答,等這一輪結束再處理"
+        if index == -1:  # 「待命」頁面:最新的那份(包含草稿全部修改)
+            index = len(self.bench.patches) - 1
         if not 0 <= index < len(self.bench.patches):
             return "找不到這個 patch"
         patch, _ = self.bench.patches[index]
@@ -278,7 +336,33 @@ class Hub:
         return result
 
     def patch_file(self, index: int) -> Path | None:
+        if index == -1:  # 最新的那份
+            index = len(self.bench.patches) - 1
         return self.bench.patches[index][0] if 0 <= index < len(self.bench.patches) else None
+
+    # ---------- 側邊欄的「成品」「待命」頁面 ----------
+
+    def _docs_dir(self) -> Path:
+        return self.bench.output_dir or toolbox.OUTPUT_DIR
+
+    def outputs(self) -> dict:
+        """成品:存成檔案的文件(新的在前)+ 這段對話提過的 patch(新的在前,最新的那份才包含全部修改)。"""
+        patches = self.bench.patches
+        return {"docs": docs_in(self._docs_dir()),
+                "patches": [{"i": i, "name": p.name, "passed": ok, "latest": i == len(patches) - 1}
+                            for i, (p, ok) in reversed(list(enumerate(patches)))]}
+
+    def doc_file(self, name: str) -> Path | None:
+        return doc_path(self._docs_dir(), name)
+
+    def pending_state(self) -> dict:
+        """待命:等使用者處理的事 —— 還沒套用的草稿、等回答的上網確認、等核准的計畫。"""
+        with self.cond:
+            confirms = [{"id": cid, "action": s[2], "detail": s[3]} for cid, s in self.pending.items()]
+        patches = self.bench.patches
+        return {"draft": sorted(self.bench.draft), "confirms": confirms, "plan": self.plan_waiting,
+                "patch": len(patches) - 1 if self.bench.draft and patches else None,
+                "passed": bool(patches and patches[-1][1]), "team": self.team, "busy": self.busy}
 
 
 class Gate:
@@ -305,19 +389,250 @@ class Gate:
             self.sem.release()
 
 
-class Hubs:
-    """每個使用者一個 Hub(各自的對話、草稿、確認、額度)。單人模式所有請求都是同一個。"""
+SAVE_ON = {"user", "done", "error", "applied", "offer_apply", "offer_plan", "plan_answered", "confirm_done", "clear"}
 
-    def __init__(self, make: Callable[[str], Hub]):
+
+def doc_path(d: Path, name: str) -> Path | None:
+    """只給輸出資料夾裡、文件類副檔名的檔案(擋 ../、隱藏檔、log 之類)。"""
+    p = d / name
+    if "/" in name or "\\" in name or name.startswith(".") or p.suffix.lower() not in toolbox.DOC_SUFFIXES:
+        return None
+    return p if p.is_file() else None
+
+
+def docs_in(d: Path) -> list[dict]:
+    docs = [p for p in d.glob("*") if doc_path(d, p.name)] if d.is_dir() else []
+    docs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return [{"name": p.name, "size": p.stat().st_size, "mtime": p.stat().st_mtime} for p in docs]
+
+
+def _title(text: str) -> str:
+    line = " ".join(text.split())
+    return line[:28] + ("…" if len(line) > 28 else "") or "新對話"
+
+
+class Desk:
+    """一個使用者的桌面(像 Claude 的側邊欄):好幾個專案(工作區),每個專案底下好幾段對話,每段對話一個 Hub。
+
+    對話存在 store/conversations/<id>.json,專案清單存在 store/projects.json:關掉程式再打開,對話還在、也能接著聊。
+    store=None 就不存(測試、只有一段對話的舊用法)。
+    """
+
+    def __init__(self, make_hub: Callable[[Path], Hub], default_workspace: Path, store: Path | None = None,
+                 can_add_projects: bool = True, docs_dir: Path | None = None):
+        self.make_hub = make_hub
+        self.store = store
+        self.can_add_projects = can_add_projects
+        self.docs_dir = docs_dir  # 這個人的文件放哪;None = OUTPUT_DIR
+        self.lock = threading.RLock()
+        self.hubs: dict[str, Hub] = {}
+        self.meta: dict[str, dict] = {}  # 對話 id → {"id","title","project","created","updated"}
+        self.projects: list[dict] = []
+        self.focus: str | None = None  # 畫面上最近打開的對話(開事件串流時記下)
+        if store:
+            self._load()
+        # 預設專案(.env 的 AGENT_WORKSPACE;VS Code 外掛是它開著的資料夾)。桌面版和外掛共用同一個 store,
+        # 預設專案可能不一樣,所以各自記住自己的,不能拿 projects[0]
+        default = next((p for p in self.projects if Path(p["path"]) == default_workspace), None)
+        if not default:
+            taken = {p["id"] for p in self.projects}
+            default = {"id": "p0" if "p0" not in taken else f"p{secrets.token_hex(3)}",
+                       "name": default_workspace.name, "path": str(default_workspace)}
+            self.projects.append(default)
+            self._save_projects()
+        self.default_pid = default["id"]
+
+    @classmethod
+    def single(cls, hub: Hub) -> "Desk":
+        """把一個現成的 Hub 包成只有一段對話的桌面(舊用法、測試)。"""
+        desk = cls(lambda ws: hub, hub.workspace)
+        desk.hubs["main"] = hub
+        desk.meta["main"] = {"id": "main", "title": "對話", "project": "p0", "created": time.time(), "updated": time.time()}
+        return desk
+
+    # ---------- 存檔 ----------
+
+    def _conv_dir(self) -> Path:
+        return self.store / "conversations"
+
+    def _load(self) -> None:
+        try:
+            self.projects = json.loads((self.store / "projects.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            self.projects = []
+        for f in self._conv_dir().glob("*.json") if self._conv_dir().is_dir() else []:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                self.meta[data["id"]] = {k: data[k] for k in ("id", "title", "project", "created", "updated")}
+                self.meta[data["id"]]["draft"] = sorted(data.get("draft", {}))  # 還沒套用的草稿,「待命」要列
+                self.meta[data["id"]]["plan"] = bool(data.get("plan"))           # 等核准的計畫
+            except (OSError, ValueError, KeyError):
+                continue  # 壞掉的檔案略過,不擋其他對話
+
+    def _save_projects(self) -> None:
+        if self.store:
+            try:  # 另一個行程(桌面版 / VS Code 外掛)可能剛加了專案:合併進來,不要蓋掉
+                on_disk = json.loads((self.store / "projects.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                on_disk = []
+            known = {p["id"] for p in self.projects} | {p["path"] for p in self.projects}
+            self.projects += [p for p in on_disk if p.get("id") not in known and p.get("path") not in known]
+            self.store.mkdir(parents=True, exist_ok=True)
+            (self.store / "projects.json").write_text(json.dumps(self.projects, ensure_ascii=False, indent=1),
+                                                      encoding="utf-8")
+
+    def save(self, cid: str) -> None:
+        with self.lock:
+            hub, meta = self.hubs.get(cid), self.meta.get(cid)
+            if not hub or not meta:
+                return
+            if meta["title"] == "新對話":
+                first = next((e["text"] for e in hub.events if e["kind"] == "user"), "")
+                if first:
+                    meta["title"] = _title(first)
+            meta["updated"] = time.time()
+            meta["draft"] = sorted(hub.bench.draft)
+            meta["plan"] = hub.plan_waiting
+            if not self.store:
+                return
+            self._conv_dir().mkdir(parents=True, exist_ok=True)
+            tmp = self._conv_dir() / f"{cid}.json.tmp"  # 先寫暫存檔再改名:寫到一半當掉不會留下壞檔
+            tmp.write_text(json.dumps({**meta, **hub.export()}, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self._conv_dir() / f"{cid}.json")
+
+    # ---------- 專案 / 對話 ----------
+
+    def project(self, pid: str) -> dict | None:
+        return next((p for p in self.projects if p["id"] == pid), None)
+
+    def add_project(self, path: str, name: str = "") -> dict:
+        if not self.can_add_projects:
+            raise PermissionError("多人模式的專案由管理者設定")
+        p = Path(path.strip().strip('"')).expanduser()
+        if not p.is_dir():
+            raise ValueError(f"找不到資料夾:{path}")
+        p = p.resolve()
+        with self.lock:
+            if existing := next((x for x in self.projects if Path(x["path"]) == p), None):
+                return existing
+            proj = {"id": f"p{secrets.token_hex(3)}", "name": name.strip() or p.name, "path": str(p)}
+            self.projects.append(proj)
+            self._save_projects()
+            return proj
+
+    def _attach(self, cid: str, hub: Hub) -> Hub:
+        hub.on_event = lambda kind: self.save(cid) if kind in SAVE_ON else None
+        self.hubs[cid] = hub
+        return hub
+
+    def new_conversation(self, pid: str | None = None) -> str:
+        with self.lock:
+            proj = self.project(pid or self.default_pid) or self.project(self.default_pid)
+            cid = f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
+            self.meta[cid] = {"id": cid, "title": "新對話", "project": proj["id"],
+                              "created": time.time(), "updated": time.time()}
+            self._attach(cid, self.make_hub(Path(proj["path"])))
+            return cid
+
+    def hub(self, cid: str | None) -> Hub:
+        """拿這段對話的 Hub;還沒載入就從硬碟讀。沒給 id(VS Code 外掛的「問選取的程式碼」)就用畫面上最近打開的那段,
+        再沒有就用最近更新的(都沒有就開一段新的)。"""
+        with self.lock:
+            if not cid or cid not in self.meta:
+                cid = (self.focus if self.focus in self.meta else None) or \
+                    max(self.meta, key=lambda c: self.meta[c]["updated"], default=None) or self.new_conversation()
+            if cid in self.hubs:
+                return self.hubs[cid]
+            meta = self.meta[cid]
+            proj = self.project(meta["project"]) or self.project(self.default_pid)  # 專案被拿掉了:放回預設專案
+            hub = self._attach(cid, self.make_hub(Path(proj["path"])))
+            try:
+                hub.restore(json.loads((self._conv_dir() / f"{cid}.json").read_text(encoding="utf-8")))
+            except (OSError, ValueError, TypeError) as e:
+                hub.publish("notice", {"text": f"這段對話的紀錄讀不出來,從頭開始:{e}"})
+            return hub
+
+    @property
+    def listeners(self) -> int:
+        """全部對話加起來有幾個頁面連著(桌面版看這個判斷視窗是不是都關了)。"""
+        with self.lock:
+            return sum(h.listeners for h in self.hubs.values())
+
+    def cid_of(self, hub: Hub) -> str | None:
+        return next((c for c, h in self.hubs.items() if h is hub), None)
+
+    def rename(self, cid: str, title: str) -> None:
+        with self.lock:
+            if cid in self.meta and title.strip():
+                self.meta[cid]["title"] = _title(title)
+                if cid in self.hubs:
+                    self.save(cid)
+
+    def delete(self, cid: str) -> bool:
+        with self.lock:
+            hub = self.hubs.get(cid)
+            if hub and hub.busy:
+                return False
+            self.hubs.pop(cid, None)
+            self.meta.pop(cid, None)
+            if self.store:
+                (self._conv_dir() / f"{cid}.json").unlink(missing_ok=True)
+            return True
+
+    def listing(self) -> dict:
+        with self.lock:
+            convs = sorted(self.meta.values(), key=lambda m: m["updated"], reverse=True)
+            return {"projects": self.projects, "can_add_projects": self.can_add_projects, "default_project": self.default_pid,
+                    "conversations": [{**m, "busy": bool(self.hubs.get(m["id"]) and self.hubs[m["id"]].busy)}
+                                      for m in convs]}
+
+    # ---------- 側邊欄「成品」「待命」:跨所有對話 ----------
+
+    def outputs(self) -> dict:
+        with self.lock:
+            loaded = list(self.hubs.items())
+        patches = []
+        for cid, h in loaded:
+            for p in h.outputs()["patches"]:
+                patches.append({**p, "conv": cid, "title": self.meta.get(cid, {}).get("title", "")})
+        return {"docs": docs_in(self.docs_dir or toolbox.OUTPUT_DIR), "patches": patches}
+
+    def doc_file(self, name: str) -> Path | None:
+        return doc_path(self.docs_dir or toolbox.OUTPUT_DIR, name)
+
+    def pending(self) -> list[dict]:
+        """還沒載入的對話,看存檔時記下的草稿;載入的看現在的狀態(含等回答的確認、等核准的計畫)。"""
+        with self.lock:
+            loaded = dict(self.hubs)
+            metas = list(self.meta.values())
+        items = []
+        for m in metas:
+            cid = m["id"]
+            if cid in loaded:
+                st = loaded[cid].pending_state()
+            else:
+                st = {"draft": m.get("draft", []), "confirms": [], "plan": m.get("plan", False),
+                      "patch": -1 if m.get("draft") else None,
+                      "passed": None, "team": not self.can_add_projects, "busy": False}
+            if st["draft"] or st["confirms"] or st["plan"]:
+                items.append({**st, "conv": cid, "title": m.get("title", "")})
+        return items
+
+
+class Hubs:
+    """每個使用者一張 Desk(各自的專案、對話、草稿、確認、額度)。make 回傳 Hub 的話包成只有一段對話的 Desk。"""
+
+    def __init__(self, make: Callable[[str], Desk | Hub]):
         self.make = make
         self.lock = threading.Lock()
-        self.hubs: dict[str, Hub] = {}
+        self.desks: dict[str, Desk] = {}
 
-    def get(self, user: str) -> Hub:
+    def get(self, user: str) -> Desk:
         with self.lock:
-            if user not in self.hubs:
-                self.hubs[user] = self.make(user)
-            return self.hubs[user]
+            if user not in self.desks:
+                made = self.make(user)
+                self.desks[user] = Desk.single(made) if isinstance(made, Hub) else made
+            return self.desks[user]
 
 
 @dataclass
@@ -328,10 +643,10 @@ class TeamAccess:
     allowed_hosts: set[str] = field(default_factory=set)  # 代理對外的網址(Host 標頭);空的 = 不檢查
 
 
-def make_handler(hubs: Hubs | Hub, token: str, port: int, lan: LanAccess | None = None,
+def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess | None = None,
                  team: TeamAccess | None = None) -> type[BaseHTTPRequestHandler]:
-    if isinstance(hubs, Hub):  # 單人:不管誰連進來都是同一段對話
-        single = hubs
+    if isinstance(hubs, (Hub, Desk)):  # 單人:不管誰連進來都是同一張桌面
+        single = hubs if isinstance(hubs, Desk) else Desk.single(hubs)
         hubs = Hubs(lambda user: single)
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"} | {f"{ip}:{port}" for ip in (lan.ips if lan else [])}
     if team:
@@ -368,8 +683,13 @@ def make_handler(hubs: Hubs | Hub, token: str, port: int, lan: LanAccess | None 
                 return "local"
             return self.headers.get(team.user_header, "").strip() or None
 
-        def _hub(self) -> Hub:
+        def _desk(self) -> Desk:
             return hubs.get(self._user())
+
+        def _hub(self) -> Hub:
+            """這個請求是哪段對話:POST 看 X-Conv 標頭,GET(事件串流、下載)看網址的 c=;沒給就用最近的那段。"""
+            cid = self.headers.get("X-Conv") or (parse_qs(urlsplit(self.path).query).get("c") or [None])[0]
+            return self._desk().hub(cid)
 
         def _signed_in(self) -> bool:
             """多人模式看登入代理給的身分;單人模式這台電腦自己連的直接過,手機等其他裝置要先用 PIN 登入(cookie)。"""
@@ -409,16 +729,33 @@ def make_handler(hubs: Hubs | Hub, token: str, port: int, lan: LanAccess | None 
             elif url.path == "/api/state":
                 if self._token_ok(self.headers.get("X-Token")):
                     hub = self._hub()
-                    state = {"workspace": str(toolbox.WORKSPACE), "status": hub.status, "busy": hub.busy,
+                    state = {"workspace": str(hub.workspace), "status": hub.status, "busy": hub.busy,
                              "model": hub.model, "draft": sorted(hub.bench.draft), "team": hub.team,
-                             "user": self._user() if team else "",
-                             "instructions": (toolbox.WORKSPACE / agent.INSTRUCTIONS_FILE).is_file()}
+                             "user": self._user() if team else "", "conv": self._desk().cid_of(hub),
+                             "instructions": (hub.workspace / agent.INSTRUCTIONS_FILE).is_file()}
                     if lan and self._local():  # 手機連線方式只給這台電腦看
                         state["lan"] = {"urls": [f"http://{ip}:{port}" for ip in lan.ips], "pin": lan.pin}
                     self._json(200, state)
+            elif url.path == "/api/desk":  # 側邊欄:專案和對話清單
+                if self._token_ok(self.headers.get("X-Token")):
+                    self._json(200, {**self._desk().listing(), "user": self._user() if team else ""})
+            elif url.path == "/api/outputs":  # 成品
+                if self._token_ok(self.headers.get("X-Token")):
+                    self._json(200, self._desk().outputs())
+            elif url.path == "/api/pending":  # 待命
+                if self._token_ok(self.headers.get("X-Token")):
+                    self._json(200, {"items": self._desk().pending()})
+            elif url.path == "/api/instructions":  # 自訂:這段對話所在專案的 ASSISTANT.md
+                if self._token_ok(self.headers.get("X-Token")):
+                    hub = self._hub()
+                    f = hub.workspace / agent.INSTRUCTIONS_FILE
+                    self._json(200, {"text": f.read_text(encoding="utf-8", errors="replace")[:20000] if f.is_file() else "",
+                                     "project": hub.workspace.name, "team": hub.team})
             elif url.path == "/api/events":
                 if self._token_ok((qs.get("token") or [None])[0]):  # EventSource 不能帶標頭,token 放網址
-                    self._stream(self._hub(), int(self.headers.get("Last-Event-ID") or 0))
+                    hub, desk = self._hub(), self._desk()
+                    desk.focus = desk.cid_of(hub)
+                    self._stream(hub, int(self.headers.get("Last-Event-ID") or 0))
             elif url.path == "/api/patch":  # 下載 patch(多人模式不能直接套用,自己下載回去套)
                 if self._token_ok((qs.get("token") or [None])[0]):
                     p = self._hub().patch_file(int((qs.get("i") or ["-1"])[0]))
@@ -426,6 +763,13 @@ def make_handler(hubs: Hubs | Hub, token: str, port: int, lan: LanAccess | None 
                         return self._json(404, {"error": "找不到這個 patch"})
                     self._send(200, p.read_bytes(), "text/x-diff; charset=utf-8",
                                {"Content-Disposition": f'attachment; filename="{p.name}"'})
+            elif url.path == "/api/file":  # 下載「成品」裡的文件
+                if self._token_ok((qs.get("token") or [None])[0]):
+                    p = self._desk().doc_file((qs.get("name") or [""])[0])
+                    if not p:
+                        return self._json(404, {"error": "找不到這個檔案"})
+                    self._send(200, p.read_bytes(), "application/octet-stream",
+                               {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(p.name)}"})
             else:
                 self._json(404, {"error": "沒有這個頁面"})
 
@@ -485,6 +829,20 @@ def make_handler(hubs: Hubs | Hub, token: str, port: int, lan: LanAccess | None 
             except json.JSONDecodeError:
                 return self._json(400, {"error": "JSON 格式錯誤"})
             path = urlsplit(self.path).path
+            desk = self._desk()
+            if path == "/api/conv/new":  # 側邊欄的「新增」、專案旁邊的「+」
+                return self._json(200, {"id": desk.new_conversation(body.get("project"))})
+            if path == "/api/conv/rename":
+                desk.rename(str(body.get("id")), str(body.get("title", "")))
+                return self._json(200, {})
+            if path == "/api/conv/delete":
+                ok = desk.delete(str(body.get("id")))
+                return self._json(200 if ok else 409, {} if ok else {"error": "這段對話還在回答中,等結束再刪"})
+            if path == "/api/project/add":
+                try:
+                    return self._json(200, desk.add_project(str(body.get("path", "")), str(body.get("name", ""))))
+                except (ValueError, PermissionError) as e:
+                    return self._json(400, {"error": str(e)})
             hub = self._hub()
             if path == "/api/ask":
                 text = str(body.get("text", "")).strip()
@@ -535,6 +893,17 @@ def serve(hubs: Hubs | Hub, port: int = 8765, token: str | None = None, lan: Lan
     return server
 
 
+def local_desk(registry, quota, tools: list, status: str, model: str, role: str | None = None,
+               thinking: bool | None = None) -> Desk:
+    """自己電腦用的桌面(網頁、桌面版、VS Code 外掛共用):對話存在 OUTPUT_DIR/state,下次打開還在。
+    預設專案是 .env 的 AGENT_WORKSPACE(VS Code 外掛會換成它開著的資料夾),其他專案可以在側邊欄加。"""
+    def make_hub(workspace: Path) -> Hub:
+        return Hub(lambda on_event: agent.AgentSession(registry, quota, role=role, thinking=thinking, tools=tools,
+                                                       on_event=on_event),
+                   status=status, model=model, workspace=workspace)
+    return Desk(make_hub, toolbox.WORKSPACE, store=toolbox.OUTPUT_DIR / "state")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="小助理的網頁介面")
     ap.add_argument("--port", type=int, default=8765)
@@ -558,22 +927,24 @@ def main() -> None:
     status = agent.web_status(allow_web)
     model = registry.spec(args.role or registry.routing["default_role"]).model.split("/")[-1]
 
-    def new_hub(user: str, **kw) -> Hub:
-        return Hub(lambda on_event: agent.AgentSession(registry, quota, user=user, role=args.role, thinking=thinking,
-                                                       tools=tools, on_event=on_event),
-                   status=status, model=model, **kw)
-
     if args.team:
         if args.lan:
             raise SystemExit("--team 和 --lan 不能一起用")
         gate = Gate(args.max_concurrent)
-        hubs: Hubs | Hub = Hubs(lambda user: new_hub(
-            user, team=True, gate=gate,  # patch 存在輸出資料夾,每人一個子資料夾(共用的工作區是唯讀的)
-            patch_dir=toolbox.OUTPUT_DIR / "patches" / re.sub(r"[^\w.@-]", "_", user)[:80]))
+
+        def team_desk(user: str) -> Desk:
+            # 每人一個資料夾:對話、patch、文件都放這裡(共用的工作區是唯讀的);專案由管理者決定,不能自己加
+            base = toolbox.OUTPUT_DIR / "users" / re.sub(r"[^\w.@-]", "_", user)[:80]
+            return Desk(lambda ws: Hub(lambda on_event: agent.AgentSession(
+                registry, quota, user=user, role=args.role, thinking=thinking, tools=tools, on_event=on_event),
+                status=status, model=model, team=True, gate=gate, patch_dir=base / "patches",
+                output_dir=base / "docs", workspace=ws),
+                toolbox.WORKSPACE, store=base / "state", can_add_projects=False, docs_dir=base / "docs")
+
+        hubs: Hubs | Desk = Hubs(team_desk)
         team = TeamAccess(args.user_header, set(args.allowed_host))
     else:
-        hubs, team = new_hub("local"), None
-        web.CONFIRM = hubs.confirm  # 上網前在網頁上跳確認
+        hubs, team = local_desk(registry, quota, tools, status, model, args.role, thinking), None
     lan = LanAccess(lan_ips()) if args.lan else None
     if lan and not lan.ips:
         raise SystemExit("找不到這台電腦的區域網路位址,請確認有連上 Wi-Fi 或網路線")

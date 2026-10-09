@@ -38,7 +38,9 @@ class Workbench:
     draft: dict[str, str] = field(default_factory=dict)
     patches: list[tuple[Path, bool]] = field(default_factory=list)
     patch_dir: Path | None = None
+    output_dir: Path | None = None  # save_document 存哪裡;None = OUTPUT_DIR(多人模式每人一個子資料夾)
     confirm: Callable[[str, str], bool] | None = None
+    workspace: Path | None = None   # 這段對話的工作區(網頁的每個專案不同);None = WORKSPACE
 
 
 _bench: ContextVar[Workbench] = ContextVar("workbench", default=Workbench())
@@ -47,6 +49,11 @@ _bench: ContextVar[Workbench] = ContextVar("workbench", default=Workbench())
 def bench() -> Workbench:
     """目前這個執行緒在幫誰做事。沒設定就是預設的那一個(CLI、單人網頁)。"""
     return _bench.get()
+
+
+def ws() -> Path:
+    """目前這段對話的工作區。工具一律用這個,不要直接用 WORKSPACE(網頁上不同專案的對話可能同時在跑)。"""
+    return bench().workspace or WORKSPACE
 
 
 @contextmanager
@@ -70,7 +77,7 @@ def __getattr__(name: str):
 
 def patch_label(p: Path) -> str:
     """給人看的 patch 位置:在工作區裡就用相對路徑,不然用檔名。"""
-    return p.relative_to(WORKSPACE).as_posix() if p.is_relative_to(WORKSPACE) else p.name
+    return p.relative_to(ws()).as_posix() if p.is_relative_to(ws()) else p.name
 
 
 def configure(workspace: str | Path | None = None, sandbox_image: str | None = None,
@@ -98,16 +105,17 @@ def _is_secret(p: Path) -> bool:
 
 
 def _safe_path(rel: str) -> Path:
-    p = (WORKSPACE / rel).resolve()
-    if not p.is_relative_to(WORKSPACE):
+    root = ws()
+    p = (root / rel).resolve()
+    if not p.is_relative_to(root):
         raise ValueError(f"路徑 {rel} 超出工作區,拒絕存取")
-    if _is_secret(p) or ".git" in p.relative_to(WORKSPACE).parts:
+    if _is_secret(p) or ".git" in p.relative_to(root).parts:
         raise PermissionError(f"{rel} 是機密檔(金鑰 / 憑證 / .env / .git),agent 不能讀")
     return p
 
 
 def _rel(p: Path) -> str:
-    return p.relative_to(WORKSPACE).as_posix()
+    return p.relative_to(ws()).as_posix()
 
 
 def current_text(p: Path) -> str | None:
@@ -150,18 +158,19 @@ _SKIP_DIRS = {".agent_patches", ".git", ".venv", "__pycache__", "node_modules"}
 
 def _visible(f: Path) -> bool:
     """列檔 / 搜尋看得到的:不是隱藏路徑、不在大型目錄裡、不是機密檔、實際位置在工作區內。"""
-    rel = f.relative_to(WORKSPACE)
+    root = ws()
+    rel = f.relative_to(root)
     if any(part.startswith(".") or part in _SKIP_DIRS for part in rel.parts) or _is_secret(f):
         return False
     real = f.resolve()  # symlink / Windows junction 可能指到工作區外或機密檔,看實際位置
-    return real.is_relative_to(WORKSPACE) and not _is_secret(real)
+    return real.is_relative_to(root) and not _is_secret(real)
 
 
 @tool
 def list_files(glob: str = "*", max_entries: int = 200) -> str:
     """列出工作區的檔案與資料夾(資料夾結尾加 /,檔案附大小)。整個專案用 "**/*",某資料夾用 "src/*"。"""
     rows: list[str] = []
-    for f in sorted(WORKSPACE.glob(glob)):
+    for f in sorted(ws().glob(glob)):
         if not _visible(f):
             continue
         rel = _rel(f)
@@ -175,7 +184,7 @@ def list_files(glob: str = "*", max_entries: int = 200) -> str:
 
 def _draft_only(glob: str) -> list[str]:
     """草稿裡新增、工作區還沒有的檔案中,符合 glob 的。"""
-    return [rel for rel in bench().draft if not (WORKSPACE / rel).exists() and PurePosixPath(rel).full_match(glob)]
+    return [rel for rel in bench().draft if not (ws() / rel).exists() and PurePosixPath(rel).full_match(glob)]
 
 
 @tool
@@ -183,8 +192,9 @@ def search_code(pattern: str, glob: str = "**/*.py", max_hits: int = 50) -> str:
     """在工作區用正規表示式搜尋,回傳「檔案:行號: 內容」。先搜再讀,不要整檔讀。"""
     rx = re.compile(pattern)
     hits: list[str] = []
-    files = [f for f in WORKSPACE.glob(glob) if f.is_file() and _visible(f)]
-    for f in files + [WORKSPACE / rel for rel in _draft_only(glob)]:  # 草稿版本優先,草稿新增的檔案也搜
+    root = ws()
+    files = [f for f in root.glob(glob) if f.is_file() and _visible(f)]
+    for f in files + [root / rel for rel in _draft_only(glob)]:  # 草稿版本優先,草稿新增的檔案也搜
         for n, line in enumerate((current_text(f) or "").splitlines(), 1):
             if rx.search(line):
                 hits.append(f"{_rel(f)}:{n}: {line.strip()[:200]}")
@@ -199,7 +209,7 @@ def _copy_ignore(directory: str, names: list[str]) -> list[str]:
     skipped = []
     for n in names:
         p = Path(directory) / n
-        if n in _SKIP_DIRS or _is_secret(p) or not p.resolve().is_relative_to(WORKSPACE):
+        if n in _SKIP_DIRS or _is_secret(p) or not p.resolve().is_relative_to(ws()):
             skipped.append(n)
     return skipped
 
@@ -209,7 +219,7 @@ def _sandbox_copy():
     """工作區的暫存複本,沙箱一律掛它而不是工作區本身;正式環境大 repo 改用 git worktree,不要整包複製。"""
     with tempfile.TemporaryDirectory(prefix="agent_sandbox_") as tmp:
         copy = Path(tmp) / "ws"
-        shutil.copytree(WORKSPACE, copy, ignore=_copy_ignore)
+        shutil.copytree(ws(), copy, ignore=_copy_ignore)
         for rel, text in bench().draft.items():  # 草稿的修改也放進去:沙箱測的是小助理改過的版本
             target = copy / rel
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -267,7 +277,7 @@ def run_command(command: str) -> str:
 def _git(*args: str) -> str:
     if not shutil.which("git"):
         return "錯誤:這台機器沒有 git"
-    r = subprocess.run(["git", "--no-pager", *args], cwd=WORKSPACE, capture_output=True,
+    r = subprocess.run(["git", "--no-pager", *args], cwd=ws(), capture_output=True,
                        text=True, encoding="utf-8", errors="replace", timeout=30)
     if r.returncode != 0:
         return f"錯誤:{r.stderr.strip() or 'git 執行失敗'}"
@@ -324,7 +334,7 @@ def _unified_diff(rel: str, before: str | None, after: str) -> str:
 
 def _original(rel: str) -> str | None:
     """工作區裡真正的內容(不轉換行,CRLF 檔才不會整檔變動);不存在回傳 None。"""
-    p = WORKSPACE / rel
+    p = ws() / rel
     return p.read_bytes().decode("utf-8") if p.is_file() else None
 
 
@@ -369,7 +379,7 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
     if not diff:
         wb.draft.clear()
         return "這次的修改讓檔案回到原本的樣子,草稿已經清空,沒有要套用的修改。"
-    out_dir = wb.patch_dir or WORKSPACE / ".agent_patches"
+    out_dir = wb.patch_dir or ws() / ".agent_patches"
     out_dir.mkdir(parents=True, exist_ok=True)
     first = sorted(draft)[0]
     stem = f"{datetime.now():%Y%m%d_%H%M%S}_{Path(first).name}" + (f"+{len(draft) - 1}" if len(draft) > 1 else "")
@@ -378,7 +388,7 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
         patch_file, n = out_dir / f"{stem}_{n}.patch", n + 1
     patch_file.write_text(f"# {' '.join(reason.split())}\n{diff}", encoding="utf-8", newline="\n")
     r = subprocess.run(["git", "apply", "--check", str(patch_file)],
-                       cwd=WORKSPACE, capture_output=True, text=True)
+                       cwd=ws(), capture_output=True, text=True)
     if r.returncode != 0:  # diff 是從原檔算出來的,照理一定套得上;套不上多半是編碼或換行的怪狀況
         patch_file.unlink()
         return f"錯誤:產生的 diff 套不上去:\n{r.stderr.strip()}"
@@ -397,6 +407,7 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
 
 
 _DOC_SUFFIXES = {".md", ".txt", ".csv", ".json", ".html", ".yaml", ".yml"}
+DOC_SUFFIXES = _DOC_SUFFIXES  # 網頁的「成品」頁面只列這些
 
 
 @tool
@@ -407,10 +418,11 @@ def save_document(filename: str, content: str) -> str:
     suffix = Path(name).suffix.lower()
     if not name or name.startswith(".") or suffix not in _DOC_SUFFIXES:
         return f"錯誤:檔名要像「報告.md」,副檔名限 {' '.join(sorted(_DOC_SUFFIXES))}"
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    target, n = OUTPUT_DIR / name, 2
+    out_dir = bench().output_dir or OUTPUT_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target, n = out_dir / name, 2
     while target.exists():
-        target, n = OUTPUT_DIR / f"{Path(name).stem}_{n}{suffix}", n + 1
+        target, n = out_dir / f"{Path(name).stem}_{n}{suffix}", n + 1
     # CSV 加 BOM:Excel 開沒有 BOM 的 UTF-8 CSV,中文會變亂碼
     target.write_text(content, encoding="utf-8-sig" if suffix == ".csv" else "utf-8", newline="\n")
     return f"已存成 {target}"
@@ -440,7 +452,7 @@ def apply_patch(patch_file: Path) -> str:
     if wb.patches and patch_file != wb.patches[-1][0]:  # 每個 patch 都是累積的,套舊的會丟掉後面的修改
         return "這不是最新的修改;最新的那一份已經包含全部修改,請套用最新的"
     # 關掉換行轉換:patch 是照檔案實際的位元組產生的,autocrlf 會把整個檔案的換行都改掉
-    r = subprocess.run(["git", "-c", "core.autocrlf=false", "apply", str(patch_file)], cwd=WORKSPACE,
+    r = subprocess.run(["git", "-c", "core.autocrlf=false", "apply", str(patch_file)], cwd=ws(),
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         return f"套用失敗(工作區可能已經改過):{r.stderr.strip()}"

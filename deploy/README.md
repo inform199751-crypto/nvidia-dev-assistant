@@ -19,9 +19,10 @@
 | | 單人(`webui.py`) | 多人(`webui.py --team`) |
 |---|---|---|
 | 身分 | 這台電腦 | 登入代理送來的 `X-Forwarded-Email` |
-| 對話、草稿 | 一份 | 每人一份,看不到別人的 |
+| 對話、草稿 | 側邊欄好幾段對話,可以加自己的專案資料夾 | 每人各自的對話,看不到別人的;專案由管理者決定(`REPO_PATH`) |
+| 對話紀錄存在 | `output/state/` | `/data/output/users/<信箱>/state/`(關掉重開還在) |
 | 套用修改 | 按「套用到工作區」 | **不能直接改**(工作區是共用、唯讀的),改成「下載 patch」自己套 |
-| patch 存在 | 工作區的 `.agent_patches/` | `/data/output/patches/<信箱>/` |
+| patch / 文件存在 | 工作區的 `.agent_patches/`、`output/` | `/data/output/users/<信箱>/patches/`、`docs/` |
 | 記住規則(ASSISTANT.md) | 可以 | 由管理者直接改工作區的 ASSISTANT.md |
 | 額度 | 記憶體 | 有 `REDIS_URL` 就記在 Redis(多台伺服器共用) |
 
@@ -68,6 +69,6 @@
 
 ## 限制
 
-- 對話存在記憶體:小助理重啟後對話會清空(額度在 Redis 不受影響)。要跑多台,負載平衡要設「同一個人固定到同一台」(sticky session)。
+- 對話存在 `/data/output/users/<信箱>/state/`(volume 要保留),小助理重啟後還在;答到一半被重啟的那一輪會標成「沒答完」。要跑多台,負載平衡要設「同一個人固定到同一台」(sticky session):進行中的對話在那台的記憶體裡,而且每台只在啟動時讀一次存檔。
 - 同時執行上限是單台的;多台時每台各自算。
 - 長任務(例如整份技術文件)會占住一個執行名額好幾分鐘,上限要依 GPU 數量調整(`--max-concurrent`)。

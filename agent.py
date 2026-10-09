@@ -128,7 +128,7 @@ MAX_INSTRUCTION_TOKENS = 2000  # 說明檔每步都會送,太長就截斷
 
 def project_instructions() -> str:
     """工作區根目錄的 ASSISTANT.md(像 Claude Code 的 CLAUDE.md):這個專案的規則與慣例,放進系統提示。"""
-    p = toolbox.WORKSPACE / INSTRUCTIONS_FILE
+    p = toolbox.ws() / INSTRUCTIONS_FILE
     if not p.is_file():
         return ""
     text = truncate_middle(p.read_text(encoding="utf-8", errors="replace").strip(), MAX_INSTRUCTION_TOKENS)
@@ -141,7 +141,7 @@ def system_prompt() -> str:
 
 def remember(note: str) -> Path:
     """/remember:把一條規則加進 ASSISTANT.md。是使用者自己下的指令,模型的工具還是不能改工作區。"""
-    p = toolbox.WORKSPACE / INSTRUCTIONS_FILE
+    p = toolbox.ws() / INSTRUCTIONS_FILE
     if p.is_file():
         text = p.read_text(encoding="utf-8")
         prefix = "" if not text or text.endswith("\n") else "\n"
@@ -491,9 +491,9 @@ def _offer_apply(patch: Path, passed: bool) -> str:
 def chat(session_factory, first_files: list[str], banner: str = "") -> None:
     """互動模式:像 Claude Code 一樣一直聊,前面說過的內容都記得;動到工作區之前一定先問。"""
     session = session_factory()
-    if (toolbox.WORKSPACE / INSTRUCTIONS_FILE).is_file():
+    if (toolbox.ws() / INSTRUCTIONS_FILE).is_file():
         banner += f" · 已讀取 {INSTRUCTIONS_FILE}"
-    print(f"對內研發助理 · 工作區 {toolbox.WORKSPACE}{banner} · 輸入 /help 看用法、/exit 離開")
+    print(f"對內研發助理 · 工作區 {toolbox.ws()}{banner} · 輸入 /help 看用法、/exit 離開")
     pending = list(first_files)  # -f 給的檔案附在第一個問題
     note = ""  # 下一個問題要先告訴模型的事
     while True:

@@ -149,17 +149,14 @@ def open_window(url: str, headless: bool = False) -> subprocess.Popen | None:
 
 def run(headless: bool = False) -> None:
     import agent
-    import web
     import webui
 
     url = f"http://127.0.0.1:{PORT}/"
     registry, quota, tools, allow_web = agent.prepare()
-    hub = webui.Hub(lambda on_event: agent.AgentSession(registry, quota, tools=tools, on_event=on_event),
-                    status=agent.web_status(allow_web),
-                    model=registry.spec(registry.routing["default_role"]).model.split("/")[-1])
-    web.CONFIRM = hub.confirm
+    desk = webui.local_desk(registry, quota, tools, agent.web_status(allow_web),
+                            registry.spec(registry.routing["default_role"]).model.split("/")[-1])
     try:
-        server = webui.serve(hub, PORT)
+        server = webui.serve(desk, PORT)
     except OSError:  # 已經有一個桌面版在跑:只多開一個視窗
         logging.info("小助理已經在跑了,只開視窗")
         open_window(url, headless)
@@ -170,7 +167,7 @@ def run(headless: bool = False) -> None:
     seen, empty = False, 0
     while True:
         time.sleep(POLL)
-        if hub.listeners:  # 有視窗連著
+        if desk.listeners:  # 有視窗連著(任何一段對話)
             seen, empty = True, 0
             continue
         empty += 1

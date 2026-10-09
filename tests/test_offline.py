@@ -1301,3 +1301,113 @@ def test_desktop_icon_and_favicon(webui_app, tmp_path):
     app = webui_app([])
     r = httpx.get(app.base + "/favicon.ico")
     assert r.status_code == 200 and r.headers["content-type"] == "image/x-icon" and r.content[:4] == b"\x00\x00\x01\x00"
+
+
+def test_webui_desk_conversations_persist(workspace, tmp_path_factory):
+    """側邊欄:好幾段對話各自獨立(X-Conv / ?c=)、存在硬碟,重開程式後還在(歷史、標題、草稿、模型記得前面);
+    專案可以加;「成品」只列文件類檔案、下載擋 ../;「待命」列還沒套用的草稿。"""
+    import threading
+    import httpx
+    import webui
+    store, docs, other = (tmp_path_factory.mktemp(n) for n in ("state", "docs", "other"))
+    (docs / "報告.md").write_text("# 報告", encoding="utf-8")
+    (docs / "server.log").write_text("x", encoding="utf-8")
+    reg, seen = scripted_registry([ai("一號的回答"), ai("二號的回答"), ai("記得")])
+
+    def start():
+        desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                               workspace=ws), workspace, store=store, docs_dir=docs)
+        server = webui.serve(desk, 0, token="t0k")
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return desk, server, f"http://127.0.0.1:{server.server_address[1]}"
+
+    def events(base, conv, kind, since=0):
+        got = []
+        with httpx.stream("GET", f"{base}/api/events?token=t0k&c={conv}", headers={"Last-Event-ID": str(since)},
+                          timeout=10) as r:
+            for line in r.iter_lines():
+                if line.startswith("data: "):
+                    got.append(json.loads(line[6:]))
+                    if got[-1]["kind"] == kind:
+                        return got
+        raise AssertionError(got)
+
+    desk, server, base = start()
+    post = lambda path, body, conv="": httpx.post(base + path, json=body, headers={"X-Token": "t0k", "X-Conv": conv})  # noqa: E731
+    get = lambda path, conv="": httpx.get(base + path, headers={"X-Token": "t0k", "X-Conv": conv}).json()  # noqa: E731
+    try:
+        a, b = post("/api/conv/new", {}).json()["id"], post("/api/conv/new", {}).json()["id"]
+        assert post("/api/ask", {"text": "第一題"}, a).status_code == 202
+        events(base, a, "done")
+        assert post("/api/ask", {"text": "第二題"}, b).status_code == 202
+        assert [e["text"] for e in events(base, b, "done") if e["kind"] == "user"] == ["第二題"]  # 看不到 a 的
+        listing = get("/api/desk")
+        assert [(c["id"], c["title"]) for c in listing["conversations"]] == [(b, "第二題"), (a, "第一題")]
+        assert get("/api/state", a)["conv"] == a and listing["projects"][0]["path"] == str(workspace)
+
+        assert post("/api/project/add", {"path": str(other / "沒有這個")}).status_code == 400
+        proj = post("/api/project/add", {"path": str(other)}).json()
+        c = post("/api/conv/new", {"project": proj["id"]}).json()["id"]
+        assert get("/api/state", c)["workspace"] == str(other)
+
+        assert [d["name"] for d in get("/api/outputs")["docs"]] == ["報告.md"]
+        file = lambda name: httpx.get(f"{base}/api/file", params={"token": "t0k", "name": name})  # noqa: E731
+        assert file("報告.md").content == "# 報告".encode() and "UTF-8''" in file("報告.md").headers["content-disposition"]
+        assert file("server.log").status_code == 404 and file("../state/projects.json").status_code == 404
+
+        desk.hubs[a].bench.draft["calc.py"] = "改過的內容\n"  # 模擬還沒套用的草稿
+        desk.save(a)
+        assert [(i["conv"], i["draft"]) for i in get("/api/pending")["items"]] == [(a, ["calc.py"])]
+        assert post("/api/conv/delete", {"id": b}).status_code == 200 and not (store / "conversations" / f"{b}.json").exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    desk, server, base = start()  # 重開程式
+    try:
+        listing = get("/api/desk")
+        assert [x["title"] for x in listing["conversations"]] == ["第一題"] and len(listing["projects"]) == 2
+        assert get("/api/pending")["items"][0]["draft"] == ["calc.py"]  # 還沒載入,看存檔記的
+        newer = post("/api/conv/new", {}).json()["id"]
+        old = events(base, a, "done")  # 畫面打開 a(比 newer 舊)
+        assert [e["kind"] for e in old][0] == "user" and old[-1]["answer"] == "一號的回答"
+        post("/api/ask", {"text": "還記得嗎"})  # 沒給對話 id(VS Code 外掛):進畫面上開著的 a,不是最新的那段
+        events(base, a, "done", since=old[-1]["seq"])
+        assert not [e for e in desk.hubs[newer].events if e["kind"] == "user"]
+        sent = [m.content for m in seen[-1][1]]
+        assert "第一題" in sent[1] and sent[2] == "一號的回答" and "還記得嗎" in sent[-1]
+        assert desk.hubs[a].bench.draft == {"calc.py": "改過的內容\n"}
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_webui_restore_closes_unfinished_turn(workspace):
+    """上次關掉時答到一半、確認還沒回答:讀回來要補上結尾,畫面才不會一直卡在「回答中」;等核准的計畫要還在等。"""
+    import webui
+    reg, _ = scripted_registry([])
+    make = lambda: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event))  # noqa: E731
+    hub = make()
+    hub.restore({"events": [{"kind": "user", "text": "查一下", "mode": "normal"},
+                            {"kind": "confirm", "id": "c1", "action": "上網搜尋", "detail": "pypdf"}]})
+    assert [(e["seq"], e["kind"]) for e in hub.events] == [(1, "user"), (2, "confirm"), (3, "confirm_done"), (4, "error")]
+    assert hub.events[2]["answer"] == "n" and not hub.plan_waiting
+    hub = make()
+    hub.restore({"events": [{"kind": "user", "text": "規劃", "mode": "plan"}, {"kind": "done", "answer": "計畫"},
+                            {"kind": "offer_plan"}]})
+    assert hub.plan_waiting and [e["kind"] for e in hub.events][-1] == "offer_plan"
+
+
+def test_desk_shared_store_keeps_each_default(workspace, tmp_path_factory):
+    """桌面版和 VS Code 外掛共用 output/state,但預設資料夾不同:專案 id 不能重複、各自的「新增」進自己的預設專案、
+    一邊加的專案另一邊存檔時不會蓋掉。"""
+    import webui
+    store, vscode_dir, extra = (tmp_path_factory.mktemp(n) for n in ("state", "vscode", "extra"))
+    desktop = webui.Desk(lambda ws: None, workspace, store=store)
+    vscode = webui.Desk(lambda ws: None, vscode_dir, store=store)
+    assert desktop.default_pid != vscode.default_pid
+    desktop.add_project(str(extra))  # desktop 不知道 vscode 剛加的預設專案
+    again = webui.Desk(lambda ws: None, workspace, store=store)
+    paths = [p["path"] for p in again.projects]
+    assert sorted(paths) == sorted(map(str, (workspace, vscode_dir, extra.resolve())))
+    assert len({p["id"] for p in again.projects}) == 3 and again.default_pid == desktop.default_pid

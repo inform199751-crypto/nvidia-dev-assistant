@@ -6,21 +6,21 @@
 <title>小助理</title>
 <link rel="icon" href="/favicon.ico">
 <style>
-  /* 版面與配色參考常見的 AI 聊天介面:中性灰白、左側欄、置中對話欄、圓角輸入框;綠色只用在重點按鈕 */
+  /* 版面參考 Claude / ChatGPT 桌面版:左側欄(新增、成品、待命、自訂、更多,下面是專案和對話),中間置中的對話欄 */
   :root {
     color-scheme: light dark;  /* 捲軸等瀏覽器內建元件跟著深淺色 */
-    --bg: #ffffff; --sidebar: #f9f9f9; --text: #0d0d0d; --muted: #5d5d5d; --faint: #8f8f8f;
-    --line: #e5e5e5; --hover: #ececec; --user: #f4f4f4; --input: #ffffff; --code: #f7f7f8;
+    --bg: #ffffff; --sidebar: #f9f9f8; --text: #0d0d0d; --muted: #5d5d5d; --faint: #8f8f8f;
+    --line: #e5e5e5; --hover: #ececeb; --active: #e7e6e3; --user: #f4f4f4; --input: #ffffff; --code: #f7f7f8;
     --btn: #0d0d0d; --btn-ink: #ffffff; --btn-off: #d7d7d7; --accent: #10a37f; --accent-ink: #ffffff;
-    --warn: #c2410c; --error: #d93025; --add: #e7f6ec; --del: #fdecec;
+    --dot: #e8a03a; --warn: #c2410c; --error: #d93025; --add: #e7f6ec; --del: #fdecec;
     --shadow: 0 2px 12px rgba(0, 0, 0, .06);
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #212121; --sidebar: #171717; --text: #ececec; --muted: #b4b4b4; --faint: #8f8f8f;
-      --line: #3a3a3a; --hover: #2f2f2f; --user: #303030; --input: #303030; --code: #171717;
+      --line: #3a3a3a; --hover: #2a2a2a; --active: #303030; --user: #303030; --input: #303030; --code: #171717;
       --btn: #ffffff; --btn-ink: #0d0d0d; --btn-off: #5a5a5a; --accent: #10a37f; --accent-ink: #ffffff;
-      --warn: #f59e0b; --error: #f87171; --add: #173226; --del: #3b1d1d;
+      --dot: #f0b45b; --warn: #f59e0b; --error: #f87171; --add: #173226; --del: #3b1d1d;
       --shadow: 0 2px 12px rgba(0, 0, 0, .3);
     }
   }
@@ -32,41 +32,82 @@
   }
   button { font: inherit; color: inherit; cursor: pointer; }
   button:disabled { cursor: default; }
-  button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  svg { display: block; }
+  button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  svg { display: block; flex-shrink: 0; }
+  [hidden] { display: none !important; }
 
   /* ---------- 側邊欄 ---------- */
   aside {
-    width: 260px; flex-shrink: 0; background: var(--sidebar); display: flex; flex-direction: column;
-    padding: 10px; gap: 2px; font-size: 14px; line-height: 1.5;
+    width: 268px; flex-shrink: 0; background: var(--sidebar); display: flex; flex-direction: column;
+    font-size: 14px; line-height: 1.5; border-right: 1px solid var(--line);
   }
-  .side-top { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 10px; }
-  .brand { font-weight: 600; font-size: 16px; }
-  .side-btn {
+  .side-scroll { flex: 1; overflow-y: auto; padding: 8px 8px 12px; }
+  .side-top { display: flex; align-items: center; justify-content: space-between; padding: 6px 6px 10px; }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+  .brand img { width: 22px; height: 22px; border-radius: 6px; }
+  .nav-btn, .conv {
     display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
-    background: none; border: 0; border-radius: 10px; padding: 8px 10px;
+    background: none; border: 0; border-radius: 8px; padding: 6px 8px; color: var(--text);
   }
-  .side-btn:hover:not(:disabled) { background: var(--hover); }
-  .side-btn:disabled { opacity: .45; }
-  .side-btn[hidden] { display: none; }
-  .side-label { color: var(--faint); font-size: 12px; padding: 18px 10px 6px; }
-  .status { padding: 4px 10px; color: var(--muted); overflow-wrap: anywhere; }
-  .status b { color: var(--text); font-weight: 500; }
-  .side-foot { margin-top: auto; padding: 10px; color: var(--faint); font-size: 12px; }
+  .nav-btn:hover:not(:disabled), .conv:hover { background: var(--hover); }
+  .nav-btn[aria-current="page"] { background: var(--active); }
+  .nav-btn .plus { width: 20px; height: 20px; border-radius: 50%; background: var(--active); display: grid; place-items: center; }
+  .nav-btn.more { color: var(--muted); }
+  .badge { margin-left: auto; min-width: 18px; height: 18px; border-radius: 9px; background: var(--dot); color: #fff;
+           font-size: 11px; font-weight: 600; display: grid; place-items: center; padding: 0 5px; }
+  .project { margin-top: 14px; }
+  .project-head { display: flex; align-items: center; gap: 2px; padding: 2px 4px 2px 8px; color: var(--muted); font-size: 13px; }
+  .project-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; background: none; border: 0; padding: 2px 0;
+                  color: inherit; text-align: left; overflow: hidden; }
+  .project-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .project-name svg { transition: transform .15s; }
+  .project.collapsed .project-name svg { transform: rotate(-90deg); }
+  .project.collapsed .conv-list { display: none; }
+  .conv { position: relative; padding-right: 30px; }
+  .conv[aria-current="true"] { background: var(--active); }
+  .conv .dot { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--faint); flex-shrink: 0; }
+  .conv .dot.on { background: var(--faint); border-color: var(--faint); }
+  .conv .dot.busy { background: var(--accent); border-color: var(--accent); animation: pulse 1.2s infinite; }
+  .conv .dot.wait { background: var(--dot); border-color: var(--dot); }
+  .conv .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv .menu-btn { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); opacity: 0; }
+  .conv:hover .menu-btn, .conv:focus-within .menu-btn { opacity: 1; }
+  .empty-proj { color: var(--faint); font-size: 13px; padding: 2px 10px 2px 26px; }
+  .add-project { color: var(--muted); margin-top: 10px; font-size: 13px; }
+  .side-user { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--line); }
+  .side-user img { width: 28px; height: 28px; border-radius: 8px; }
+  .side-user .who { flex: 1; min-width: 0; line-height: 1.3; }
+  .side-user .who div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .side-user .who small { color: var(--faint); font-size: 12px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .icon-btn { background: none; border: 0; border-radius: 8px; padding: 6px; color: var(--muted); }
   .icon-btn:hover { background: var(--hover); color: var(--text); }
   #close-side, #open-side { display: none; }
+  .popup { position: fixed; z-index: 30; background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
+           box-shadow: var(--shadow); padding: 4px; min-width: 140px; }
+  .popup button { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 8px;
+                  padding: 6px 10px; font-size: 14px; }
+  .popup button:hover { background: var(--hover); }
+  .popup button.danger { color: var(--error); }
 
   /* ---------- 主畫面 ---------- */
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .topbar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; min-height: 52px; }
-  .model { font-size: 17px; font-weight: 600; }
-  .model span { color: var(--faint); font-weight: 400; font-size: 15px; margin-left: 6px; }
+  .model { font-size: 17px; font-weight: 600; display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .model span { color: var(--faint); font-weight: 400; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   main { flex: 1; overflow-y: auto; }
   .log { max-width: 768px; margin: 0 auto; padding: 8px 24px 24px; display: flex; flex-direction: column; gap: 22px; }
 
-  .welcome { text-align: center; margin-top: 18vh; }
-  .welcome h2 { font-size: 28px; font-weight: 600; margin: 0 0 22px; }
+  .welcome { text-align: center; margin-top: 12vh; }
+  .welcome h2 { font-size: 28px; font-weight: 600; margin: 0 0 6px; }
+  .welcome .where { color: var(--faint); font-size: 14px; margin: 0 0 18px; }
+  .tabs { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .tab {
+    display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--bg);
+    border-radius: 999px; padding: 5px 14px 5px 11px; font-size: 14px; color: var(--muted);
+  }
+  .tab:hover { background: var(--hover); color: var(--text); }
+  .tab[aria-selected="true"] { background: var(--btn); border-color: var(--btn); color: var(--btn-ink); }
+  .topic-desc { color: var(--faint); font-size: 14px; margin: 0 0 16px; }
   .suggest { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; text-align: left; }
   .suggest button {
     background: var(--bg); border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px;
@@ -76,10 +117,8 @@
   .suggest small { display: block; color: var(--faint); }
 
   .msg { overflow-wrap: anywhere; }
-  .msg.user {
-    align-self: flex-end; max-width: 75%; background: var(--user); border-radius: 22px;
-    padding: 10px 18px; white-space: pre-wrap;
-  }
+  .msg.user { align-self: flex-end; max-width: 75%; background: var(--user); border-radius: 22px; padding: 10px 18px; white-space: pre-wrap; }
+  .msg.user .mode-tag { display: block; font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 2px; }
   .msg.bot > :first-child { margin-top: 0; }
   .msg.bot > :last-child { margin-bottom: 0; }
   .md p, .md ul, .md ol, .md pre, .md table, .md blockquote { margin: 10px 0; }
@@ -98,73 +137,22 @@
   .md blockquote { padding-left: 14px; border-left: 3px solid var(--line); color: var(--muted); }
 
   .tool { font-size: 14px; color: var(--muted); margin: 6px 0; }
-  .tool summary {
-    cursor: pointer; display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
-    border-radius: 8px; padding: 2px 8px 2px 4px; list-style: none;
-  }
+  .tool summary { cursor: pointer; display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+                  border-radius: 8px; padding: 2px 8px 2px 4px; list-style: none; }
   .tool summary::-webkit-details-marker { display: none; }
   .tool summary::before { content: "›"; font-size: 16px; width: 12px; text-align: center; transition: transform .15s; }
   .tool[open] summary::before { transform: rotate(90deg); }
   .tool summary:hover { background: var(--hover); color: var(--text); }
-  .tool summary span { flex-shrink: 0; }  /* 窄螢幕時擠參數,不要把工具名稱擠斷 */
+  .tool summary span { flex-shrink: 0; }
   .tool summary code { font: 13px ui-monospace, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  .tool pre {
-    max-height: 280px; overflow: auto; background: var(--code); border: 1px solid var(--line); border-radius: 12px;
-    padding: 10px 12px; margin: 6px 0 0; font: 12.5px/1.55 ui-monospace, Consolas, monospace; white-space: pre-wrap;
-  }
+  .tool pre { max-height: 280px; overflow: auto; background: var(--code); border: 1px solid var(--line); border-radius: 12px;
+              padding: 10px 12px; margin: 6px 0 0; font: 12.5px/1.55 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
   .thinking { color: var(--faint); font-size: 15px; display: flex; align-items: center; gap: 8px; }
   .thinking::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--text); animation: pulse 1.2s infinite; }
   @keyframes pulse { 0%, 100% { transform: scale(.6); opacity: .4; } 50% { transform: scale(1); opacity: 1; } }
   .notice { color: var(--faint); font-size: 14px; }
   .foot { color: var(--faint); font-size: 13px; margin-top: 8px; }
   .error { color: var(--error); }
-
-  .card { border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; background: var(--bg); box-shadow: var(--shadow); }
-  .card .q { margin-bottom: 10px; overflow-wrap: anywhere; line-height: 1.6; }
-  .card .q .tag { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 8px; margin-right: 6px; vertical-align: 1px; }
-  .card .tag.ok { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
-  .card .tag.warn { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
-  .card code { background: var(--code); border-radius: 6px; padding: 1px 6px; font: 14px ui-monospace, Consolas, monospace; }
-  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
-  .pill { border-radius: 999px; padding: 6px 16px; font-size: 14px; font-weight: 500; border: 1px solid var(--line); background: var(--bg); }
-  .pill:hover:not(:disabled) { background: var(--hover); }
-  .pill.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-  .pill.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, black); }
-  .pill:disabled { opacity: .5; }
-  .card .result { color: var(--muted); font-size: 14px; }
-  .diff { max-height: 320px; overflow: auto; background: var(--code); border: 1px solid var(--line); border-radius: 12px; margin: 0 0 12px;
-          font: 12.5px/1.6 ui-monospace, Consolas, monospace; padding: 6px 0; }
-  .diff div { padding: 0 12px; white-space: pre; }
-  .diff .add { background: var(--add); }
-  .diff .del { background: var(--del); }
-
-  /* ---------- 輸入框 ---------- */
-  footer { padding: 0 16px 14px; }
-  .composer {
-    max-width: 768px; margin: 0 auto; display: flex; align-items: flex-end; gap: 8px;
-    background: var(--input); border: 1px solid var(--line); border-radius: 28px; padding: 8px 8px 8px 10px; box-shadow: var(--shadow);
-  }
-  textarea {
-    flex: 1; resize: none; border: 0; outline: none; background: transparent; color: var(--text);
-    font: inherit; line-height: 1.6; padding: 6px 0; max-height: 200px; min-height: 26px;
-  }
-  textarea::placeholder { color: var(--faint); }
-  .send {
-    width: 36px; height: 36px; border-radius: 50%; border: 0; flex-shrink: 0;
-    background: var(--btn); color: var(--btn-ink); display: grid; place-items: center;
-  }
-  .send:disabled { background: var(--btn-off); }
-  .send.busy svg { animation: spin 1s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .hint { max-width: 768px; margin: 8px auto 0; text-align: center; color: var(--faint); font-size: 12px; }
-  .mode-btn {
-    flex-shrink: 0; align-self: center; display: inline-flex; align-items: center; gap: 4px;
-    border: 1px solid var(--line); background: transparent; border-radius: 999px; padding: 4px 12px 4px 9px;
-    font-size: 13px; color: var(--muted);
-  }
-  .mode-btn:hover { background: var(--hover); color: var(--text); }
-  .mode-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-  .msg.user .mode-tag { display: block; font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 2px; }
   .plan { border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; margin: 8px 0; font-size: 15px; }
   .plan .title { font-size: 13px; color: var(--faint); margin-bottom: 4px; }
   .plan ol { list-style: none; margin: 0; padding: 0; }
@@ -173,7 +161,79 @@
   .plan li.in_progress { font-weight: 600; }
   .plan li.in_progress::before { content: "◐"; color: var(--accent); }
   .plan li.done { color: var(--faint); text-decoration: line-through; }
-  .plan li.done::before { content: "✓"; color: var(--accent); text-decoration: none; }
+  .plan li.done::before { content: "✓"; color: var(--accent); }
+
+  .card { border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; background: var(--bg); box-shadow: var(--shadow); }
+  .card .q { margin-bottom: 10px; overflow-wrap: anywhere; line-height: 1.6; }
+  .tag { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 8px; margin-right: 6px; vertical-align: 1px; }
+  .tag.ok { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+  .tag.warn { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+  .card code { background: var(--code); border-radius: 6px; padding: 1px 6px; font: 14px ui-monospace, Consolas, monospace; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .pill { border-radius: 999px; padding: 6px 16px; font-size: 14px; font-weight: 500; border: 1px solid var(--line); background: var(--bg); }
+  .pill:hover:not(:disabled) { background: var(--hover); }
+  .pill.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .pill.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, black); }
+  .pill.dark { background: var(--btn); border-color: var(--btn); color: var(--btn-ink); }
+  .pill:disabled { opacity: .5; }
+  .card .result { color: var(--muted); font-size: 14px; }
+  .diff { max-height: 320px; overflow: auto; background: var(--code); border: 1px solid var(--line); border-radius: 12px; margin: 0 0 12px;
+          font: 12.5px/1.6 ui-monospace, Consolas, monospace; padding: 6px 0; }
+  .diff div { padding: 0 12px; white-space: pre; }
+  .diff .add { background: var(--add); }
+  .diff .del { background: var(--del); }
+
+  /* ---------- 側邊欄打開的頁面:成品 / 待命 / 自訂 / 更多 ---------- */
+  .page { flex: 1; overflow-y: auto; }
+  .page-in { max-width: 768px; margin: 0 auto; padding: 8px 24px 40px; }
+  .page h2 { font-size: 24px; margin: 4px 0 4px; }
+  .page .lead { color: var(--faint); margin: 0 0 20px; font-size: 14px; }
+  .page h3 { font-size: 15px; margin: 26px 0 8px; color: var(--muted); font-weight: 600; }
+  .rows { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--line); }
+  .row:first-child { border-top: 0; }
+  .row .grow { flex: 1; min-width: 0; }
+  .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row small { color: var(--faint); display: block; font-size: 12.5px; }
+  .row .actions { flex-shrink: 0; }
+  .none { color: var(--faint); font-size: 14px; padding: 14px; border: 1px dashed var(--line); border-radius: 14px; text-align: center; }
+  .page pre.rules { background: var(--code); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+                    white-space: pre-wrap; font: 13px/1.6 ui-monospace, Consolas, monospace; max-height: 320px; overflow: auto; }
+  .field { display: flex; gap: 8px; margin-top: 10px; }
+  .field input { flex: 1; min-width: 0; font: inherit; font-size: 14px; padding: 7px 12px; border: 1px solid var(--line);
+                 border-radius: 10px; background: var(--bg); color: var(--text); }
+  .kv { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; font-size: 14px; }
+  .kv dt { color: var(--faint); }
+  .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .help li { margin: 4px 0; font-size: 14px; }
+
+  /* ---------- 輸入框 ---------- */
+  footer { padding: 0 16px 14px; }
+  .tray { max-width: 768px; margin: 0 auto 10px; }
+  .tray-head { display: flex; align-items: center; justify-content: space-between; color: var(--faint); font-size: 13px; padding: 0 6px 6px; }
+  .tray-list { display: flex; flex-wrap: wrap; gap: 6px 8px; max-height: 40vh; overflow-y: auto; }
+  .tray-list button { flex-shrink: 0; max-width: 260px; border: 1px solid var(--line); background: var(--bg); color: var(--text);
+                      border-radius: 14px; padding: 8px 12px; font-size: 13px; line-height: 1.45; text-align: left;
+                      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tray-list button:hover { background: var(--hover); }
+  .composer { max-width: 768px; margin: 0 auto; display: flex; align-items: flex-end; gap: 6px; background: var(--input);
+              border: 1px solid var(--line); border-radius: 28px; padding: 8px 8px 8px 8px; box-shadow: var(--shadow); }
+  textarea { flex: 1; resize: none; border: 0; outline: none; background: transparent; color: var(--text);
+             font: inherit; line-height: 1.6; padding: 6px 4px; max-height: 200px; min-height: 26px; }
+  textarea::placeholder { color: var(--faint); }
+  .mode-btn { flex-shrink: 0; align-self: center; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line);
+              background: transparent; border-radius: 999px; padding: 4px 12px 4px 9px; font-size: 13px; color: var(--muted); }
+  .mode-btn:hover { background: var(--hover); color: var(--text); }
+  .mode-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .round-btn { flex-shrink: 0; align-self: center; width: 32px; height: 32px; border-radius: 50%; border: 0; background: transparent;
+               color: var(--muted); display: grid; place-items: center; }
+  .round-btn:hover { background: var(--hover); color: var(--text); }
+  .send { width: 36px; height: 36px; border-radius: 50%; border: 0; flex-shrink: 0; background: var(--btn); color: var(--btn-ink);
+          display: grid; place-items: center; }
+  .send:disabled { background: var(--btn-off); }
+  .send.busy svg { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hint { max-width: 768px; margin: 8px auto 0; text-align: center; color: var(--faint); font-size: 12px; }
 
   /* ---------- 手機:側邊欄改成抽屜 ---------- */
   .scrim { display: none; }
@@ -182,37 +242,54 @@
     body.side-open aside { transform: none; }
     body.side-open .scrim { display: block; position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, .35); }
     #close-side, #open-side { display: block; }
-    .log { padding: 8px 16px 20px; }
+    .log, .page-in { padding-left: 16px; padding-right: 16px; }
     .msg.user { max-width: 88%; }
     .suggest { grid-template-columns: 1fr; }
-    .welcome { margin-top: 8vh; }
+    .welcome { margin-top: 6vh; }
     .welcome h2 { font-size: 24px; }
+    .kv { grid-template-columns: 1fr; }
+    .conv .menu-btn { opacity: 1; }
   }
 </style>
 </head>
 <body>
 <aside id="sidebar" aria-label="側邊欄">
-  <div class="side-top">
-    <span class="brand">小助理</span>
-    <button type="button" class="icon-btn" id="close-side" aria-label="關閉側邊欄">
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
+  <div class="side-scroll">
+    <div class="side-top">
+      <div class="brand"><img src="/favicon.ico" alt="">小助理</div>
+      <button type="button" class="icon-btn" id="close-side" aria-label="關閉側邊欄">
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
+      </button>
+    </div>
+    <nav aria-label="主選單">
+      <button type="button" class="nav-btn" id="new-chat">
+        <span class="plus"><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg></span>新增
+      </button>
+      <button type="button" class="nav-btn" data-page="outputs">
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M10 2.5l6.5 3.75v7.5L10 17.5l-6.5-3.75v-7.5z"/><path d="M3.5 6.25L10 10l6.5-3.75M10 10v7.5"/></svg>成品
+      </button>
+      <button type="button" class="nav-btn" data-page="pending">
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13.5V9a5 5 0 0110 0v4.5l1.5 1.5h-13z"/><path d="M8.5 17.5a1.6 1.6 0 003 0"/></svg>待命<span class="badge" id="pending-badge" hidden></span>
+      </button>
+      <button type="button" class="nav-btn" data-page="custom">
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="6" width="15" height="10.5" rx="2"/><path d="M7 6V4.5A1.5 1.5 0 018.5 3h3A1.5 1.5 0 0113 4.5V6M2.5 10.5h15"/></svg>自訂
+      </button>
+      <button type="button" class="nav-btn more" data-page="more">
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5l5 5-5 5"/></svg>更多
+      </button>
+    </nav>
+    <div id="projects"></div>
+    <button type="button" class="nav-btn add-project" id="add-project" hidden>
+      <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6.5V15a1.5 1.5 0 001.5 1.5h11A1.5 1.5 0 0017 15V8a1.5 1.5 0 00-1.5-1.5H10L8.5 4.5h-4A1.5 1.5 0 003 6v.5zM10 9.5v4M8 11.5h4"/></svg>新增專案(資料夾)
     </button>
   </div>
-  <button type="button" class="side-btn" id="clear">
-    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 3.5l2 2L8 14l-3 1 1-3 8.5-8.5z"/><path d="M11 3H5a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2V9"/></svg>
-    新對話
-  </button>
-  <button type="button" class="side-btn" id="remember" title="把一條規則寫進工作區的 ASSISTANT.md">
-    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8a1 1 0 011 1v13l-5-3-5 3V4a1 1 0 011-1z"/></svg>
-    記住規則
-  </button>
-  <button type="button" class="side-btn" id="compact" title="把前面的對話整理成摘要,省 token(太長時也會自動整理)">
-    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h12M4 10h8M4 15h5M14 13l2 2 2-2M16 9v6"/></svg>
-    整理對話
-  </button>
-  <div class="side-label">目前狀態</div>
-  <div id="chips"></div>
-  <div class="side-foot" id="side-foot">只在你的電腦上執行。<br>修改檔案、上網之前都會先問你。</div>
+  <div class="side-user">
+    <img src="/favicon.ico" alt="">
+    <div class="who"><div id="who">本機</div><small id="who-model"></small></div>
+    <button type="button" class="icon-btn" id="settings" aria-label="設定與狀態" title="設定與狀態">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="2.6"/><path d="M10 2v2.2M10 15.8V18M2 10h2.2M15.8 10H18M4.3 4.3l1.6 1.6M14.1 14.1l1.6 1.6M4.3 15.7l1.6-1.6M14.1 5.9l1.6-1.6"/></svg>
+    </button>
+  </div>
 </aside>
 <div class="scrim" id="scrim"></div>
 
@@ -221,13 +298,28 @@
     <button type="button" class="icon-btn" id="open-side" aria-label="打開側邊欄">
       <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h14M4 11h14M4 16h9"/></svg>
     </button>
-    <div class="model">小助理<span id="model"></span></div>
+    <button type="button" class="icon-btn" id="back" aria-label="回到對話" hidden>
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l-6 6 6 6"/></svg>
+    </button>
+    <div class="model"><span style="color:var(--text);font-size:17px;font-weight:600" id="top-title">小助理</span><span id="model"></span></div>
   </div>
   <main id="scroller">
     <div class="log" id="log" aria-live="polite"></div>
   </main>
-  <footer>
+  <section class="page" id="page" hidden><div class="page-in" id="page-in"></div></section>
+  <footer id="composer-area">
+    <div class="tray" id="tray" hidden>
+      <div class="tray-head"><span id="tray-title"></span>
+        <button type="button" class="icon-btn" id="tray-close" aria-label="收起建議">
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
+        </button>
+      </div>
+      <div class="tray-list" id="tray-list"></div>
+    </div>
     <form id="form" class="composer">
+      <button type="button" class="round-btn" id="ideas" aria-label="主題建議" title="主題建議">
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 14.5h5M8 17h4M10 2.5a5 5 0 00-3 9c.6.5 1 1.2 1 2V14h4v-.5c0-.8.4-1.5 1-2a5 5 0 00-3-9z"/></svg>
+      </button>
       <button type="button" class="mode-btn" id="plan-mode" aria-pressed="false" title="開啟後,小助理先只讀不改、交出計畫,你同意才照計畫做">
         <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5h10M7 10h10M7 15h10M3 5h.01M3 10h.01M3 15h.01"/></svg>
         先規劃
@@ -237,7 +329,7 @@
         <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 16V4M5 9l5-5 5 5"/></svg>
       </button>
     </form>
-    <div class="hint">用 @檔名 附上工作區的檔案 · Enter 送出、Shift+Enter 換行 · 小助理也會出錯,重要的結果請自己確認</div>
+    <div class="hint">用 @檔名 附上專案裡的檔案 · Enter 送出、Shift+Enter 換行 · 小助理也會出錯,重要的結果請自己確認</div>
   </footer>
 </div>
 <script>
@@ -247,23 +339,70 @@ const log = $("log"), input = $("input"), send = $("send");
 let bot = null;           // 目前這一輪的回答區塊
 let busy = false;
 const tools = [];         // 依序等結果的工具區塊
-const cards = {};         // 確認 / 套用卡片:id → 元素
+let cards = {};           // 確認 / 套用卡片:id → 元素
+let conv = null;          // 目前這段對話的 id
+let desk = { projects: [], conversations: [] };
+let state = {};           // /api/state(這段對話的狀態)
+let es = null;            // 事件串流
+let page = null;          // 打開中的側邊欄頁面
 const SEND_ICON = send.innerHTML;
 const BUSY_ICON = '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10 3a7 7 0 107 7"/></svg>';
-const SUGGESTIONS = [
-  ["找出 calc.py 的 bug 並修正", "讀程式、跑測試、提出修改"],
-  ["列出專案檔案和最近的 git 紀錄", "看看這個專案有什麼"],
-  ["上網查 Python 3.14 有哪些新功能", "上網前會先問你"],
-  ["幫 calc.py 加上除法函式和測試", "先規劃,你同意才動手", "plan"],
-];
+const store = {
+  get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* 無痕視窗等不能存,沒關係 */ } },
+};
 
-function api(path, body) {
+// 主題分類:每個主題的建議問題 [文字, 說明, 模式]。模式 fill = 只填進輸入框讓你補內容(不直接送),
+// plan = 用「先規劃」送出,plan-fill = 先規劃 + 讓你補內容
+const svg = (d) => `<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const TOPICS = [
+  { id: "code", name: "程式開發", desc: "找 bug、解釋程式、補測試、看 git 紀錄",
+    icon: svg('<path d="M7 6l-4 4 4 4M13 6l4 4-4 4M11 4l-2 12"/>'),
+    items: [["找出 calc.py 的 bug 並修正", "讀程式、跑測試、提出修改"],
+            ["解釋 @calc.py 在做什麼", "逐段說明,附檔案位置"],
+            ["幫 calc.py 補上邊界情況的測試", "負數、零、空清單"],
+            ["看最近的 git 紀錄,說明改了什麼", "誰改的、為什麼改"]] },
+  { id: "docs", name: "文件寫作", desc: "寫說明文件、翻譯、摘要、寫信",
+    icon: svg('<path d="M5 2h7l4 4v12H5z"/><path d="M12 2v4h4M8 10h5M8 13h5"/>'),
+    items: [["幫這個專案寫一份 README 並存檔", "存好會出現在「成品」"],
+            ["把下面這段翻成英文:\n", "貼上要翻譯的內容", "fill"],
+            ["幫我寫一封信,向主管報告這週的進度:\n", "寫下重點,幫你整理成信", "fill"],
+            ["把下面的內容整理成條列重點:\n", "貼上內容", "fill"]] },
+  { id: "office", name: "辦公檔案", desc: "讀 PDF、Word、Excel 並整理內容",
+    icon: svg('<rect x="3" y="3" width="14" height="14" rx="2"/><path d="M3 8h14M3 12.5h14M8 8v9"/>'),
+    items: [["摘要 @檔名.docx,列出待辦事項", "把「檔名」換成你的檔案", "fill"],
+            ["分析 @檔名.xlsx 的數字,找出異常的地方", "把「檔名」換成你的檔案", "fill"],
+            ["讀 @檔名.pdf,列出裡面提到的需求", "把「檔名」換成你的檔案", "fill"],
+            ["列出專案裡所有的 PDF、Word、Excel 檔", "先看看有哪些檔案"]] },
+  { id: "web", name: "上網研究", desc: "查文件、錯誤訊息的解法、最新消息(上網前會先問你)",
+    icon: svg('<circle cx="10" cy="10" r="7.5"/><path d="M2.5 10h15M10 2.5c2.5 2.5 2.5 12.5 0 15M10 2.5c-2.5 2.5-2.5 12.5 0 15"/>'),
+    items: [["上網查 Python 3.14 有哪些新功能,附上來源", "列重點並附網址"],
+            ["上網查這個錯誤訊息的解法:\n", "貼上錯誤訊息", "fill"],
+            ["上網比較 pypdf 和 pdfplumber 的差別", "優缺點、適合的情境"],
+            ["摘要這個網頁:https://", "貼上網址", "fill"]] },
+  { id: "plan", name: "規劃任務", desc: "大任務先規劃,你看過同意才動手",
+    icon: svg('<path d="M8 5h9M8 10h9M8 15h9"/><path d="M3 5l1 1 2-2M3 10l1 1 2-2M3 15l1 1 2-2"/>'),
+    items: [["幫 calc.py 加上除法函式和測試", "先規劃再執行", "plan"],
+            ["規劃怎麼重構 calc.py,讓它更好維護", "先規劃再執行", "plan"],
+            ["規劃新增一個計算中位數的功能", "先規劃再執行", "plan"],
+            ["我想做:", "描述任務,小助理先規劃", "plan-fill"]] },
+  { id: "explore", name: "認識專案", desc: "第一次接手一個專案時用",
+    icon: svg('<circle cx="10" cy="10" r="7.5"/><path d="M13 7l-1.8 4.2L7 13l1.8-4.2z"/>'),
+    items: [["這個專案在做什麼?架構是怎樣?", "讀過檔案後整理給你"],
+            ["列出專案結構,說明每個資料夾的用途", "附上主要檔案"],
+            ["這個專案有哪些潛在的問題或風險?", "附檔案位置"],
+            ["新手接手這個專案,要先看哪些檔案?", "排好閱讀順序"]] },
+];
+let topic = store.get("topic", "code");
+
+function api(path, body, convId) {
   return fetch(path, {
     method: body === undefined ? "GET" : "POST",
-    headers: { "X-Token": TOKEN, "Content-Type": "application/json" },
+    headers: { "X-Token": TOKEN, "Content-Type": "application/json", "X-Conv": convId || conv || "" },
     body: body === undefined ? undefined : JSON.stringify(body),
   }).then(async (r) => ({ ok: r.ok, status: r.status, data: await r.json().catch(() => ({})) }));
 }
+const download = (url) => { location.href = url; };
 
 // ---------- 迷你 markdown(先跳脫 HTML,只轉常用語法) ----------
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -324,13 +463,16 @@ function md(src) {
   return out.join("");
 }
 
-// ---------- 畫面 ----------
+// ---------- 小工具 ----------
 const nearBottom = () => { const s = $("scroller"); return s.scrollHeight - s.scrollTop - s.clientHeight < 80; };
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
   if (text !== undefined) e.textContent = text;
   return e;
+}
+function button(label, cls, onclick) {
+  const b = el("button", cls, label); b.type = "button"; b.onclick = onclick; return b;
 }
 function add(node) {
   const stick = nearBottom();
@@ -339,23 +481,74 @@ function add(node) {
   if (stick) node.scrollIntoView({ block: "end" });
   return node;
 }
+const fmtSize = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+const fmtTime = (t) => new Date(t * 1000).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+let timers = {};
+const later = (key, fn, ms = 300) => { clearTimeout(timers[key]); timers[key] = setTimeout(fn, ms); };
+
+// ---------- 主題建議 ----------
+const currentTopic = () => TOPICS.find((t) => t.id === topic) || TOPICS[0];
+const topicDesc = (t) => t.id === "web" && /上網:關/.test(state.status || "") ? `${t.desc}。目前上網是關的,要在 .env 設 ALLOW_WEB=true` : t.desc;
+function useSuggestion([text, , mode]) {
+  const fill = mode === "fill" || mode === "plan-fill";
+  setPlanMode(mode === "plan" || mode === "plan-fill");
+  input.value = text; autosize(); updateSend(); hideTray();
+  if (!fill) return submit();
+  input.focus();  // 要補內容的:只填進去;有「檔名」就先選起來,直接打字就換掉
+  const at = text.indexOf("檔名");
+  if (at >= 0) input.setSelectionRange(at, at + 2); else input.setSelectionRange(text.length, text.length);
+}
+function suggestionButton(item, chip) {
+  const b = button(item[0].trim(), "", () => useSuggestion(item));
+  b.title = item[1] || "";
+  if (!chip && item[1]) b.appendChild(el("small", "", item[1]));
+  return b;
+}
+function setTopic(id) {
+  topic = id; store.set("topic", id);
+  if (log.querySelector(".welcome")) showEmpty(); else showTray();
+}
+function showTray() {
+  const t = currentTopic();
+  $("tray-title").textContent = `${t.name} · 建議`;
+  const list = $("tray-list"); list.innerHTML = "";
+  for (const x of TOPICS) {  // 先放主題切換,再放這個主題的建議
+    const b = button(x.name, "", () => { topic = x.id; store.set("topic", x.id); showTray(); });
+    if (x.id === t.id) { b.style.background = "var(--btn)"; b.style.color = "var(--btn-ink)"; b.style.borderColor = "var(--btn)"; }
+    list.appendChild(b);
+  }
+  for (const item of t.items) list.appendChild(suggestionButton(item, true));
+  $("tray").hidden = false;
+}
+function hideTray() { $("tray").hidden = true; }
+$("tray-close").onclick = hideTray;
+$("ideas").onclick = () => ($("tray").hidden ? showTray() : hideTray());
+
 function showEmpty() {
-  log.innerHTML = "";
+  log.innerHTML = ""; hideTray();
+  const t = currentTopic();
   const box = el("div", "welcome");
   box.appendChild(el("h2", "", "今天想做什麼?"));
-  const grid = box.appendChild(el("div", "suggest"));
-  for (const [text, sub, mode] of SUGGESTIONS) {
-    const b = grid.appendChild(el("button", "", text));
-    b.type = "button";
-    b.appendChild(el("small", "", sub));
-    b.onclick = () => { input.value = text; autosize(); setPlanMode(mode === "plan"); submit(); };
+  const proj = desk.projects.find((p) => p.id === convMeta()?.project);
+  if (proj) box.appendChild(el("p", "where", `專案:${proj.name}`));
+  const tabs = box.appendChild(el("div", "tabs"));
+  tabs.setAttribute("role", "tablist");
+  for (const x of TOPICS) {
+    const b = tabs.appendChild(button("", "tab", () => setTopic(x.id)));
+    b.setAttribute("role", "tab"); b.setAttribute("aria-selected", String(x.id === t.id));
+    b.innerHTML = x.icon.replace('width="18" height="18"', 'width="15" height="15"'); b.append(x.name);
   }
+  box.appendChild(el("p", "topic-desc", topicDesc(t)));
+  const grid = box.appendChild(el("div", "suggest"));
+  for (const item of t.items) grid.appendChild(suggestionButton(item));
   log.appendChild(box);
+  setBusy(busy);
 }
+
+// ---------- 送出 / 狀態 ----------
 function updateSend() { send.disabled = busy || !input.value.trim(); }
 function setBusy(b) {
   busy = b;
-  $("clear").disabled = b; $("compact").disabled = b;
   send.classList.toggle("busy", b);
   send.innerHTML = b ? BUSY_ICON : SEND_ICON;
   send.setAttribute("aria-label", b ? "回答中" : "送出");
@@ -396,57 +589,31 @@ function diffView(text) {
 function cardButtons(card, specs) {
   const actions = card.appendChild(el("div", "actions"));
   for (const [label, cls, onclick] of specs) {
-    const b = actions.appendChild(el("button", "pill " + cls, label));
-    b.type = "button";
-    b.onclick = async () => {
+    const b = actions.appendChild(button(label, "pill " + cls, async () => {
       actions.querySelectorAll("button").forEach((x) => (x.disabled = true));
       if ((await onclick()) === false) actions.querySelectorAll("button").forEach((x) => (x.disabled = false));
-    };
+    }));
   }
+  return actions;
 }
-
 function renderPlan(box, steps) {
   box.innerHTML = "";
   box.appendChild(el("div", "title", "計畫進度"));
   const list = box.appendChild(el("ol"));
   for (const s of steps) list.appendChild(el("li", ["pending", "in_progress", "done"].includes(s.status) ? s.status : "pending", s.step || ""));
 }
+const refreshSoon = () => { later("desk", loadDesk); later("pending", loadPending); later("state", loadState); };
 
+// ---------- 事件 ----------
 const handlers = {
   user(e) {
     bot = null; tools.length = 0;
     const m = el("div", "msg user");
     if (e.mode === "plan") m.appendChild(el("span", "mode-tag", "先規劃"));
     m.append(e.text);
-    add(m).scrollIntoView({ block: "end" }); setBusy(true);
+    add(m).scrollIntoView({ block: "end" }); setBusy(true); refreshSoon();
   },
-  plan(e) {  // 照計畫執行時的進度清單:同一輪只有一份,每次更新就重畫
-    const b = ensureBot(); stopThinking(); b.textEl = null;
-    if (!b.planEl) b.planEl = b.appendChild(el("div", "plan"));
-    renderPlan(b.planEl, e.steps || []);
-  },
-  offer_plan() {
-    const card = add(el("div", "card"));
-    const q = card.appendChild(el("div", "q"));
-    q.append(el("span", "tag ok", "計畫"), "要照這個計畫執行嗎?執行時一樣會先問你才套用修改。");
-    const go = (yes) => async () => {
-      const r = await api("/api/execute", { go: yes });
-      if (!r.ok) { alert(r.data.error || "失敗"); return false; }
-    };
-    cardButtons(card, [["照計畫執行", "primary", go(true)], ["先不要", "", go(false)]]);
-    cards.plan = card;
-    card.scrollIntoView({ block: "end", behavior: "smooth" });
-  },
-  plan_answered(e) {
-    const card = cards.plan; if (!card) return;
-    card.querySelector(".actions")?.remove();
-    card.appendChild(el("div", "result", e.go ? "✓ 照計畫執行" : "沒有執行這個計畫"));
-    cards.plan = null;
-  },
-  thinking() {
-    const b = ensureBot();
-    if (!b.thinkEl) b.thinkEl = b.appendChild(el("div", "thinking", "思考中"));
-  },
+  thinking() { const b = ensureBot(); if (!b.thinkEl) b.thinkEl = b.appendChild(el("div", "thinking", "思考中")); },
   text(e) {
     const b = ensureBot(); stopThinking();
     if (!b.textEl) { b.textEl = b.appendChild(el("div", "md")); b.textEl.raw = ""; }
@@ -464,14 +631,19 @@ const handlers = {
   tool_done(e) { const d = tools.shift(); if (d) d.out.textContent = e.output; },
   step() { stopThinking(); },
   notice(e) { ensureBot().appendChild(el("div", "notice", e.text)); },
+  plan(e) {  // 照計畫執行時的進度清單:同一輪只有一份,每次更新就重畫
+    const b = ensureBot(); stopThinking(); b.textEl = null;
+    if (!b.planEl) b.planEl = b.appendChild(el("div", "plan"));
+    renderPlan(b.planEl, e.steps || []);
+  },
   done(e) {
     stopThinking(); flush();
     const b = ensureBot();
     if (!b.querySelector(".md")) { const t = b.appendChild(el("div", "md")); t.innerHTML = md(e.answer || ""); }
     b.appendChild(el("div", "foot", `${e.role} · ${e.steps} 步 · ${e.tokens.toLocaleString()} tokens(這段對話累計 ${e.total.toLocaleString()})`));
-    bot = null; setBusy(false); loadState();
+    bot = null; setBusy(false); refreshSoon();
   },
-  error(e) { stopThinking(); flush(); ensureBot().appendChild(el("div", "error", `錯誤:${e.text}`)); bot = null; setBusy(false); },
+  error(e) { stopThinking(); flush(); ensureBot().appendChild(el("div", "error", `錯誤:${e.text}`)); bot = null; setBusy(false); refreshSoon(); },
   confirm(e) {
     stopThinking();
     const card = add(el("div", "card"));
@@ -482,19 +654,39 @@ const handlers = {
       ["之後都允許", "", () => api("/api/confirm", { id: e.id, answer: "a" })],
       ["不要", "", () => api("/api/confirm", { id: e.id, answer: "n" })],
     ]);
-    cards[e.id] = card; bot = null;
+    cards[e.id] = card; bot = null; refreshSoon();
     card.scrollIntoView({ block: "end", behavior: "smooth" });  // 要使用者按按鈕的卡片一定要看得到
   },
   confirm_done(e) {
+    refreshSoon();
     const card = cards[e.id]; if (!card) return;
     card.querySelector(".actions")?.remove();
     card.appendChild(el("div", "result", { y: "✓ 已允許這次", a: "✓ 已允許(之後同類動作不再問)", n: "✗ 沒有允許" }[e.answer] || ""));
+  },
+  offer_plan() {
+    const card = add(el("div", "card"));
+    const q = card.appendChild(el("div", "q"));
+    q.append(el("span", "tag ok", "計畫"), "要照這個計畫執行嗎?執行時一樣會先問你才套用修改。");
+    const go = (yes) => async () => {
+      const r = await api("/api/execute", { go: yes });
+      if (!r.ok) { alert(r.data.error || "失敗"); return false; }
+    };
+    cardButtons(card, [["照計畫執行", "primary", go(true)], ["先不要", "", go(false)]]);
+    cards.plan = card; refreshSoon();
+    card.scrollIntoView({ block: "end", behavior: "smooth" });
+  },
+  plan_answered(e) {
+    refreshSoon();
+    const card = cards.plan; if (!card) return;
+    card.querySelector(".actions")?.remove();
+    card.appendChild(el("div", "result", e.go ? "✓ 照計畫執行" : "沒有執行這個計畫"));
+    cards.plan = null;
   },
   offer_apply(e) {
     const card = add(el("div", "card"));
     const q = card.appendChild(el("div", "q"));
     q.append(el("span", e.passed ? "tag ok" : "tag warn", e.passed ? "測試通過" : "測試沒過"),
-             e.passed ? "要把草稿的修改套用到工作區嗎?" : "注意:改完後沙箱測試沒有通過。仍要套用嗎?");
+             e.passed ? "要把草稿的修改套用到專案嗎?" : "注意:改完後沙箱測試沒有通過。仍要套用嗎?");
     q.appendChild(el("div", "notice", `修改都先放在小助理的草稿上,你的檔案還沒動。patch:${e.name}`));
     card.appendChild(diffView(e.diff));
     const choose = (action) => async () => {
@@ -509,28 +701,31 @@ const handlers = {
       }
     }
     const first = e.team  // 多人模式:共用的工作區不能直接改,下載 patch 回去自己套
-      ? ["下載 patch", e.passed ? "primary" : "", () => {
-          location.href = `/api/patch?token=${encodeURIComponent(TOKEN)}&i=${e.patch}`;
-          return false;  // 下載不改狀態,按鈕保持可以再按
-        }]
-      : ["套用到工作區", e.passed ? "primary" : "", choose("apply")];
+      ? ["下載 patch", e.passed ? "primary" : "", () => { download(patchUrl(conv, e.patch)); return false; }]
+      : ["套用到專案", e.passed ? "primary" : "", choose("apply")];
     cardButtons(card, [first, ["先不要", "", choose("keep")], ["捨棄修改", "", choose("discard")]]);
-    cards["patch" + e.patch] = card;
+    cards["patch" + e.patch] = card; refreshSoon();
     card.scrollIntoView({ block: "end", behavior: "smooth" });
   },
   applied(e) {
-    loadState();
+    refreshSoon();
     const card = cards["patch" + e.patch]; if (!card) return;
     card.querySelector(".actions")?.remove();
     card.appendChild(el("div", "result", e.text));
   },
-  clear() { bot = null; tools.length = 0; showEmpty(); setBusy(false); loadState(); },
+  clear() { bot = null; tools.length = 0; cards = {}; showEmpty(); setBusy(false); refreshSoon(); },
 };
+const patchUrl = (c, i) => `/api/patch?token=${encodeURIComponent(TOKEN)}&c=${encodeURIComponent(c)}&i=${i}`;
 
 let checkedAt = 0;
 function connect() {
-  const es = new EventSource(`/api/events?token=${encodeURIComponent(TOKEN)}`);
-  es.onmessage = (m) => { const e = JSON.parse(m.data); (handlers[e.kind] || (() => {}))(e); };
+  if (es) es.close();
+  const mine = conv;
+  es = new EventSource(`/api/events?token=${encodeURIComponent(TOKEN)}&c=${encodeURIComponent(conv)}`);
+  es.onmessage = (m) => {
+    if (mine !== conv) return;  // 已經切到別段對話了
+    const e = JSON.parse(m.data); (handlers[e.kind] || (() => {}))(e);
+  };
   // 伺服器重啟後 token 會換,舊頁面會一直用舊 token 重連、畫面默默卡住:確認是 403 就重新載入拿新的
   es.onerror = async () => {
     if (Date.now() - checkedAt < 5000) return;
@@ -539,29 +734,261 @@ function connect() {
   };
 }
 
+// ---------- 對話 / 專案(側邊欄) ----------
+const convMeta = () => desk.conversations.find((c) => c.id === conv);
+function openConv(id) {
+  conv = id; store.set("conv", id);
+  bot = null; tools.length = 0; cards = {}; dirty.clear();
+  closePage(); closeSide(); hideTray(); setPlanMode(false); setBusy(false);
+  showEmpty(); connect(); loadState(); renderSide();
+  input.focus();
+}
+async function newConv(projectId) {
+  const r = await api("/api/conv/new", { project: projectId || convMeta()?.project });
+  if (!r.ok) return alert(r.data.error || "開新對話失敗");
+  await loadDesk(); openConv(r.data.id);
+}
+async function loadDesk() {
+  const r = await api("/api/desk");
+  if (!r.ok) return;
+  desk = r.data;
+  $("add-project").hidden = !desk.can_add_projects;
+  if (desk.user) $("who").textContent = desk.user;
+  renderSide();
+  if (!conv) {
+    const saved = store.get("conv", "");
+    const pick = desk.conversations.find((c) => c.id === saved) || desk.conversations[0];
+    if (pick) openConv(pick.id); else newConv();  // 沒給專案:伺服器放進預設專案
+  }
+}
+function popup(anchor, items) {
+  document.querySelector(".popup")?.remove();
+  const box = el("div", "popup");
+  for (const [label, fn, cls] of items) box.appendChild(button(label, cls || "", () => { box.remove(); fn(); }));
+  document.body.appendChild(box);
+  const r = anchor.getBoundingClientRect();
+  box.style.left = Math.min(r.left, innerWidth - box.offsetWidth - 8) + "px";
+  box.style.top = Math.min(r.bottom + 4, innerHeight - box.offsetHeight - 8) + "px";
+  setTimeout(() => document.addEventListener("click", function off(ev) {
+    if (!box.contains(ev.target)) { box.remove(); document.removeEventListener("click", off); }
+  }));
+}
+function renderSide() {
+  const box = $("projects"); box.innerHTML = "";
+  const waiting = new Set(pendingItems.map((p) => p.conv));
+  const isDefault = (p) => p.id === desk.default_project;  // 預設專案(這個視窗開著的資料夾)放最上面
+  for (const p of [...desk.projects].sort((a, b) => isDefault(b) - isDefault(a))) {
+    const sec = box.appendChild(el("div", "project"));
+    if (store.get("collapsed:" + p.id, "") === "1") sec.classList.add("collapsed");
+    const head = sec.appendChild(el("div", "project-head"));
+    const name = head.appendChild(button("", "project-name", () => {
+      sec.classList.toggle("collapsed"); store.set("collapsed:" + p.id, sec.classList.contains("collapsed") ? "1" : "");
+    }));
+    name.title = p.path;
+    name.appendChild(el("span", "", p.name));
+    name.insertAdjacentHTML("beforeend", '<svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l5 5 5-5"/></svg>');
+    const plus = head.appendChild(button("", "icon-btn", () => newConv(p.id)));
+    plus.title = `在 ${p.name} 開新對話`; plus.setAttribute("aria-label", plus.title);
+    plus.innerHTML = '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>';
+    const list = sec.appendChild(el("div", "conv-list"));
+    const convs = desk.conversations.filter((c) => c.project === p.id);
+    if (!convs.length) list.appendChild(el("div", "empty-proj", "還沒有對話"));
+    for (const c of convs) {
+      const row = list.appendChild(el("div", "conv"));
+      row.setAttribute("role", "button"); row.tabIndex = 0;
+      row.setAttribute("aria-current", String(c.id === conv));
+      row.onclick = () => c.id !== conv && openConv(c.id);
+      row.onkeydown = (ev) => { if (ev.key === "Enter") row.onclick(); };
+      const dot = row.appendChild(el("span", "dot" + (c.busy ? " busy" : waiting.has(c.id) ? " wait" : c.id === conv ? " on" : "")));
+      dot.title = c.busy ? "回答中" : waiting.has(c.id) ? "有事等你處理" : "";
+      row.appendChild(el("span", "title", c.title));
+      const more = row.appendChild(button("", "icon-btn menu-btn", (ev) => {
+        ev.stopPropagation();
+        popup(more, [
+          ["重新命名", async () => {
+            const t = prompt("對話名稱", c.title);
+            if (t && t.trim()) { await api("/api/conv/rename", { id: c.id, title: t }); loadDesk(); }
+          }],
+          ["刪除", async () => {
+            if (!confirm(`刪除「${c.title}」?刪掉就找不回來了。`)) return;
+            const r = await api("/api/conv/delete", { id: c.id });
+            if (!r.ok) return alert(r.data.error || "刪除失敗");
+            if (c.id === conv) conv = null;
+            loadDesk();
+          }, "danger"],
+        ]);
+      }));
+      more.setAttribute("aria-label", "更多動作");
+      more.innerHTML = '<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>';
+    }
+  }
+}
+$("new-chat").onclick = () => newConv();
+$("add-project").onclick = async () => {
+  const path = prompt("專案資料夾的完整路徑(例如 C:\\Users\\User\\Desktop\\my-project):");
+  if (!path || !path.trim()) return;
+  const r = await api("/api/project/add", { path });
+  if (!r.ok) return alert(r.data.error || "新增失敗");
+  await loadDesk(); newConv(r.data.id);
+};
+
+// ---------- 這段對話的狀態、待命數量 ----------
 async function loadState() {
   const r = await api("/api/state");
   if (!r.ok) return;
-  const box = $("chips"); box.innerHTML = "";
-  const row = (label, value, title) => {
-    const d = box.appendChild(el("div", "status")); d.title = title || value;
-    d.append(label + " "); d.appendChild(el("b", "", value));
-  };
-  if (r.data.user) row("登入", r.data.user);
-  $("remember").hidden = !!r.data.team;  // 多人模式的專案規則由管理者維護
-  if (r.data.team) $("side-foot").textContent = "團隊共用的小助理。修改只放在你自己的草稿,下載 patch 回去自己套用;上網前會先問你。";
-  row("工作區", r.data.workspace.split(/[\\/]/).pop(), r.data.workspace);
-  row("", r.data.status);
-  row("專案規則", r.data.instructions ? "已讀取 ASSISTANT.md" : "沒有 ASSISTANT.md");
-  if (r.data.draft && r.data.draft.length) row("草稿", `${r.data.draft.length} 個檔案還沒套用`, r.data.draft.join("\n"));
-  if (r.data.lan) {  // 只有這台電腦看得到:手機要開的網址和 PIN
-    for (const u of r.data.lan.urls) row("手機開", u.replace(/^http:\/\//, ""), u);
-    row("手機 PIN", r.data.lan.pin);
-  }
-  $("model").textContent = r.data.model || "";
-  setBusy(r.data.busy);
+  state = r.data;
+  $("model").textContent = state.model || "";
+  $("who-model").textContent = state.model || "";
+  setBusy(state.busy);
+  if (page === "more" || page === "custom") renderPage();
+}
+let pendingItems = [];
+async function loadPending() {
+  const r = await api("/api/pending");
+  if (!r.ok) return;
+  pendingItems = r.data.items || [];
+  const n = pendingItems.reduce((s, it) => s + (it.draft.length ? 1 : 0) + it.confirms.length + (it.plan ? 1 : 0), 0);
+  $("pending-badge").hidden = !n; $("pending-badge").textContent = n;
+  renderSide();
+  if (page === "pending") renderPage();
 }
 
+// ---------- 側邊欄的頁面 ----------
+const PAGE_TITLES = { outputs: "成品", pending: "待命", custom: "自訂", more: "更多" };
+function openPage(name) {
+  page = name; closeSide(); hideTray();
+  $("scroller").hidden = true; $("composer-area").hidden = true; $("page").hidden = false; $("back").hidden = false;
+  $("top-title").textContent = PAGE_TITLES[name];
+  document.querySelectorAll(".nav-btn[data-page]").forEach((b) => b.setAttribute("aria-current", b.dataset.page === name ? "page" : "false"));
+  renderPage();
+}
+function closePage() {
+  if (!page) return;
+  page = null;
+  $("scroller").hidden = false; $("composer-area").hidden = false; $("page").hidden = true; $("back").hidden = true;
+  $("top-title").textContent = "小助理";
+  document.querySelectorAll(".nav-btn[data-page]").forEach((b) => b.setAttribute("aria-current", "false"));
+}
+document.querySelectorAll(".nav-btn[data-page]").forEach((b) => (b.onclick = () => openPage(b.dataset.page)));
+$("back").onclick = closePage;
+$("settings").onclick = () => openPage("more");
+
+function section(box, title) { box.appendChild(el("h3", "", title)); return box; }
+function rows(box) { return box.appendChild(el("div", "rows")); }
+function row(list, name, sub, actions) {
+  const r = list.appendChild(el("div", "row"));
+  const g = r.appendChild(el("div", "grow"));
+  g.appendChild(el("div", "name", name));
+  if (sub) g.appendChild(el("small", "", sub));
+  if (actions) { const a = r.appendChild(el("div", "actions")); actions.forEach((x) => a.appendChild(x)); }
+  return r;
+}
+async function renderPage() {
+  const box = $("page-in"), name = page;
+  const r = name === "outputs" ? await api("/api/outputs") : name === "custom" ? await api("/api/instructions") : null;
+  if (page !== name) return;
+  box.innerHTML = "";
+  box.appendChild(el("h2", "", PAGE_TITLES[name]));
+  if (name === "outputs") {
+    box.appendChild(el("p", "lead", "小助理做出來的東西:存成檔案的文件,以及每段對話提過的修改(patch)。"));
+    section(box, "文件");
+    if (!r.data.docs?.length) box.appendChild(el("div", "none", "還沒有文件。請小助理「寫成文件並存檔」,就會出現在這裡。"));
+    else {
+      const list = rows(box);
+      for (const d of r.data.docs) row(list, d.name, `${fmtSize(d.size)} · ${fmtTime(d.mtime)}`,
+        [button("下載", "pill", () => download(`/api/file?token=${encodeURIComponent(TOKEN)}&name=${encodeURIComponent(d.name)}`))]);
+    }
+    section(box, "修改(patch)");
+    if (!r.data.patches?.length) box.appendChild(el("div", "none", "這次打開以來還沒有修改。修程式時小助理提的 patch 會列在這裡。"));
+    else {
+      const list = rows(box);
+      for (const p of r.data.patches) {
+        const rr = row(list, p.name, `${p.title || "對話"}${p.latest ? " · 最新(包含全部修改)" : ""}`,
+          [button("下載", "pill", () => download(patchUrl(p.conv, p.i))), button("打開對話", "pill", () => openConv(p.conv))]);
+        rr.querySelector(".grow").prepend(el("span", p.passed ? "tag ok" : "tag warn", p.passed ? "測試通過" : "測試沒過"));
+      }
+    }
+  } else if (name === "pending") {
+    box.appendChild(el("p", "lead", "等你處理的事:還沒套用的草稿、等你同意的上網、等你核准的計畫。"));
+    if (!pendingItems.length) box.appendChild(el("div", "none", "目前沒有等你處理的事。"));
+    for (const it of pendingItems) {
+      section(box, it.title || "對話");
+      const list = rows(box);
+      const act = (path, body) => async () => {  // 用那段對話的 id 送,不是目前打開的這段
+        const x = await api(path, body, it.conv);
+        const msg = x.data.error || (path === "/api/apply" ? x.data.text : "");
+        if (msg) alert(msg);
+        loadPending();
+      };
+      if (it.draft.length) {
+        const first = it.team ? button("下載 patch", "pill dark", () => download(patchUrl(it.conv, -1)))
+                              : button("套用到專案", "pill dark", act("/api/apply", { patch: it.patch ?? -1, action: "apply" }));
+        row(list, `草稿裡有 ${it.draft.length} 個檔案還沒套用`, it.draft.join("、"),
+            [first, button("捨棄", "pill", act("/api/apply", { patch: it.patch ?? -1, action: "discard" })),
+             button("打開對話", "pill", () => openConv(it.conv))]);
+      }
+      for (const c of it.confirms) row(list, `小助理想要${c.action}`, c.detail,
+        [button("允許這次", "pill primary", act("/api/confirm", { id: c.id, answer: "y" })),
+         button("不要", "pill", act("/api/confirm", { id: c.id, answer: "n" }))]);
+      if (it.plan) row(list, "計畫等你同意", "看過計畫後決定要不要照著做",
+        [button("照計畫執行", "pill primary", async () => { await act("/api/execute", { go: true })(); openConv(it.conv); }),
+         button("先不要", "pill", act("/api/execute", { go: false })), button("打開對話", "pill", () => openConv(it.conv))]);
+    }
+  } else if (name === "custom") {
+    box.appendChild(el("p", "lead", "讓小助理照你的習慣做事。"));
+    section(box, `專案規則(${r.data.project} 的 ASSISTANT.md)`);
+    box.appendChild(el("p", "lead", "每段對話開始時小助理都會先讀,例如「回答都要附檔案路徑」、「測試用 pytest」。"));
+    if (r.data.text) box.appendChild(el("pre", "rules", r.data.text)); else box.appendChild(el("div", "none", "這個專案還沒有規則。"));
+    if (r.data.team) box.appendChild(el("p", "lead", "多人模式的專案規則由管理者維護。"));
+    else {
+      const f = box.appendChild(el("div", "field"));
+      const inp = f.appendChild(el("input")); inp.placeholder = "新增一條規則,例如:回答都要附檔案路徑";
+      const go = async () => {
+        if (!inp.value.trim()) return;
+        const x = await api("/api/remember", { rule: inp.value });
+        if (!x.ok) return alert(x.data.error || "新增失敗");
+        renderPage();
+      };
+      inp.onkeydown = (ev) => { if (ev.key === "Enter" && !ev.isComposing) go(); };
+      f.appendChild(button("加入", "pill dark", go));
+    }
+    section(box, "上網");
+    box.appendChild(el("p", "lead", `${state.status || ""}。要開關請改專案資料夾 .env 的 ALLOW_WEB(true / false),改完重新打開小助理。`));
+    section(box, "模型");
+    box.appendChild(el("p", "lead", `${state.model || ""}(換模型改 models.yaml)`));
+  } else if (name === "more") {
+    section(box, "這段對話");
+    const a = box.appendChild(el("div", "actions"));
+    a.appendChild(button("整理對話(摘要前面的內容,省 token)", "pill", async () => {
+      const x = await api("/api/compact", {});
+      alert(x.data.text || "已整理,摘要會出現在對話裡");
+      closePage();
+    }));
+    section(box, "目前狀態");
+    const dl = box.appendChild(el("dl", "kv"));
+    const kv = (k, v) => { dl.appendChild(el("dt", "", k)); dl.appendChild(el("dd", "", v)); };
+    kv("專案資料夾", state.workspace || "");
+    kv("上網", state.status || "");
+    kv("專案規則", state.instructions ? "已讀取 ASSISTANT.md" : "沒有 ASSISTANT.md");
+    kv("草稿", state.draft?.length ? `${state.draft.length} 個檔案還沒套用:${state.draft.join("、")}` : "沒有");
+    kv("模型", state.model || "");
+    if (state.user) kv("登入", state.user);
+    if (state.lan) { kv("手機開", state.lan.urls.join("、")); kv("手機 PIN", state.lan.pin); }
+    section(box, "使用說明");
+    const ul = box.appendChild(el("ul", "help"));
+    for (const t of [
+      "新對話的首頁可以選主題(程式開發、文件寫作、辦公檔案…),點建議問題就能直接問;對話中按輸入框左邊的燈泡也能叫出建議。",
+      "用 @檔名 附上專案裡的檔案,例如:解釋 @calc.py。",
+      "修改先放在小助理的草稿上,你按「套用到專案」才會真的改檔案;還沒套用的會出現在「待命」。",
+      "大任務打開「先規劃」:小助理先只讀不改、交出計畫,你同意才照計畫做。",
+      "上網前一定會先問你;公司內網和本機網址一律不准。",
+      "左邊每個專案是一個資料夾,底下是它的對話;「新增專案」可以加你自己的資料夾。",
+      "對話會自動存檔,關掉再打開還在。",
+    ]) ul.appendChild(el("li", "", t));
+  }
+}
+
+// ---------- 規劃模式、送出 ----------
 let planMode = false;
 function setPlanMode(on) {
   planMode = on;
@@ -569,12 +996,11 @@ function setPlanMode(on) {
   input.placeholder = on ? "要規劃什麼任務?" : "問小助理任何事…";
 }
 $("plan-mode").onclick = () => { setPlanMode(!planMode); input.focus(); };
-
 async function submit() {
   const text = input.value.trim();
-  if (!text || busy) return;
+  if (!text || busy || !conv) return;
   const mode = planMode ? "plan" : "normal";
-  input.value = ""; autosize(); updateSend(); setPlanMode(false);
+  input.value = ""; autosize(); updateSend(); setPlanMode(false); hideTray();
   const r = await api("/api/ask", { text, mode });
   if (!r.ok) { alert(r.data.error || "送出失敗"); input.value = text; autosize(); updateSend(); setPlanMode(mode === "plan"); }
 }
@@ -591,29 +1017,10 @@ const closeSide = () => document.body.classList.remove("side-open");
 $("open-side").onclick = () => document.body.classList.add("side-open");
 $("close-side").onclick = closeSide;
 $("scrim").onclick = closeSide;
-$("clear").onclick = async () => {
-  closeSide();
-  const r = await api("/api/clear", {});
-  if (!r.ok) alert(r.data.error || "開新對話失敗");
-  input.focus();
-};
-$("compact").onclick = async () => {
-  closeSide();
-  const btn = $("compact"); btn.disabled = true;
-  const r = await api("/api/compact", {});
-  btn.disabled = false;
-  if (r.data.text) alert(r.data.text);
-};
-$("remember").onclick = async () => {
-  closeSide();
-  const rule = prompt("要小助理記住的規則(會寫進工作區的 ASSISTANT.md):\n例如:回答都要附檔案路徑");
-  if (rule && rule.trim()) { await api("/api/remember", { rule }); loadState(); }
-};
 
-showEmpty();
-loadState();
-connect();
-input.focus();
+loadDesk();
+loadPending();
+setInterval(() => { loadDesk(); loadPending(); }, 10000);  // 別段對話在背景跑完、有事等你,側邊欄也會更新
 </script>
 </body>
 </html>
