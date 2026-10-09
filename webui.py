@@ -144,6 +144,26 @@ class LanAccess:
                 self._save()
             return sid
 
+    def guest_ids(self) -> list[str]:
+        """配對中的訪客手機代號(identify() 給的 guest:<代號>)。"""
+        with self.lock:
+            ids = {h[:12] for h, k in self.devices.items() if k == "guest"}
+            ids |= {self._digest(s)[:12] for s, k in self.sessions.items() if k == "guest"}
+        return sorted(ids)
+
+    def forget_guest(self, gid: str) -> bool:
+        """只取消這一支訪客手機的配對(設定頁的「取消配對」);其他手機不受影響。"""
+        if not re.fullmatch(r"[0-9a-f]{12}", gid or ""):  # 空字串會對到每一支
+            return False
+        with self.lock:
+            sessions = {s: k for s, k in self.sessions.items() if not (k == "guest" and self._digest(s).startswith(gid))}
+            devices = {h: k for h, k in self.devices.items() if not (k == "guest" and h.startswith(gid))}
+            changed = (len(sessions), len(devices)) != (len(self.sessions), len(self.devices))
+            self.sessions, self.devices = sessions, devices
+            if changed:
+                self._save()
+        return changed
+
     def logout(self, sid: str | None) -> None:
         """帳號選單的「登出」:只忘記這一支手機,下次要重新輸入 PIN;其他手機不受影響。"""
         if not sid:
@@ -241,7 +261,23 @@ class PhoneLink:
         return {"on": on, "urls": urls, "pin": self.lan.pin if on else "",
                 "guest_pin": (self.lan.guest_pin or "") if on else "",
                 "phones": self.lan.count("owner"), "guests": self.lan.count("guest"),
-                "qr": qr.svg(urls[0]) if urls else ""}
+                "qr": qr.svg(urls[0]) if urls else "", "guest_usage": self.guest_usage()}
+
+    def guest_usage(self) -> dict | None:
+        """每支訪客手機今天用了多少、幾段對話、最後什麼時候用。訪客的額度跟主人分開,但用的是主人的 NVIDIA 金鑰。
+        配對中的都列;取消配對了、但今天用過的也列(用量還是算在這把金鑰上)。"""
+        quota, base = getattr(self.guests, "quota", None), getattr(self.guests, "base", None)
+        if not quota:
+            return None
+        used = {u.removeprefix("guest-"): n for u, n in quota.everyone().items() if u.startswith("guest-")}
+        paired = set(self.lan.guest_ids())
+        rows = []
+        for gid in paired | set(used):
+            convs = list((base / gid / "state" / "conversations").glob("*.json")) if base else []
+            rows.append({"id": gid, "used": used.get(gid, 0), "paired": gid in paired, "conversations": len(convs),
+                         "last": max((f.stat().st_mtime for f in convs), default=None)})
+        rows.sort(key=lambda r: (-r["used"], -(r["last"] or 0), r["id"]))
+        return {"rows": rows, "limit": quota.daily_tokens, "total": sum(used.values())}
 
 
 ASSETS = Path(__file__).with_name("assets")
@@ -1418,7 +1454,10 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             if path in ("/api/phone", "/api/phone/forget"):  # 「更多」的手機連線開關:只有這台電腦自己能按
                 if not phone or not self._local():
                     return self._json(404, {"error": "沒有手機連線功能"})
-                if path == "/api/phone/forget":
+                if path == "/api/phone/forget" and body.get("id"):  # 只取消一支訪客手機
+                    if not phone.lan.forget_guest(str(body["id"])):
+                        return self._json(404, {"error": "找不到這支訪客手機"})
+                elif path == "/api/phone/forget":
                     phone.lan.forget("guest" if body.get("who") == "guests" else None)
                 elif err := (phone.start() if body.get("on") else phone.stop()):
                     return self._json(409, {"error": err})
@@ -1577,6 +1616,7 @@ def guest_desks(registry, tools: list, status: str, model: str, base: Path | Non
             return desks[gid]
 
     get.desks = desks  # PhoneLink.guest_listeners 用
+    get.quota, get.base = quota, base  # PhoneLink.guest_usage 用:設定頁列出每支訪客手機的用量
     return get
 
 

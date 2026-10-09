@@ -209,6 +209,15 @@ class TokenQuota:
         with self._lock:
             return self._today(user).tokens
 
+    def everyone(self) -> dict[str, int]:
+        """今天每個人各用了多少(沒用的不列):設定頁列出每支訪客手機的用量。"""
+        today = datetime.now(TAIPEI).date().isoformat()
+        with self._lock:
+            if self.store:
+                return {user: int(days[today]) for user, days in self._read().items()
+                        if isinstance(days, dict) and days.get(today)}
+            return {user: u.tokens for user, u in self._usage.items() if u.day == today and u.tokens}
+
     def check(self, user: str, need: int) -> None:
         with self._lock:
             u = self._today(user)

@@ -2650,3 +2650,42 @@ def test_knowledge_page_and_search_tool(workspace, tmp_path_factory):
     assert "search_knowledge" in seen[0][2]  # 那一輪真的有把工具送給模型
     with pytest.raises(PermissionError):
         webui.Desk(lambda ws: None, workspace, store=store, can_add_projects=False).add_knowledge(str(folder))
+
+
+def test_owner_sees_each_guests_usage_and_can_cancel_one(workspace, tmp_path_factory, monkeypatch):
+    """設定頁「手機與訪客」:列出每支訪客手機今天用了多少(額度跟主人分開,但用主人的金鑰)、幾段對話;
+    可以只取消其中一支,另一支和主人的手機照常;取消了但今天用過的還是列出來;代號格式不對不能拿來取消全部。"""
+    import httpx
+    import webui
+    store, guests_dir = tmp_path_factory.mktemp("state"), tmp_path_factory.mktemp("guests")
+    reg, _ = scripted_registry([])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=store)
+    guests = webui.guest_desks(reg, tools.ALL_TOOLS, "上網:關", "model", base=guests_dir)
+    monkeypatch.setattr(webui, "lan_ips", lambda: ["127.0.0.1"])
+    phone = webui.PhoneLink(desk, "t0k", 0, store=store, host="127.0.0.1", guests=guests)
+    server, base = _serve(desk, phone=phone)
+    h = {"X-Token": "t0k"}
+    try:
+        st = httpx.post(base + "/api/phone", json={"on": True}, headers=h).json()
+        assert st["guest_usage"] == {"rows": [], "limit": webui.GUEST_DAILY_TOKENS, "total": 0}
+        lan = phone.lan
+        owner, g1, g2 = lan.login(st["pin"]), lan.login(st["guest_pin"]), lan.login(st["guest_pin"])
+        id1, id2 = (lan.identify(s).split(":")[1] for s in (g1, g2))
+        guests.quota.charge(f"guest-{id1}", 1200)
+        guests(id1).new_conversation(kind="chat")
+        guests(id1).save(next(iter(guests(id1).hubs)))  # 存檔才算一段對話
+        usage = httpx.get(base + "/api/phone", headers=h).json()["guest_usage"]
+        assert usage["total"] == 1200 and [(r["id"], r["used"], r["paired"]) for r in usage["rows"]] == \
+            [(id1, 1200, True), (id2, 0, True)]
+        assert usage["rows"][0]["conversations"] == 1 and usage["rows"][0]["last"]
+        assert httpx.post(base + "/api/phone/forget", json={"id": "zz"}, headers=h).status_code == 404
+        assert not lan.forget_guest("") and lan.identify(g1)  # 空的代號不會對到每一支
+        assert httpx.post(base + "/api/phone/forget", json={"id": id1}, headers=h).status_code == 200
+        assert lan.identify(g1) is None and lan.identify(g2) and lan.identify(owner) == "owner"
+        rows = {r["id"]: r for r in httpx.get(base + "/api/phone", headers=h).json()["guest_usage"]["rows"]}
+        assert rows[id1]["paired"] is False and rows[id1]["used"] == 1200 and rows[id2]["paired"] is True
+    finally:
+        phone.close()
+        server.shutdown()
+        server.server_close()

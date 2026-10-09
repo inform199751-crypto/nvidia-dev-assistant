@@ -1060,7 +1060,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/9 晚上", ["知識庫:把文件資料夾建成索引,問問題時照意思找到相關段落,回答附出處(側邊欄「知識庫」)",
+  ["10/9 晚上", ["設定的「手機與訪客」列出每支訪客手機今天用了多少,也可以只取消其中一支",
+                 "知識庫:把文件資料夾建成索引,問問題時照意思找到相關段落,回答附出處(側邊欄「知識庫」)",
                  "可以附圖片了:截圖、圖表、照片(輸入框的「+」、貼上或拖進來),先用看圖的模型讀懂再回答",
                  "輸入框右下角的選模型多了「努力程度」滑桿:往左更快、往右更仔細",
                  "帳號選單:點左下角打開,可以換回答語言、看說明和更新紀錄;手機上可以登出",
@@ -1095,6 +1096,7 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
     box.appendChild(el("div", "actions")).appendChild(button("打開手機連線", "pill dark", act({ on: true })));
     box.appendChild(el("p", "lead", "第一次打開時 Windows 會問要不要讓 HSUAN 使用網路:請勾「私人網路」並按「允許」。"
       + (st.phones ? `已配對 ${st.phones} 支手機。` : "")));
+    renderGuestUsage(box, st, act);
     return;
   }
   const card = box.appendChild(el("div", "phone"));
@@ -1127,6 +1129,26 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
   if (st.phones || st.guests) a.appendChild(button("忘記所有手機", "pill", () => {
     if (confirm("所有手機(含訪客)都要重新輸入 PIN 才能連。確定?")) act({}, "/api/phone/forget")();
   }));
+  renderGuestUsage(box, st, act);
+}
+// 每支訪客手機今天用了多少:額度跟你分開,但用的是你的 NVIDIA 金鑰
+function renderGuestUsage(box, st, act) {
+  const gu = st.guest_usage;
+  if (!gu || (!gu.rows.length && !st.guest_pin)) return;
+  box.appendChild(el("h3", "", "訪客今天的用量"));
+  box.appendChild(el("p", "lead", `每支訪客手機每天 ${fmtTok(gu.limit)} tokens,不會扣你自己的額度;但用的是你的 NVIDIA 金鑰,`
+    + `會用掉同一把金鑰的試用點數和速度限制(訪客用得多時,你的問題比較容易遇到忙線)。今天訪客合計 ${fmtTok(gu.total)} tokens。`));
+  if (!gu.rows.length) { box.appendChild(el("div", "none", "還沒有訪客配對。")); return; }
+  const list = rows(box);
+  for (const g of gu.rows) {
+    const sub = `今天 ${fmtTok(g.used)} / ${fmtTok(gu.limit)} tokens · ${g.conversations} 段對話`
+      + (g.last ? ` · 最後使用 ${fmtTime(g.last)}` : "") + (g.paired ? "" : " · 已取消配對");
+    const actions = g.paired ? [button("取消配對", "pill", () => {
+      if (confirm(`取消訪客 ${g.id.slice(0, 6)} 的配對?那支手機要重新輸入訪客 PIN 才能再連。`)) act({ id: g.id }, "/api/phone/forget")();
+    })] : [];
+    const r = row(list, `訪客 ${g.id.slice(0, 6)}`, sub, actions);
+    paintBar(r.querySelector(".grow").appendChild(el("div", "usage-bar")), g.used, gu.limit);
+  }
 }
 // ---------- 知識庫頁面:資料夾清單、建索引進度、試搜尋 ----------
 let kbTimer = null;
@@ -1206,7 +1228,7 @@ function renderKnowledge(box, data) {
 }
 
 // ---------- token 用量(側邊欄左下角、設定頁) ----------
-const fmtTok = (n) => n >= 10000 ? `${(n / 10000).toFixed(n >= 1000000 ? 0 : 1)} 萬` : Number(n).toLocaleString();
+const fmtTok = (n) => n >= 10000 ? `${(n / 10000).toFixed(n >= 1000000 ? 0 : 1).replace(/\.0$/, "")} 萬` : Number(n).toLocaleString();
 function paintBar(bar, used, limit) {
   const ratio = limit ? used / limit : 0;
   bar.querySelector("i") || bar.appendChild(el("i"));
