@@ -14,6 +14,7 @@ import json
 import logging
 import secrets
 import socket
+import sys
 import threading
 import time
 import re
@@ -506,14 +507,20 @@ def make_handler(hubs: Hubs | Hub, token: str, port: int, lan: LanAccess | None 
     return Handler
 
 
+class _Server(ThreadingHTTPServer):
+    # Windows 的 SO_REUSEADDR 會讓第二個程式也綁上同一個 port,兩個一起收請求、由誰回應不一定
+    # (10/9 實測:舊版和新版同時開在 8765)。Windows 上關掉,第二個直接報錯
+    allow_reuse_address = sys.platform != "win32"
+    daemon_threads = True
+
+
 def serve(hubs: Hubs | Hub, port: int = 8765, token: str | None = None, lan: LanAccess | None = None,
           host: str = "127.0.0.1", team: TeamAccess | None = None) -> ThreadingHTTPServer:
-    """建立伺服器(還沒開始跑);port=0 會自動挑一個空的(測試用)。"""
+    """建立伺服器(還沒開始跑);port=0 會自動挑一個空的(測試用)。port 被占用時丟 OSError。"""
     token = token or secrets.token_urlsafe(24)
-    server = ThreadingHTTPServer((host, port), make_handler(hubs, token, port, lan, team))
+    server = _Server((host, port), make_handler(hubs, token, port, lan, team))
     if port == 0:  # 實際的 port 要等綁定後才知道,Host 檢查要用它
         server.RequestHandlerClass = make_handler(hubs, token, server.server_address[1], lan, team)
-    server.daemon_threads = True
     return server
 
 
@@ -560,7 +567,11 @@ def main() -> None:
     if lan and not lan.ips:
         raise SystemExit("找不到這台電腦的區域網路位址,請確認有連上 Wi-Fi 或網路線")
     host = args.host or ("0.0.0.0" if lan or team else "127.0.0.1")
-    server = serve(hubs, args.port, token=args.token, lan=lan, host=host, team=team)
+    try:
+        server = serve(hubs, args.port, token=args.token, lan=lan, host=host, team=team)
+    except OSError:
+        raise SystemExit(f"port {args.port} 已經被占用:可能已經有一個小助理在跑了(請先關掉它),"
+                         f"或用 --port 換一個")
     url = f"http://127.0.0.1:{args.port}/"
     if team:
         print(f"小助理多人模式:{host}:{args.port}  (工作區 {toolbox.WORKSPACE},身分標頭 {team.user_header},"

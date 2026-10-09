@@ -1271,3 +1271,16 @@ def test_redis_quota_matches_memory_quota():
     assert r.data["dev-assistant:running:amy"] == 0
     assert all(seconds > 0 for seconds in r.ttl.values()) and len(r.ttl) == 2
     assert isinstance(make_quota(10, 1, None), TokenQuota)
+
+
+def test_webui_refuses_port_already_in_use(workspace):
+    """同一個 port 開第二個要直接失敗(Windows 預設的 SO_REUSEADDR 會讓兩個都綁上,10/9 實測新舊版同時在跑)。"""
+    import webui
+    reg, _ = scripted_registry([])
+    hub = webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event))
+    first = webui.serve(hub, 0)
+    try:
+        with pytest.raises(OSError):
+            webui.serve(hub, first.server_address[1])
+    finally:
+        first.server_close()
