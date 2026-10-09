@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -34,6 +35,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 from langchain_core.messages import messages_from_dict, messages_to_dict
 
 import agent
+import qr
 import tools as toolbox
 import web
 
@@ -64,16 +66,44 @@ def lan_ips() -> list[str]:
 
 
 class LanAccess:
-    """--lan 時給手機用的登入:啟動時產生 6 位數 PIN,輸入正確就發一個 cookie;一分鐘內錯 5 次就先鎖住。"""
+    """手機用的登入:啟動時產生 6 位數 PIN,輸入正確就發一個 cookie;一分鐘內錯 5 次就先鎖住。
+
+    store:記住配對過的手機(只存 cookie 的雜湊),電腦重開、PIN 換了也不用再輸入;None = 只記在記憶體(--lan)。
+    open:手機連線關掉時設成 False,已經連著的手機也一起斷開。"""
 
     MAX_FAILS, WINDOW = 5, 60
+    REMEMBER = 365 * 24 * 3600  # 配對的 cookie 留一年
 
-    def __init__(self, ips: list[str], pin: str | None = None):
+    def __init__(self, ips: list[str], pin: str | None = None, store: Path | None = None):
         self.ips = ips
         self.pin = pin or f"{secrets.randbelow(10**6):06d}"
         self.sessions: set[str] = set()
         self.fails: list[float] = []
         self.lock = threading.Lock()
+        self.store = store
+        self.open = True
+        self.devices: set[str] = set()
+        if store:
+            try:
+                self.devices = set(json.loads(store.read_text(encoding="utf-8")))
+            except (OSError, ValueError, TypeError):
+                pass
+
+    @staticmethod
+    def _digest(sid: str) -> str:
+        return hashlib.sha256(sid.encode()).hexdigest()
+
+    def _save(self) -> None:
+        if self.store:
+            self.store.parent.mkdir(parents=True, exist_ok=True)
+            self.store.write_text(json.dumps(sorted(self.devices)), encoding="utf-8")
+
+    def forget(self) -> None:
+        """「忘記所有手機」:配對過的都要重新輸入 PIN。"""
+        with self.lock:
+            self.sessions.clear()
+            self.devices.clear()
+            self._save()
 
     def login(self, pin: str) -> str | None:
         """PIN 對了回傳 session id;錯了回傳 None;錯太多次丟 PermissionError。"""
@@ -87,15 +117,100 @@ class LanAccess:
                 return None
             sid = secrets.token_urlsafe(24)
             self.sessions.add(sid)
+            if self.store:
+                self.devices.add(self._digest(sid))
+                self._save()
             return sid
 
     def valid(self, sid: str | None) -> bool:
         with self.lock:
-            return bool(sid) and sid in self.sessions
+            return bool(sid) and self.open and (sid in self.sessions or self._digest(sid) in self.devices)
+
+
+class PhoneLink:
+    """桌面版「更多」裡的「手機連線」開關:打開時另外開一個聽 0.0.0.0 的伺服器給手機 —— 同一張 Desk、同一個 token,
+    電腦和手機看到的是同一份對話(不要另外開 webui.py --lan,兩個程式共用存檔會互相蓋掉)。
+    手機第一次輸入 PIN 配對,之後記住;開關狀態也記著,下次打開小助理自動恢復。只綁需要的時候,
+    沒打開就不對區域網路開 port(Windows 防火牆也是打開時才會問)。"""
+
+    def __init__(self, desk: Desk, token: str, port: int, store: Path | None = None, host: str = "0.0.0.0"):
+        self.desk, self.token, self.port, self.store, self.host = desk, token, port, store, host
+        self.lan = LanAccess([], store=store / "phones.json" if store else None)
+        self.server: ThreadingHTTPServer | None = None
+        self.lock = threading.Lock()
+
+    def _remember(self, on: bool) -> None:
+        if self.store:
+            self.store.mkdir(parents=True, exist_ok=True)
+            (self.store / "phone.json").write_text(json.dumps({"on": on}), encoding="utf-8")
+
+    def resume(self) -> None:
+        """上次關掉小助理時是開著的,就再打開。"""
+        try:
+            on = json.loads((self.store / "phone.json").read_text(encoding="utf-8")).get("on") if self.store else False
+        except (OSError, ValueError, AttributeError):
+            on = False
+        if on and (err := self.start()):
+            logging.warning("手機連線沒有打開:%s", err)
+
+    def start(self) -> str:
+        """打開;回傳錯誤訊息,空字串 = 成功。"""
+        with self.lock:
+            if self.server:
+                return ""
+            ips = lan_ips()
+            if not ips:
+                return "找不到這台電腦的區域網路位址,請確認有連上 Wi-Fi"
+            self.lan.ips = ips
+            try:
+                server = serve(self.desk, self.port, token=self.token, lan=self.lan, host=self.host)
+            except OSError:
+                return f"port {self.port} 已經被別的程式占用(例如另外開著的 webui.py --lan),請先關掉它"
+            self.port = server.server_address[1]  # port=0(測試)時看實際挑到哪個
+            self.lan.open = True
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            self.server = server
+        self._remember(True)
+        return ""
+
+    def close(self) -> None:
+        """關掉伺服器(小助理結束時用:不改記住的開關狀態)。"""
+        with self.lock:
+            server, self.server = self.server, None
+            self.lan.open = False  # 連著的手機在下一次檢查時斷開
+        if server:
+            server.shutdown()
+            server.server_close()
+
+    def stop(self) -> None:
+        self.close()
+        self._remember(False)
+
+    def status(self) -> dict:
+        urls = [f"http://{ip}:{self.port}" for ip in self.lan.ips] if self.server else []
+        return {"on": bool(self.server), "urls": urls, "pin": self.lan.pin if self.server else "",
+                "phones": len(self.lan.devices), "qr": qr.svg(urls[0]) if urls else ""}
+
+
+ASSETS = Path(__file__).with_name("assets")
+# 不用登入就給的檔案:瀏覽器抓圖示和 manifest 時不帶 cookie(手機還沒輸入 PIN 也要看得到 app 圖示)
+PUBLIC_FILES = {"/favicon.ico": ("assistant.ico", "image/x-icon"),
+                "/icon-192.png": ("icon-192.png", "image/png"),
+                "/icon-512.png": ("icon-512.png", "image/png"),
+                "/icon-maskable-512.png": ("icon-maskable-512.png", "image/png"),
+                "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png")}
+# 手機「加到主畫面」:有這個 manifest,主畫面的圖示點開就是全螢幕的小助理(沒有網址列)
+MANIFEST = {"name": "小助理", "short_name": "小助理", "id": "/", "start_url": "/", "scope": "/",
+            "display": "standalone", "background_color": "#121212", "theme_color": "#0a0a0a",
+            "icons": [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+                      {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"},
+                      {"src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}]}
 
 
 LOGIN_PAGE = """<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#121212">
+<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="小助理">
 <title>小助理 · 登入</title>
 <style>
 :root{color-scheme:dark;--bg:#121212;--text:#ececec;--muted:#b4b4b4;--line:#2a2a2a;--btn:#fff;--btn-ink:#0d0d0d;--error:#f87171}
@@ -766,7 +881,7 @@ class TeamAccess:
 
 
 def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess | None = None,
-                 team: TeamAccess | None = None) -> type[BaseHTTPRequestHandler]:
+                 team: TeamAccess | None = None, phone: PhoneLink | None = None) -> type[BaseHTTPRequestHandler]:
     if isinstance(hubs, (Hub, Desk)):  # 單人:不管誰連進來都是同一張桌面
         single = hubs if isinstance(hubs, Desk) else Desk.single(hubs)
         hubs = Hubs(lambda user: single)
@@ -836,11 +951,13 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 return
             url = urlsplit(self.path)
             qs = parse_qs(url.query)
-            if url.path == "/favicon.ico":  # 視窗和工作列的圖示(桌面版也用這個)
-                icon = Path(__file__).with_name("assets") / "assistant.ico"
-                if icon.is_file():
-                    return self._send(200, icon.read_bytes(), "image/x-icon")
+            if url.path in PUBLIC_FILES:  # 視窗、工作列、手機主畫面的圖示
+                name, ctype = PUBLIC_FILES[url.path]
+                if (ASSETS / name).is_file():
+                    return self._send(200, (ASSETS / name).read_bytes(), ctype)
                 return self._json(404, {"error": "沒有圖示"})
+            if url.path == "/manifest.webmanifest":
+                return self._send(200, json.dumps(MANIFEST, ensure_ascii=False).encode(), "application/manifest+json")
             if url.path == "/":
                 if team and not self._signed_in():
                     return self._json(401, {"error": f"沒有登入身分(登入代理沒有送 {team.user_header})"})
@@ -858,6 +975,11 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                     if lan and self._local():  # 手機連線方式只給這台電腦看
                         state["lan"] = {"urls": [f"http://{ip}:{port}" for ip in lan.ips], "pin": lan.pin}
                     self._json(200, state)
+            elif url.path == "/api/phone":  # 手機連線的狀態(含 PIN):只給這台電腦自己看
+                if self._token_ok(self.headers.get("X-Token")):
+                    if not phone or not self._local():
+                        return self._json(404, {"error": "沒有手機連線功能"})
+                    self._json(200, phone.status())
             elif url.path == "/api/desk":  # 側邊欄:專案和對話清單
                 if self._token_ok(self.headers.get("X-Token")):
                     self._json(200, {**self._desk().listing(), "user": self._user() if team else ""})
@@ -908,7 +1030,9 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 return self._json(400, {"error": "格式錯誤"})
             if not sid:
                 return self._json(403, {"error": "PIN 不對"})
-            self._json(200, {}, {"Set-Cookie": f"{COOKIE}={sid}; HttpOnly; SameSite=Strict; Path=/"})
+            # 記住配對的話 cookie 留一年(手機主畫面的 app 每次打開不用再輸入 PIN);Lax:從主畫面打開也會帶上
+            keep = f"; Max-Age={LanAccess.REMEMBER}" if lan.store else ""
+            self._json(200, {}, {"Set-Cookie": f"{COOKIE}={sid}; HttpOnly; SameSite=Lax; Path=/{keep}"})
 
         def _stream(self, hub: Hub, since: int) -> None:
             """Server-Sent Events:有新事件就送,沒有就每 15 秒送一次 ping 保持連線。"""
@@ -927,6 +1051,8 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                         self.wfile.write(f"id: {ev['seq']}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n".encode())
                         since = ev["seq"]
                     self.wfile.flush()
+                    if not self._signed_in():  # 手機連線關了、或按了「忘記所有手機」:連著的也斷開
+                        return
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 return  # 瀏覽器關掉或重新整理
             finally:
@@ -953,6 +1079,14 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 return self._json(400, {"error": "JSON 格式錯誤"})
             path = urlsplit(self.path).path
             desk = self._desk()
+            if path in ("/api/phone", "/api/phone/forget"):  # 「更多」的手機連線開關:只有這台電腦自己能按
+                if not phone or not self._local():
+                    return self._json(404, {"error": "沒有手機連線功能"})
+                if path == "/api/phone/forget":
+                    phone.lan.forget()
+                elif err := (phone.start() if body.get("on") else phone.stop()):
+                    return self._json(409, {"error": err})
+                return self._json(200, phone.status())
             if path == "/api/conv/new":  # 側邊欄的「新增」、專案旁邊的「+」
                 return self._json(200, {"id": desk.new_conversation(body.get("project"))})
             if path == "/api/conv/rename":
@@ -1010,12 +1144,12 @@ class _Server(ThreadingHTTPServer):
 
 
 def serve(hubs: Hubs | Hub, port: int = 8765, token: str | None = None, lan: LanAccess | None = None,
-          host: str = "127.0.0.1", team: TeamAccess | None = None) -> ThreadingHTTPServer:
+          host: str = "127.0.0.1", team: TeamAccess | None = None, phone: PhoneLink | None = None) -> ThreadingHTTPServer:
     """建立伺服器(還沒開始跑);port=0 會自動挑一個空的(測試用)。port 被占用時丟 OSError。"""
     token = token or secrets.token_urlsafe(24)
-    server = _Server((host, port), make_handler(hubs, token, port, lan, team))
+    server = _Server((host, port), make_handler(hubs, token, port, lan, team, phone))
     if port == 0:  # 實際的 port 要等綁定後才知道,Host 檢查要用它
-        server.RequestHandlerClass = make_handler(hubs, token, server.server_address[1], lan, team)
+        server.RequestHandlerClass = make_handler(hubs, token, server.server_address[1], lan, team, phone)
     return server
 
 

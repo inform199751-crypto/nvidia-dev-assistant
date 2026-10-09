@@ -37,7 +37,8 @@ flowchart LR
 | `tools.py` | 列檔 / 讀檔 / 搜尋 / git 紀錄 / 沙箱測試與指令 / 提 patch / 存文件,含機密檔封鎖 |
 | `documents.py` | PDF / Word / Excel 轉文字,給 `read_document` 和 `@附檔` 用 |
 | `webui.py` + `webui.html` | 網頁介面:標準函式庫的 HTTP 伺服器 + Server-Sent Events,只聽 127.0.0.1,API 要帶啟動時產生的 token;側邊欄(新增 / 成品 / 待命 / 自訂 / 更多 + 專案和對話),對話存在 `output/state/` |
-| `desktop_app.py` | 桌面版:背景啟動 webui(port 8780)+ Edge app 模式開獨立視窗,視窗都關了就結束;`--install` 建桌面捷徑,圖示 `assets/assistant.ico` 用純 Python 畫 |
+| `desktop_app.py` | 桌面版:背景啟動 webui(port 8780)+ Edge app 模式開獨立視窗,視窗都關了就結束;`--install` 建桌面捷徑,圖示 `assets/` 用純 Python 畫;「更多 → 手機」打開手機連線(QR code + PIN 配對) |
+| `qr.py` | QR code 產生器(標準函式庫):手機連線的網址畫成 QR code |
 | `deploy/` | 多人部署:Dockerfile + docker-compose(小助理 `--team` + Redis + oauth2-proxy),說明見 `deploy/README.md` |
 | `vscode-extension/` | VS Code 外掛:編輯器旁邊打開小助理、右鍵「問選取的程式碼」;`build_vsix.py` 打包成 .vsix(不需要 Node) |
 | `web.py` | 上網搜尋(Tavily)與讀網頁;`.env` 設 `ALLOW_WEB=true` 才啟用,每次上網都先問使用者 |
@@ -51,7 +52,7 @@ flowchart LR
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
 | 難度分類器(10/9) | 14 題示範問題(一般 7、難題 7,含「繼續」「好」這種要看前文的短回覆) | 14/14 符合預期;Super 關思考每次 0.6–1.1 秒、約 300 tokens。題目是自己出的,真實準確度要看影子模式的紀錄 |
-| 離線測試 | 假模型,不需金鑰 | 97 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 99 個全過 |
 
 ## 實測與審查抓到的 29 個問題
 
@@ -94,12 +95,14 @@ python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
 cp .env.example .env                              # 填 NVIDIA_API_KEY,AGENT_WORKSPACE 指向要分析的 repo
 docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python desktop_app.py --install     # 桌面版:在桌面建立「小助理」捷徑,雙擊就開獨立視窗(像 Claude 桌面版)
+                                                  # 手機:「更多 → 手機」打開手機連線,手機掃 QR code、輸入 PIN,再「加到主畫面」就像 app
+                                                  # (配對過的手機會記住;電腦上的小助理要開著,手機和電腦要同一個 Wi-Fi)
 .venv/Scripts/python webui.py                     # 網頁介面(只開在本機):回答邊產生邊顯示,套用 / 上網前用按鈕確認
                                                   # 側邊欄:新增 / 成品(文件、patch)/ 待命(等你處理的草稿、確認、計畫)/ 自訂 / 更多,
                                                   # 下面是專案和它們的對話(自動存檔,關掉再開還在);新對話首頁有分類的主題建議
                                                   # 「新增專案」可以貼公開的 GitHub 網址(下載到 output/repos/,只抓公開的);
                                                   # 開了上網的話,對話裡貼 PR / issue / 檔案網址,會讀成純文字(PR 附 diff)
-.venv/Scripts/python webui.py --lan               # 同一個 Wi-Fi 的手機也能開:終端機印出網址和 6 位數 PIN
+.venv/Scripts/python webui.py --lan               # 不用桌面版時:同一個 Wi-Fi 的手機也能開,終端機印出網址和 6 位數 PIN(不要和桌面版同時開)
 .venv/Scripts/python agent.py                     # 互動模式:一直聊下去,記得前面的內容;@calc.py 附檔、/clear 新對話
                                                   # 修改先放在小助理的草稿上;通過沙箱測試後會問要不要套用,回答 y 才改工作區
                                                   # /plan 任務:先只讀不改交出計畫,同意後照計畫做(顯示進度清單);/compact 整理對話

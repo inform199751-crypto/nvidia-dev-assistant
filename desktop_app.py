@@ -24,6 +24,7 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 PORT = 8780
+PHONE_PORT = 8781  # 「手機連線」打開時給手機連的(聽區域網路);電腦自己用的 8780 只聽本機
 ICON = HERE / "assets" / "assistant.ico"
 PROFILE = HERE / "output" / ".app-profile"  # 獨立的瀏覽器設定資料夾:視窗都關掉時,這個瀏覽器行程才會結束
 LOG = HERE / "output" / "desktop_app.log"   # pythonw 沒有主控台,出錯只看得到這個檔案
@@ -62,8 +63,9 @@ def _color(x: float, y: float):
     return BLACK
 
 
-def _png(size: int) -> bytes:
-    """4x4 超取樣抗鋸齒,輸出 RGBA PNG。"""
+def _png(size: int, bleed: bool = False, scale: float = 1.0) -> bytes:
+    """4x4 超取樣抗鋸齒,輸出 RGBA PNG。
+    bleed:整張填滿黑底(手機主畫面圖示:系統自己裁圓角,透明的角會變成白邊);scale:圖案縮小(Android 會裁成圓形)。"""
     rows, n = [], 4
     for py in range(size):
         row = bytearray(b"\x00")
@@ -71,7 +73,8 @@ def _png(size: int) -> bytes:
             r = g = b = hits = 0
             for sy in range(n):
                 for sx in range(n):
-                    c = _color((px + (sx + 0.5) / n) / size, (py + (sy + 0.5) / n) / size)
+                    x, y = (px + (sx + 0.5) / n) / size, (py + (sy + 0.5) / n) / size
+                    c = _color(0.5 + (x - 0.5) / scale, 0.5 + (y - 0.5) / scale) or (BLACK if bleed else None)
                     if c:
                         r, g, b, hits = r + c[0], g + c[1], b + c[2], hits + 1
             row += bytes((r // hits, g // hits, b // hits, 255 * hits // (n * n))) if hits else b"\x00\x00\x00\x00"
@@ -94,6 +97,20 @@ def make_icon(path: Path = ICON, sizes=(16, 24, 32, 48, 64, 256)) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(header + entries + b"".join(images))
     return path
+
+
+# 手機「加到主畫面」用的圖示(網頁的 manifest 和 iPhone 的 apple-touch-icon 指到這些檔案)
+PHONE_ICONS = {"icon-192.png": (192, False, 1.0), "icon-512.png": (512, False, 1.0),
+               "icon-maskable-512.png": (512, True, 0.8), "apple-touch-icon.png": (180, True, 1.0)}
+
+
+def make_phone_icons(folder: Path = ICON.parent) -> list[Path]:
+    folder.mkdir(parents=True, exist_ok=True)
+    out = []
+    for name, (size, bleed, scale) in PHONE_ICONS.items():
+        (folder / name).write_bytes(_png(size, bleed, scale))
+        out.append(folder / name)
+    return out
 
 
 # ---------- 桌面捷徑 ----------
@@ -151,18 +168,25 @@ def run(headless: bool = False) -> None:
     import agent
     import webui
 
+    import secrets
+    import tools as toolbox
+
     url = f"http://127.0.0.1:{PORT}/"
     registry, quota, tools, allow_web = agent.prepare()
     desk = webui.local_desk(registry, quota, tools, agent.web_status(allow_web),
                             registry.spec(registry.routing["default_role"]).model.split("/")[-1])
+    token = secrets.token_urlsafe(24)
+    phone = webui.PhoneLink(desk, token, PHONE_PORT, store=toolbox.OUTPUT_DIR / "state")  # 「更多」的手機連線
     try:
-        server = webui.serve(desk, PORT)
+        server = webui.serve(desk, PORT, token=token, phone=phone)
     except OSError:  # 已經有一個桌面版在跑:只多開一個視窗
         logging.info("小助理已經在跑了,只開視窗")
         open_window(url, headless)
         return
     threading.Thread(target=server.serve_forever, daemon=True).start()
     logging.info("小助理已啟動:%s(工作區 %s)", url, os.getenv("AGENT_WORKSPACE"))
+    if not headless:  # 上次開著手機連線就再打開(測試不對區域網路開 port)
+        phone.resume()
     open_window(url, headless)
     seen, empty = False, 0
     while True:
@@ -173,6 +197,7 @@ def run(headless: bool = False) -> None:
         empty += 1
         if empty >= (CLOSED_AFTER if seen else FIRST_WINDOW):
             break
+    phone.close()
     server.shutdown()
     logging.info("視窗都關了,小助理結束" if seen else "視窗一直沒有連上,小助理結束")
 
@@ -184,6 +209,8 @@ def main() -> None:
     args = ap.parse_args()
     if args.icon:
         print(f"已產生 {make_icon()}")
+        for p in make_phone_icons():
+            print(f"已產生 {p}")
         return
     if args.install:
         print(f"已在桌面建立捷徑:{install_shortcut()}")

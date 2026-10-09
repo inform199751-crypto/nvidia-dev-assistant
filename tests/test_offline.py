@@ -1818,3 +1818,108 @@ def test_fetch_url_reads_github_as_text(fake_web, monkeypatch):
     assert blob.startswith("[octo/demo main/src/calc.py]") and "    return a + b" in blob
     issue = web.fetch_url.invoke({"url": "https://github.com/octo/demo/issues/8"})
     assert issue.startswith("[壞掉了 · Issue #8]") and "點了沒反應" in issue
+
+
+def _read_qr(grid):
+    """測試用的 QR 解碼:讀格式資訊 → 去遮罩 → 照之字形讀碼字 → 分回區塊、檢查更正碼 → 取出 byte 模式的內容。"""
+    import qr
+    n = len(grid)
+    ver = (n - 17) // 4
+    first = [(8, i) for i in range(6)] + [(8, 7), (8, 8), (7, 8)] + [(14 - i, 8) for i in range(9, 15)]
+    second = [(n - 1 - i, 8) for i in range(8)] + [(8, n - 15 + i) for i in range(8, 15)]
+    bits = sum(grid[y][x] << i for i, (x, y) in enumerate(first))
+    assert bits == sum(grid[y][x] << i for i, (x, y) in enumerate(second))  # 兩份格式資訊一樣
+    mask = next(m for m in range(8) if qr.format_bits(m) == bits)
+    fixed = qr.function_patterns(ver).fixed
+    stream = []
+    for right in range(n - 1, 0, -2):
+        if right <= 6:
+            right -= 1
+        for vert in range(n):
+            y = n - 1 - vert if ((right + 1) & 2) == 0 else vert
+            for x in (right, right - 1):
+                if not fixed[y][x]:
+                    stream.append(grid[y][x] ^ (qr._MASKS[mask](x, y) == 0))
+    total, nblocks, ecc = qr._raw_modules(ver) // 8, qr._BLOCKS[ver], qr._ECC_PER_BLOCK[ver]
+    words = [int("".join("1" if b else "0" for b in stream[i * 8:i * 8 + 8]), 2) for i in range(total)]
+    assert total % nblocks == 0  # 版本 1–6 的等級 M:每個區塊一樣長,交錯就是輪流放
+    data = []
+    for block in (words[i::nblocks] for i in range(nblocks)):
+        d, e = block[:len(block) - ecc], block[len(block) - ecc:]
+        assert qr._rs_remainder(d, qr._rs_divisor(ecc)) == e
+        data += d
+    s = "".join(f"{w:08b}" for w in data)
+    assert s[:4] == "0100"
+    return bytes(int(s[12 + 8 * i:20 + 8 * i], 2) for i in range(int(s[4:12], 2)))
+
+
+def test_qr_code_matches_the_standard():
+    """手機連線的 QR code(自己寫的,不裝套件):更正碼和格式資訊對上標準的範例值;每個版本都讀得回原本的網址。"""
+    import qr
+    hello = [32, 91, 11, 120, 209, 114, 220, 77, 67, 64, 236, 17, 236, 17, 236, 17]  # 「HELLO WORLD」1-M
+    assert qr._rs_remainder(hello, qr._rs_divisor(10)) == [196, 35, 39, 119, 235, 215, 231, 226, 93, 23]
+    assert format(qr.format_bits(0), "015b") == "101010000010010"
+    assert [qr._capacity(v) for v in range(1, 7)] == [16, 28, 44, 64, 86, 108]
+    for size in (1, 14, 26, 42, 62, 84, 106):  # 版本 1 到 6 的上限附近
+        text = ("http://192.168.1.23:8781/" * 5)[:size].encode()
+        grid = qr.encode(text)
+        assert _read_qr(grid) == text, size
+    assert len(qr.encode(b"http://192.168.100.200:8781")) == 29  # 網址是版本 3
+    with pytest.raises(ValueError):
+        qr.encode(b"x" * 107)
+    assert qr.svg("hi").count('fill="#fff"') == 1  # 白底黑格:深色介面也掃得到
+
+
+def test_phone_link_pairs_and_remembers_phones(workspace, tmp_path_factory, monkeypatch):
+    """桌面版的「手機連線」:電腦按開關才對區域網路開 port;手機輸入 PIN 配對後記住(重開也不用再輸入),
+    「忘記所有手機」取消;PIN 和開關只有電腦自己看得到、按得到;沒登入也拿得到 app 圖示和 manifest(加到主畫面用)。"""
+    import threading
+    import httpx
+    import webui
+    store = tmp_path_factory.mktemp("state")
+    reg, _ = scripted_registry([])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=store)
+    monkeypatch.setattr(webui, "lan_ips", lambda: ["127.0.0.1"])
+    phone = webui.PhoneLink(desk, "t0k", 0, store=store, host="127.0.0.1")  # 測試不聽 0.0.0.0(不會跳防火牆)
+    main = webui.serve(desk, 0, token="t0k", phone=phone)
+    threading.Thread(target=main.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{main.server_address[1]}"
+    pc = lambda method, path, **kw: httpx.request(method, base + path, headers={"X-Token": "t0k"}, **kw)  # noqa: E731
+    again = None
+    try:
+        assert pc("GET", "/api/phone").json()["on"] is False and phone.server is None
+        st = pc("POST", "/api/phone", json={"on": True}).json()
+        assert st["on"] and st["urls"] == [f"http://127.0.0.1:{phone.port}"] and len(st["pin"]) == 6
+        assert st["qr"].startswith("<svg") and json.loads((store / "phone.json").read_text())["on"] is True
+
+        monkeypatch.setattr(webui, "LOCAL_ADDRS", set())  # 接下來的連線都當成手機
+        mobile_url = st["urls"][0]
+        assert httpx.get(base + "/api/phone", headers={"X-Token": "t0k"}).status_code == 403  # 手機拿不到 PIN
+        assert "輸入電腦上顯示的 6 位數 PIN" in httpx.get(mobile_url + "/").text
+        manifest = httpx.get(mobile_url + "/manifest.webmanifest")
+        assert manifest.headers["content-type"] == "application/manifest+json" and manifest.json()["display"] == "standalone"
+        assert httpx.get(mobile_url + "/apple-touch-icon.png").content[:8] == b"\x89PNG\r\n\x1a\n"
+        assert httpx.post(mobile_url + "/api/login", json={"pin": "000000" if st["pin"] != "000000" else "111111"}).status_code == 403
+        ok = httpx.post(mobile_url + "/api/login", json={"pin": st["pin"]})
+        assert ok.status_code == 200 and "Max-Age=" in ok.headers["set-cookie"] and "SameSite=Lax" in ok.headers["set-cookie"]
+        with httpx.Client(cookies=ok.cookies) as mobile:
+            assert 'const TOKEN = "t0k"' in mobile.get(mobile_url + "/").text
+            assert mobile.post(mobile_url + "/api/phone", json={"on": False}, headers={"X-Token": "t0k"}).status_code == 404
+        assert ok.cookies[webui.COOKIE] not in (store / "phones.json").read_text()  # 只存雜湊,檔案外流也不能拿來登入
+
+        phone.close()  # 小助理結束(開關狀態不變)
+        again = webui.PhoneLink(desk, "t0k", 0, store=store, host="127.0.0.1")
+        again.resume()  # 上次開著:自動打開;配對過的手機不用再輸入 PIN
+        assert again.server is not None
+        with httpx.Client(cookies=ok.cookies) as mobile:
+            assert 'const TOKEN = "t0k"' in mobile.get(f"http://127.0.0.1:{again.port}/").text
+            again.lan.forget()
+            assert "輸入電腦上顯示" in mobile.get(f"http://127.0.0.1:{again.port}/").text
+    finally:
+        if again:
+            again.stop()
+        phone.close()
+        main.shutdown()
+        main.server_close()
+    assert json.loads((store / "phone.json").read_text())["on"] is False

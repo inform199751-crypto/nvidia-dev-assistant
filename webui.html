@@ -6,6 +6,13 @@
 <meta name="theme-color" content="#0a0a0a"><!-- 桌面版(Edge app 模式)的標題列顏色 -->
 <title>小助理</title>
 <link rel="icon" href="/favicon.ico">
+<!-- 手機「加到主畫面」:圖示和全螢幕(iPhone 看 apple-* 那幾個,Android 看 manifest) -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="小助理">
 <script>  /* 外觀(預設深色):在畫面畫出來之前就設好,才不會先閃一下白的 */
   try { document.documentElement.dataset.theme = localStorage.getItem("theme") || "dark"; } catch (e) { /* 不能存就用預設 */ }
 </script>
@@ -220,6 +227,14 @@
   .kv dt { color: var(--faint); }
   .kv dd { margin: 0; overflow-wrap: anywhere; }
   .help li { margin: 4px 0; font-size: 14px; }
+  .phone { display: flex; gap: 18px; align-items: center; border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 8px; }
+  .phone .qr { width: 168px; flex-shrink: 0; border-radius: 10px; overflow: hidden; }
+  .phone .qr svg { width: 100%; height: auto; }
+  .phone .grow { flex: 1; min-width: 0; }
+  .phone .pin-label { color: var(--faint); font-size: 13px; }
+  .phone .pin { font: 600 32px/1.2 ui-monospace, Consolas, monospace; letter-spacing: .15em; }
+  .phone .url { font: 14px/1.5 ui-monospace, Consolas, monospace; margin: 6px 0; overflow-wrap: anywhere; }
+  .phone small { display: block; color: var(--faint); font-size: 12.5px; }
 
   /* ---------- 輸入框 ---------- */
   footer { padding: 0 16px 14px; }
@@ -262,6 +277,7 @@
     .welcome { margin-top: 6vh; }
     .welcome h2 { font-size: 24px; }
     .kv { grid-template-columns: 1fr; }
+    .phone { flex-direction: column; align-items: flex-start; }
     .conv .menu-btn { opacity: 1; }
   }
 </style>
@@ -919,6 +935,40 @@ $("back").onclick = closePage;
 $("settings").onclick = () => openPage("more");
 
 function section(box, title) { box.appendChild(el("h3", "", title)); return box; }
+function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 QR code、網址、PIN 和加到主畫面的步驟
+  section(box, "手機");
+  const act = (body, path = "/api/phone") => async () => {
+    const x = await api(path, body);
+    if (!x.ok) alert(x.data.error || "失敗");
+    renderPage();
+  };
+  if (!st.on) {
+    box.appendChild(el("p", "lead", "手機也能用小助理,電腦和手機看到的是同一份對話。手機要和電腦連同一個 Wi-Fi。"));
+    box.appendChild(el("div", "actions")).appendChild(button("打開手機連線", "pill dark", act({ on: true })));
+    box.appendChild(el("p", "lead", "第一次打開時 Windows 會問要不要讓小助理使用網路:請勾「私人網路」並按「允許」。"
+      + (st.phones ? `已配對 ${st.phones} 支手機。` : "")));
+    return;
+  }
+  const card = box.appendChild(el("div", "phone"));
+  card.appendChild(el("div", "qr")).innerHTML = st.qr;  // 伺服器產生的 SVG(只有格子,沒有外來內容)
+  const info = card.appendChild(el("div", "grow"));
+  info.appendChild(el("div", "pin-label", "PIN"));
+  info.appendChild(el("div", "pin", st.pin));
+  info.appendChild(el("div", "url", st.urls[0]));
+  if (st.urls.length > 1) info.appendChild(el("small", "", `連不上再試:${st.urls.slice(1).join("、")}`));
+  info.appendChild(el("small", "", st.phones ? `已配對 ${st.phones} 支手機(電腦重開也不用再輸入 PIN)` : "還沒有配對的手機"));
+  const steps = box.appendChild(el("ol", "help"));
+  for (const t of ["手機連同一個 Wi-Fi,用相機掃上面的 QR code(或在瀏覽器輸入網址)。",
+                   "輸入 PIN。",
+                   "加到主畫面,之後點圖示就打開:iPhone 用 Safari 按「分享」→「加入主畫面」;Android 用 Chrome 按右上「⋮」→「加到主畫面」。第一次從主畫面打開要再輸入一次 PIN。"])
+    steps.appendChild(el("li", "", t));
+  box.appendChild(el("p", "lead", "電腦上的小助理要開著,手機才連得到。連不到的話:確認 Windows 防火牆有允許,而且這個 Wi-Fi 在 Windows 設成「私人網路」。"));
+  const a = box.appendChild(el("div", "actions"));
+  a.appendChild(button("關閉手機連線", "pill", act({ on: false })));
+  if (st.phones) a.appendChild(button("忘記所有手機", "pill", () => {
+    if (confirm("所有手機都要重新輸入 PIN 才能連。確定?")) act({}, "/api/phone/forget")();
+  }));
+}
 function rows(box) { return box.appendChild(el("div", "rows")); }
 function row(list, name, sub, actions) {
   const r = list.appendChild(el("div", "row"));
@@ -930,7 +980,8 @@ function row(list, name, sub, actions) {
 }
 async function renderPage() {
   const box = $("page-in"), name = page;
-  const r = name === "outputs" ? await api("/api/outputs") : name === "custom" ? await api("/api/instructions") : null;
+  const r = name === "outputs" ? await api("/api/outputs") : name === "custom" ? await api("/api/instructions")
+    : name === "more" ? await api("/api/phone") : null;
   if (page !== name) return;
   box.innerHTML = "";
   box.appendChild(el("h2", "", PAGE_TITLES[name]));
@@ -1004,6 +1055,7 @@ async function renderPage() {
     section(box, "模型");
     box.appendChild(el("p", "lead", `${state.model || ""}(換模型改 models.yaml)`));
   } else if (name === "more") {
+    if (r.ok) renderPhone(box, r.data);  // 只有桌面版、而且是電腦自己看才有(手機上看不到 PIN)
     section(box, "外觀");
     const look = box.appendChild(el("div", "actions"));
     for (const [t, label] of [["dark", "深色"], ["light", "淺色"], ["system", "跟著系統"]])
@@ -1073,7 +1125,10 @@ setTheme(theme());
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => setTheme(theme()));  // 跟著系統時,系統切換也跟著變
 loadDesk();
 loadPending();
-setInterval(() => { loadDesk(); loadPending(); }, 10000);  // 別段對話在背景跑完、有事等你,側邊欄也會更新
+setInterval(() => {  // 別段對話在背景跑完、有事等你,側邊欄也會更新;「更多」開著時更新配對的手機數
+  loadDesk(); loadPending();
+  if (page === "more") renderPage();
+}, 10000);
 </script>
 </body>
 </html>
