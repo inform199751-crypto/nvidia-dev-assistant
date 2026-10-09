@@ -1,6 +1,6 @@
-"""桌面版小助理:雙擊桌面的「小助理」就打開一個獨立視窗(像 Claude 桌面版),不用開終端機。
+"""桌面版 HSUAN:雙擊桌面的「HSUAN」就打開一個獨立視窗(像 Claude 桌面版),不用開終端機。
 
-    .venv/Scripts/python desktop_app.py --install    → 在桌面建立「小助理」捷徑(含圖示)
+    .venv/Scripts/python desktop_app.py --install    → 在桌面建立「HSUAN」捷徑(含圖示)
     (之後雙擊桌面捷徑就好;捷徑跑的是 pythonw,不會跳出黑色的主控台視窗)
 
 背後:在這個行程裡啟動 webui 伺服器(port 8780,跟自己開的 webui.py 錯開),
@@ -116,7 +116,7 @@ def make_phone_icons(folder: Path = ICON.parent) -> list[Path]:
 # ---------- 桌面捷徑 ----------
 
 def install_shortcut() -> Path:
-    """在桌面建立「小助理」捷徑:pythonw 跑這個檔案(沒有主控台視窗),圖示用 assets/assistant.ico。"""
+    """在桌面建立「HSUAN」捷徑:pythonw 跑這個檔案(沒有主控台視窗),圖示用 assets/assistant.ico。"""
     if not ICON.is_file():
         make_icon()
     pythonw = Path(sys.executable).with_name("pythonw.exe")
@@ -124,10 +124,10 @@ def install_shortcut() -> Path:
         raise SystemExit(f"找不到 {pythonw},請用 .venv\\Scripts\\python.exe 執行這個指令")
     ps = (
         "[Console]::OutputEncoding = [Text.Encoding]::UTF8; $d = [Environment]::GetFolderPath('Desktop'); "
-        "$s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $d '小助理.lnk')); "
+        "$s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $d 'HSUAN.lnk')); "
         f"$s.TargetPath = '{pythonw}'; $s.Arguments = '\"{Path(__file__).resolve()}\"'; "
         f"$s.WorkingDirectory = '{HERE.resolve()}'; $s.IconLocation = '{ICON.resolve()},0'; "
-        "$s.Description = '小助理(對內研發助理)'; $s.Save(); Join-Path $d '小助理.lnk'"
+        "$s.Description = 'HSUAN(對內研發助理)'; $s.Save(); Join-Path $d 'HSUAN.lnk'"
     )
     out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True,
                          encoding="utf-8", errors="replace")
@@ -180,11 +180,11 @@ def run(headless: bool = False) -> None:
     try:
         server = webui.serve(desk, PORT, token=token, phone=phone)
     except OSError:  # 已經有一個桌面版在跑:只多開一個視窗
-        logging.info("小助理已經在跑了,只開視窗")
+        logging.info("HSUAN 已經在跑了,只開視窗")
         open_window(url, headless)
         return
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    logging.info("小助理已啟動:%s(工作區 %s)", url, os.getenv("AGENT_WORKSPACE"))
+    logging.info("HSUAN 已啟動:%s(工作區 %s)", url, os.getenv("AGENT_WORKSPACE"))
     if not headless:  # 上次開著手機連線就再打開(測試不對區域網路開 port)
         phone.resume()
     open_window(url, headless)
@@ -199,12 +199,12 @@ def run(headless: bool = False) -> None:
             break
     phone.close()
     server.shutdown()
-    logging.info("視窗都關了,小助理結束" if seen else "視窗一直沒有連上,小助理結束")
+    logging.info("視窗都關了,HSUAN 結束" if seen else "視窗一直沒有連上,HSUAN 結束")
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="桌面版小助理")
-    ap.add_argument("--install", action="store_true", help="在桌面建立「小助理」捷徑")
+    ap = argparse.ArgumentParser(description="桌面版 HSUAN")
+    ap.add_argument("--install", action="store_true", help="在桌面建立「HSUAN」捷徑")
     ap.add_argument("--icon", action="store_true", help="重新產生 assets/assistant.ico")
     args = ap.parse_args()
     if args.icon:
@@ -223,7 +223,7 @@ def main() -> None:
     try:
         run(headless=os.getenv("DESKTOP_APP_HEADLESS") == "1")
     except Exception:
-        logging.exception("小助理啟動失敗")
+        logging.exception("HSUAN 啟動失敗")
         raise
 
 

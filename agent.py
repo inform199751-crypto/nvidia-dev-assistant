@@ -134,7 +134,7 @@ MAX_INSTRUCTION_TOKENS = 2000  # 說明檔每步都會送,太長就截斷
 
 def rules_file() -> Path:
     """這段對話的專案規則檔:平常是工作區根目錄的 ASSISTANT.md;從 GitHub 下載的專案不信任它自帶的那份
-    (別人寫的,會進系統提示),改用 Workbench.rules 指定的、小助理自己資料夾裡的檔案。"""
+    (別人寫的,會進系統提示),改用 Workbench.rules 指定的、HSUAN 自己資料夾裡的檔案。"""
     return toolbox.bench().rules or toolbox.ws() / INSTRUCTIONS_FILE
 
 
@@ -158,7 +158,7 @@ def remember(note: str) -> Path:
         text = p.read_text(encoding="utf-8")
         prefix = "" if not text or text.endswith("\n") else "\n"
     else:
-        prefix = f"# {INSTRUCTIONS_FILE}\n\n給小助理的專案規則與慣例,每段對話開始時自動讀取。\n\n"
+        prefix = f"# {INSTRUCTIONS_FILE}\n\n給 HSUAN 的專案規則與慣例,每段對話開始時自動讀取。\n\n"
     with p.open("a", encoding="utf-8", newline="\n") as f:
         f.write(f"{prefix}- {' '.join(note.split())}\n")
     return p
@@ -464,9 +464,9 @@ def run_agent(task: str, *, registry: ModelRegistry, quota: TokenQuota, user: st
 
 HELP = """直接輸入問題,Enter 送出。用 @路徑 附上工作區的檔案,例如:看一下 @calc.py 的 add
   AI 的修改先放在它的草稿上(你的檔案不會動);通過沙箱測試後會問你要不要套用(預設不套用)。
-  工作區的 ASSISTANT.md 是這個專案給小助理的規則,每段對話開始時自動讀取。
+  工作區的 ASSISTANT.md 是這個專案給 HSUAN 的規則,每段對話開始時自動讀取。
   /remember 規則  把一條規則寫進 ASSISTANT.md,馬上生效(例如:/remember 回答都要附檔案路徑)
-  /plan 任務  先規劃再動手:小助理只讀不改、交出計畫,你同意後才照計畫做(會顯示進度清單)
+  /plan 任務  先規劃再動手:HSUAN 只讀不改、交出計畫,你同意後才照計畫做(會顯示進度清單)
   對話太長時會自動把前面的內容整理成摘要;/compact 可以手動整理。
   /apply  把草稿套用到工作區(一樣會先問你)
   /discard  捨棄草稿裡還沒套用的修改

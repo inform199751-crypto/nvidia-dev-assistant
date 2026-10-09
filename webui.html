@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0a0a0a"><!-- 桌面版(Edge app 模式)的標題列顏色 -->
-<title>小助理</title>
+<title>HSUAN</title>
 <link rel="icon" href="/favicon.ico">
 <!-- 手機「加到主畫面」:圖示和全螢幕(iPhone 看 apple-* 那幾個,Android 看 manifest) -->
 <link rel="manifest" href="/manifest.webmanifest">
@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="apple-mobile-web-app-title" content="小助理">
+<meta name="apple-mobile-web-app-title" content="HSUAN">
 <script>  /* 外觀(預設深色):在畫面畫出來之前就設好,才不會先閃一下白的 */
   try { document.documentElement.dataset.theme = localStorage.getItem("theme") || "dark"; } catch (e) { /* 不能存就用預設 */ }
 </script>
@@ -120,23 +120,6 @@
 
   .welcome { text-align: center; margin-top: 12vh; }
   .welcome h2 { font-size: 28px; font-weight: 600; margin: 0 0 6px; }
-  .welcome .where { color: var(--faint); font-size: 14px; margin: 0 0 18px; }
-  .tabs { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 10px; }
-  .tab {
-    display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--bg);
-    border-radius: 999px; padding: 5px 14px 5px 11px; font-size: 14px; color: var(--muted);
-  }
-  .tab:hover { background: var(--hover); color: var(--text); }
-  .tab[aria-selected="true"] { background: var(--btn); border-color: var(--btn); color: var(--btn-ink); }
-  .topic-desc { color: var(--faint); font-size: 14px; margin: 0 0 16px; }
-  .suggest { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; text-align: left; }
-  .suggest button {
-    background: var(--bg); border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px;
-    font-size: 14px; line-height: 1.5; color: var(--text); text-align: left;
-  }
-  .suggest button:hover:not(:disabled) { background: var(--hover); }
-  .suggest small { display: block; color: var(--faint); }
-
   .msg { overflow-wrap: anywhere; }
   .msg.user { align-self: flex-end; max-width: 75%; background: var(--user); border-radius: 22px; padding: 10px 18px; white-space: pre-wrap; }
   .msg.user .mode-tag { display: block; font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 2px; }
@@ -238,13 +221,6 @@
 
   /* ---------- 輸入框 ---------- */
   footer { padding: 0 16px 14px; }
-  .tray { max-width: 768px; margin: 0 auto 10px; }
-  .tray-head { display: flex; align-items: center; justify-content: space-between; color: var(--faint); font-size: 13px; padding: 0 6px 6px; }
-  .tray-list { display: flex; flex-wrap: wrap; gap: 6px 8px; max-height: 40vh; overflow-y: auto; }
-  .tray-list button { flex-shrink: 0; max-width: 260px; border: 1px solid var(--line); background: var(--bg); color: var(--text);
-                      border-radius: 14px; padding: 8px 12px; font-size: 13px; line-height: 1.45; text-align: left;
-                      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .tray-list button:hover { background: var(--hover); }
   .composer { max-width: 768px; margin: 0 auto; display: flex; align-items: flex-end; gap: 6px; background: var(--input);
               border: 1px solid var(--line); border-radius: 28px; padding: 8px 8px 8px 8px; box-shadow: var(--shadow); }
   textarea { flex: 1; resize: none; border: 0; outline: none; background: transparent; color: var(--text);
@@ -273,7 +249,6 @@
     #close-side, #open-side { display: block; }
     .log, .page-in { padding-left: 16px; padding-right: 16px; }
     .msg.user { max-width: 88%; }
-    .suggest { grid-template-columns: 1fr; }
     .welcome { margin-top: 6vh; }
     .welcome h2 { font-size: 24px; }
     .kv { grid-template-columns: 1fr; }
@@ -286,7 +261,7 @@
 <aside id="sidebar" aria-label="側邊欄">
   <div class="side-scroll">
     <div class="side-top">
-      <div class="brand"><img src="/favicon.ico" alt="">小助理</div>
+      <div class="brand"><img src="/favicon.ico" alt="">HSUAN</div>
       <button type="button" class="icon-btn" id="close-side" aria-label="關閉側邊欄">
         <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
       </button>
@@ -331,35 +306,24 @@
     <button type="button" class="icon-btn" id="back" aria-label="回到對話" hidden>
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l-6 6 6 6"/></svg>
     </button>
-    <div class="model"><span style="color:var(--text);font-size:17px;font-weight:600" id="top-title">小助理</span><span id="model"></span></div>
+    <div class="model"><span style="color:var(--text);font-size:17px;font-weight:600" id="top-title">HSUAN</span><span id="model"></span></div>
   </div>
   <main id="scroller">
     <div class="log" id="log" aria-live="polite"></div>
   </main>
   <section class="page" id="page" hidden><div class="page-in" id="page-in"></div></section>
   <footer id="composer-area">
-    <div class="tray" id="tray" hidden>
-      <div class="tray-head"><span id="tray-title"></span>
-        <button type="button" class="icon-btn" id="tray-close" aria-label="收起建議">
-          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
-        </button>
-      </div>
-      <div class="tray-list" id="tray-list"></div>
-    </div>
     <form id="form" class="composer">
-      <button type="button" class="round-btn" id="ideas" aria-label="主題建議" title="主題建議">
-        <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 14.5h5M8 17h4M10 2.5a5 5 0 00-3 9c.6.5 1 1.2 1 2V14h4v-.5c0-.8.4-1.5 1-2a5 5 0 00-3-9z"/></svg>
-      </button>
-      <button type="button" class="mode-btn" id="plan-mode" aria-pressed="false" title="開啟後,小助理先只讀不改、交出計畫,你同意才照計畫做">
+      <button type="button" class="mode-btn" id="plan-mode" aria-pressed="false" title="開啟後,HSUAN 先只讀不改、交出計畫,你同意才照計畫做">
         <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5h10M7 10h10M7 15h10M3 5h.01M3 10h.01M3 15h.01"/></svg>
         先規劃
       </button>
-      <textarea id="input" rows="1" placeholder="問小助理任何事…" aria-label="輸入問題"></textarea>
+      <textarea id="input" rows="1" placeholder="問 HSUAN 任何事…" aria-label="輸入問題"></textarea>
       <button type="submit" class="send" id="send" aria-label="送出" disabled>
         <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 16V4M5 9l5-5 5 5"/></svg>
       </button>
     </form>
-    <div class="hint">用 @檔名 附上專案裡的檔案 · Enter 送出、Shift+Enter 換行 · 小助理也會出錯,重要的結果請自己確認</div>
+    <div class="hint">用 @檔名 附上專案裡的檔案 · Enter 送出、Shift+Enter 換行 · HSUAN 也會出錯,重要的結果請自己確認</div>
   </footer>
 </div>
 <script>
@@ -382,48 +346,6 @@ const store = {
   set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* 無痕視窗等不能存,沒關係 */ } },
 };
 
-// 主題分類:每個主題的建議問題 [文字, 說明, 模式]。模式 fill = 只填進輸入框讓你補內容(不直接送),
-// plan = 用「先規劃」送出,plan-fill = 先規劃 + 讓你補內容
-const svg = (d) => `<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
-const TOPICS = [
-  { id: "code", name: "程式開發", desc: "找 bug、解釋程式、補測試、看 git 紀錄",
-    icon: svg('<path d="M7 6l-4 4 4 4M13 6l4 4-4 4M11 4l-2 12"/>'),
-    items: [["找出 calc.py 的 bug 並修正", "讀程式、跑測試、提出修改"],
-            ["解釋 @calc.py 在做什麼", "逐段說明,附檔案位置"],
-            ["幫 calc.py 補上邊界情況的測試", "負數、零、空清單"],
-            ["看最近的 git 紀錄,說明改了什麼", "誰改的、為什麼改"]] },
-  { id: "docs", name: "文件寫作", desc: "寫說明文件、翻譯、摘要、寫信",
-    icon: svg('<path d="M5 2h7l4 4v12H5z"/><path d="M12 2v4h4M8 10h5M8 13h5"/>'),
-    items: [["幫這個專案寫一份 README 並存檔", "存好會出現在「成品」"],
-            ["把下面這段翻成英文:\n", "貼上要翻譯的內容", "fill"],
-            ["幫我寫一封信,向主管報告這週的進度:\n", "寫下重點,幫你整理成信", "fill"],
-            ["把下面的內容整理成條列重點:\n", "貼上內容", "fill"]] },
-  { id: "office", name: "辦公檔案", desc: "讀 PDF、Word、Excel 並整理內容",
-    icon: svg('<rect x="3" y="3" width="14" height="14" rx="2"/><path d="M3 8h14M3 12.5h14M8 8v9"/>'),
-    items: [["摘要 @檔名.docx,列出待辦事項", "把「檔名」換成你的檔案", "fill"],
-            ["分析 @檔名.xlsx 的數字,找出異常的地方", "把「檔名」換成你的檔案", "fill"],
-            ["讀 @檔名.pdf,列出裡面提到的需求", "把「檔名」換成你的檔案", "fill"],
-            ["列出專案裡所有的 PDF、Word、Excel 檔", "先看看有哪些檔案"]] },
-  { id: "web", name: "上網研究", desc: "查文件、錯誤訊息的解法、最新消息(上網前會先問你)",
-    icon: svg('<circle cx="10" cy="10" r="7.5"/><path d="M2.5 10h15M10 2.5c2.5 2.5 2.5 12.5 0 15M10 2.5c-2.5 2.5-2.5 12.5 0 15"/>'),
-    items: [["上網查 Python 3.14 有哪些新功能,附上來源", "列重點並附網址"],
-            ["上網查這個錯誤訊息的解法:\n", "貼上錯誤訊息", "fill"],
-            ["上網比較 pypdf 和 pdfplumber 的差別", "優缺點、適合的情境"],
-            ["摘要這個網頁:https://", "貼上網址", "fill"]] },
-  { id: "plan", name: "規劃任務", desc: "大任務先規劃,你看過同意才動手",
-    icon: svg('<path d="M8 5h9M8 10h9M8 15h9"/><path d="M3 5l1 1 2-2M3 10l1 1 2-2M3 15l1 1 2-2"/>'),
-    items: [["幫 calc.py 加上除法函式和測試", "先規劃再執行", "plan"],
-            ["規劃怎麼重構 calc.py,讓它更好維護", "先規劃再執行", "plan"],
-            ["規劃新增一個計算中位數的功能", "先規劃再執行", "plan"],
-            ["我想做:", "描述任務,小助理先規劃", "plan-fill"]] },
-  { id: "explore", name: "認識專案", desc: "第一次接手一個專案時用",
-    icon: svg('<circle cx="10" cy="10" r="7.5"/><path d="M13 7l-1.8 4.2L7 13l1.8-4.2z"/>'),
-    items: [["這個專案在做什麼?架構是怎樣?", "讀過檔案後整理給你"],
-            ["列出專案結構,說明每個資料夾的用途", "附上主要檔案"],
-            ["這個專案有哪些潛在的問題或風險?", "附檔案位置"],
-            ["新手接手這個專案,要先看哪些檔案?", "排好閱讀順序"]] },
-];
-let topic = store.get("topic", "code");
 const theme = () => document.documentElement.dataset.theme || "dark";
 function setTheme(t) {
   document.documentElement.dataset.theme = t; store.set("theme", t);
@@ -522,61 +444,10 @@ const fmtTime = (t) => new Date(t * 1000).toLocaleString("zh-TW", { month: "nume
 let timers = {};
 const later = (key, fn, ms = 300) => { clearTimeout(timers[key]); timers[key] = setTimeout(fn, ms); };
 
-// ---------- 主題建議 ----------
-const currentTopic = () => TOPICS.find((t) => t.id === topic) || TOPICS[0];
-const topicDesc = (t) => t.id === "web" && /上網:關/.test(state.status || "") ? `${t.desc}。目前上網是關的,要在 .env 設 ALLOW_WEB=true` : t.desc;
-function useSuggestion([text, , mode]) {
-  const fill = mode === "fill" || mode === "plan-fill";
-  setPlanMode(mode === "plan" || mode === "plan-fill");
-  input.value = text; autosize(); updateSend(); hideTray();
-  if (!fill) return submit();
-  input.focus();  // 要補內容的:只填進去;有「檔名」就先選起來,直接打字就換掉
-  const at = text.indexOf("檔名");
-  if (at >= 0) input.setSelectionRange(at, at + 2); else input.setSelectionRange(text.length, text.length);
-}
-function suggestionButton(item, chip) {
-  const b = button(item[0].trim(), "", () => useSuggestion(item));
-  b.title = item[1] || "";
-  if (!chip && item[1]) b.appendChild(el("small", "", item[1]));
-  return b;
-}
-function setTopic(id) {
-  topic = id; store.set("topic", id);
-  if (log.querySelector(".welcome")) showEmpty(); else showTray();
-}
-function showTray() {
-  const t = currentTopic();
-  $("tray-title").textContent = `${t.name} · 建議`;
-  const list = $("tray-list"); list.innerHTML = "";
-  for (const x of TOPICS) {  // 先放主題切換,再放這個主題的建議
-    const b = button(x.name, "", () => { topic = x.id; store.set("topic", x.id); showTray(); });
-    if (x.id === t.id) { b.style.background = "var(--btn)"; b.style.color = "var(--btn-ink)"; b.style.borderColor = "var(--btn)"; }
-    list.appendChild(b);
-  }
-  for (const item of t.items) list.appendChild(suggestionButton(item, true));
-  $("tray").hidden = false;
-}
-function hideTray() { $("tray").hidden = true; }
-$("tray-close").onclick = hideTray;
-$("ideas").onclick = () => ($("tray").hidden ? showTray() : hideTray());
-
-function showEmpty() {
-  log.innerHTML = ""; hideTray();
-  const t = currentTopic();
+function showEmpty() {  // 新對話:只有一句問候,畫面保持乾淨
+  log.innerHTML = "";
   const box = el("div", "welcome");
   box.appendChild(el("h2", "", "今天想做什麼?"));
-  const proj = desk.projects.find((p) => p.id === convMeta()?.project);
-  if (proj) box.appendChild(el("p", "where", `專案:${proj.name}`));
-  const tabs = box.appendChild(el("div", "tabs"));
-  tabs.setAttribute("role", "tablist");
-  for (const x of TOPICS) {
-    const b = tabs.appendChild(button("", "tab", () => setTopic(x.id)));
-    b.setAttribute("role", "tab"); b.setAttribute("aria-selected", String(x.id === t.id));
-    b.innerHTML = x.icon.replace('width="18" height="18"', 'width="15" height="15"'); b.append(x.name);
-  }
-  box.appendChild(el("p", "topic-desc", topicDesc(t)));
-  const grid = box.appendChild(el("div", "suggest"));
-  for (const item of t.items) grid.appendChild(suggestionButton(item));
   log.appendChild(box);
   setBusy(busy);
 }
@@ -588,7 +459,6 @@ function setBusy(b) {
   send.classList.toggle("busy", b);
   send.innerHTML = b ? BUSY_ICON : SEND_ICON;
   send.setAttribute("aria-label", b ? "回答中" : "送出");
-  log.querySelectorAll(".suggest button").forEach((x) => (x.disabled = b));
   updateSend();
 }
 function ensureBot() {
@@ -684,7 +554,7 @@ const handlers = {
     stopThinking();
     const card = add(el("div", "card"));
     const q = card.appendChild(el("div", "q"));
-    q.append(el("span", "tag warn", "需要你同意"), `小助理想要${e.action}:`, el("code", "", e.detail));
+    q.append(el("span", "tag warn", "需要你同意"), `HSUAN 想要${e.action}:`, el("code", "", e.detail));
     cardButtons(card, [
       ["允許這次", "primary", () => api("/api/confirm", { id: e.id, answer: "y" })],
       ["之後都允許", "", () => api("/api/confirm", { id: e.id, answer: "a" })],
@@ -741,11 +611,11 @@ const handlers = {
     const q = card.appendChild(el("div", "q"));
     q.append(el("span", e.passed ? "tag ok" : "tag warn", e.passed ? "測試通過" : "測試沒過"),
              e.passed ? "要把草稿的修改套用到專案嗎?" : "注意:改完後沙箱測試沒有通過。仍要套用嗎?");
-    q.appendChild(el("div", "notice", `修改都先放在小助理的草稿上,你的檔案還沒動。patch:${e.name}`));
+    q.appendChild(el("div", "notice", `修改都先放在 HSUAN 的草稿上,你的檔案還沒動。patch:${e.name}`));
     card.appendChild(diffView(e.diff));
     const choose = (action) => async () => {
       const r = await api("/api/apply", { patch: e.patch, action });
-      if (r.data.text && r.data.text.startsWith("小助理還在")) { alert(r.data.text); return false; }
+      if (r.data.text && r.data.text.startsWith("HSUAN 還在")) { alert(r.data.text); return false; }
     };
     // 每個 patch 都是累積的:有新的出來,舊卡片就不能再按,免得套到舊版本
     for (const [key, old] of Object.entries(cards)) {
@@ -793,7 +663,7 @@ const convMeta = () => desk.conversations.find((c) => c.id === conv);
 function openConv(id) {
   conv = id; store.set("conv", id);
   bot = null; tools.length = 0; cards = {}; dirty.clear();
-  closePage(); closeSide(); hideTray(); setPlanMode(false); setBusy(false);
+  closePage(); closeSide(); setPlanMode(false); setBusy(false);
   showEmpty(); connect(); loadState(); renderSide();
   input.focus();
 }
@@ -917,7 +787,7 @@ async function loadPending() {
 // ---------- 側邊欄的頁面 ----------
 const PAGE_TITLES = { outputs: "成品", pending: "待命", custom: "自訂", more: "更多" };
 function openPage(name) {
-  page = name; closeSide(); hideTray();
+  page = name; closeSide();
   $("scroller").hidden = true; $("composer-area").hidden = true; $("page").hidden = false; $("back").hidden = false;
   $("top-title").textContent = PAGE_TITLES[name];
   document.querySelectorAll(".nav-btn[data-page]").forEach((b) => b.setAttribute("aria-current", b.dataset.page === name ? "page" : "false"));
@@ -927,7 +797,7 @@ function closePage() {
   if (!page) return;
   page = null;
   $("scroller").hidden = false; $("composer-area").hidden = false; $("page").hidden = true; $("back").hidden = true;
-  $("top-title").textContent = "小助理";
+  $("top-title").textContent = "HSUAN";
   document.querySelectorAll(".nav-btn[data-page]").forEach((b) => b.setAttribute("aria-current", "false"));
 }
 document.querySelectorAll(".nav-btn[data-page]").forEach((b) => (b.onclick = () => openPage(b.dataset.page)));
@@ -943,9 +813,9 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
     renderPage();
   };
   if (!st.on) {
-    box.appendChild(el("p", "lead", "手機也能用小助理,電腦和手機看到的是同一份對話。手機要和電腦連同一個 Wi-Fi。"));
+    box.appendChild(el("p", "lead", "手機也能用 HSUAN,電腦和手機看到的是同一份對話。手機要和電腦連同一個 Wi-Fi。"));
     box.appendChild(el("div", "actions")).appendChild(button("打開手機連線", "pill dark", act({ on: true })));
-    box.appendChild(el("p", "lead", "第一次打開時 Windows 會問要不要讓小助理使用網路:請勾「私人網路」並按「允許」。"
+    box.appendChild(el("p", "lead", "第一次打開時 Windows 會問要不要讓 HSUAN 使用網路:請勾「私人網路」並按「允許」。"
       + (st.phones ? `已配對 ${st.phones} 支手機。` : "")));
     return;
   }
@@ -962,7 +832,7 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
                    "輸入 PIN。",
                    "加到主畫面,之後點圖示就打開:iPhone 用 Safari 按「分享」→「加入主畫面」;Android 用 Chrome 按右上「⋮」→「加到主畫面」。第一次從主畫面打開要再輸入一次 PIN。"])
     steps.appendChild(el("li", "", t));
-  box.appendChild(el("p", "lead", "電腦上的小助理要開著,手機才連得到。連不到的話:確認 Windows 防火牆有允許,而且這個 Wi-Fi 在 Windows 設成「私人網路」。"));
+  box.appendChild(el("p", "lead", "電腦上的 HSUAN 要開著,手機才連得到。連不到的話:確認 Windows 防火牆有允許,而且這個 Wi-Fi 在 Windows 設成「私人網路」。"));
   const a = box.appendChild(el("div", "actions"));
   a.appendChild(button("關閉手機連線", "pill", act({ on: false })));
   if (st.phones) a.appendChild(button("忘記所有手機", "pill", () => {
@@ -986,16 +856,16 @@ async function renderPage() {
   box.innerHTML = "";
   box.appendChild(el("h2", "", PAGE_TITLES[name]));
   if (name === "outputs") {
-    box.appendChild(el("p", "lead", "小助理做出來的東西:存成檔案的文件,以及每段對話提過的修改(patch)。"));
+    box.appendChild(el("p", "lead", "HSUAN 做出來的東西:存成檔案的文件,以及每段對話提過的修改(patch)。"));
     section(box, "文件");
-    if (!r.data.docs?.length) box.appendChild(el("div", "none", "還沒有文件。請小助理「寫成文件並存檔」,就會出現在這裡。"));
+    if (!r.data.docs?.length) box.appendChild(el("div", "none", "還沒有文件。請 HSUAN「寫成文件並存檔」,就會出現在這裡。"));
     else {
       const list = rows(box);
       for (const d of r.data.docs) row(list, d.name, `${fmtSize(d.size)} · ${fmtTime(d.mtime)}`,
         [button("下載", "pill", () => download(`/api/file?token=${encodeURIComponent(TOKEN)}&name=${encodeURIComponent(d.name)}`))]);
     }
     section(box, "修改(patch)");
-    if (!r.data.patches?.length) box.appendChild(el("div", "none", "這次打開以來還沒有修改。修程式時小助理提的 patch 會列在這裡。"));
+    if (!r.data.patches?.length) box.appendChild(el("div", "none", "這次打開以來還沒有修改。修程式時 HSUAN 提的 patch 會列在這裡。"));
     else {
       const list = rows(box);
       for (const p of r.data.patches) {
@@ -1023,7 +893,7 @@ async function renderPage() {
             [first, button("捨棄", "pill", act("/api/apply", { patch: it.patch ?? -1, action: "discard" })),
              button("打開對話", "pill", () => openConv(it.conv))]);
       }
-      for (const c of it.confirms) row(list, `小助理想要${c.action}`, c.detail,
+      for (const c of it.confirms) row(list, `HSUAN 想要${c.action}`, c.detail,
         [button("允許這次", "pill primary", act("/api/confirm", { id: c.id, answer: "y" })),
          button("不要", "pill", act("/api/confirm", { id: c.id, answer: "n" }))]);
       if (it.plan) row(list, "計畫等你同意", "看過計畫後決定要不要照著做",
@@ -1031,11 +901,11 @@ async function renderPage() {
          button("先不要", "pill", act("/api/execute", { go: false })), button("打開對話", "pill", () => openConv(it.conv))]);
     }
   } else if (name === "custom") {
-    box.appendChild(el("p", "lead", "讓小助理照你的習慣做事。"));
+    box.appendChild(el("p", "lead", "讓 HSUAN 照你的習慣做事。"));
     section(box, `專案規則(${r.data.project} 的 ASSISTANT.md)`);
-    box.appendChild(el("p", "lead", "每段對話開始時小助理都會先讀,例如「回答都要附檔案路徑」、「測試用 pytest」。"));
+    box.appendChild(el("p", "lead", "每段對話開始時 HSUAN 都會先讀,例如「回答都要附檔案路徑」、「測試用 pytest」。"));
     if (r.data.downloaded) box.appendChild(el("p", "lead",
-      "這是從 GitHub 下載的專案:它自帶的 ASSISTANT.md 是別人寫的,小助理不會照著做;你在這裡加的規則另外存在小助理自己的資料夾。"));
+      "這是從 GitHub 下載的專案:它自帶的 ASSISTANT.md 是別人寫的,HSUAN 不會照著做;你在這裡加的規則另外存在 HSUAN 自己的資料夾。"));
     if (r.data.text) box.appendChild(el("pre", "rules", r.data.text)); else box.appendChild(el("div", "none", "這個專案還沒有規則。"));
     if (r.data.team) box.appendChild(el("p", "lead", "多人模式的專案規則由管理者維護。"));
     else {
@@ -1051,7 +921,7 @@ async function renderPage() {
       f.appendChild(button("加入", "pill dark", go));
     }
     section(box, "上網");
-    box.appendChild(el("p", "lead", `${state.status || ""}。要開關請改專案資料夾 .env 的 ALLOW_WEB(true / false),改完重新打開小助理。`));
+    box.appendChild(el("p", "lead", `${state.status || ""}。要開關請改專案資料夾 .env 的 ALLOW_WEB(true / false),改完重新打開 HSUAN。`));
     section(box, "模型");
     box.appendChild(el("p", "lead", `${state.model || ""}(換模型改 models.yaml)`));
   } else if (name === "more") {
@@ -1080,10 +950,9 @@ async function renderPage() {
     section(box, "使用說明");
     const ul = box.appendChild(el("ul", "help"));
     for (const t of [
-      "新對話的首頁可以選主題(程式開發、文件寫作、辦公檔案…),點建議問題就能直接問;對話中按輸入框左邊的燈泡也能叫出建議。",
       "用 @檔名 附上專案裡的檔案,例如:解釋 @calc.py。",
-      "修改先放在小助理的草稿上,你按「套用到專案」才會真的改檔案;還沒套用的會出現在「待命」。",
-      "大任務打開「先規劃」:小助理先只讀不改、交出計畫,你同意才照計畫做。",
+      "修改先放在 HSUAN 的草稿上,你按「套用到專案」才會真的改檔案;還沒套用的會出現在「待命」。",
+      "大任務打開「先規劃」:HSUAN 先只讀不改、交出計畫,你同意才照計畫做。",
       "上網前一定會先問你;公司內網和本機網址一律不准。",
       "左邊每個專案是一個資料夾,底下是它的對話;「新增專案」可以加你自己的資料夾。",
       "對話會自動存檔,關掉再打開還在。",
@@ -1096,14 +965,14 @@ let planMode = false;
 function setPlanMode(on) {
   planMode = on;
   $("plan-mode").setAttribute("aria-pressed", String(on));
-  input.placeholder = on ? "要規劃什麼任務?" : "問小助理任何事…";
+  input.placeholder = on ? "要規劃什麼任務?" : "問 HSUAN 任何事…";
 }
 $("plan-mode").onclick = () => { setPlanMode(!planMode); input.focus(); };
 async function submit() {
   const text = input.value.trim();
   if (!text || busy || !conv) return;
   const mode = planMode ? "plan" : "normal";
-  input.value = ""; autosize(); updateSend(); setPlanMode(false); hideTray();
+  input.value = ""; autosize(); updateSend(); setPlanMode(false);
   const r = await api("/api/ask", { text, mode });
   if (!r.ok) { alert(r.data.error || "送出失敗"); input.value = text; autosize(); updateSend(); setPlanMode(mode === "plan"); }
 }

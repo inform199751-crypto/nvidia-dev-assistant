@@ -97,12 +97,12 @@ flowchart LR
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
 cp .env.example .env                              # 填 NVIDIA_API_KEY,AGENT_WORKSPACE 指向要分析的 repo
 docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
-.venv/Scripts/python desktop_app.py --install     # 桌面版:在桌面建立「小助理」捷徑,雙擊就開獨立視窗(像 Claude 桌面版)
+.venv/Scripts/python desktop_app.py --install     # 桌面版:在桌面建立「HSUAN」捷徑,雙擊就開獨立視窗(像 Claude 桌面版)
                                                   # 手機:「更多 → 手機」打開手機連線,手機掃 QR code、輸入 PIN,再「加到主畫面」就像 app
                                                   # (配對過的手機會記住;電腦上的小助理要開著,手機和電腦要同一個 Wi-Fi)
 .venv/Scripts/python webui.py                     # 網頁介面(只開在本機):回答邊產生邊顯示,套用 / 上網前用按鈕確認
                                                   # 側邊欄:新增 / 成品(文件、patch)/ 待命(等你處理的草稿、確認、計畫)/ 自訂 / 更多,
-                                                  # 下面是專案和它們的對話(自動存檔,關掉再開還在);新對話首頁有分類的主題建議
+                                                  # 下面是專案和它們的對話(自動存檔,關掉再開還在)
                                                   # 「新增專案」可以貼公開的 GitHub 網址(下載到 output/repos/,只抓公開的);
                                                   # 開了上網的話,對話裡貼 PR / issue / 檔案網址,會讀成純文字(PR 附 diff)
 .venv/Scripts/python webui.py --lan               # 不用桌面版時:同一個 Wi-Fi 的手機也能開,終端機印出網址和 6 位數 PIN(不要和桌面版同時開)

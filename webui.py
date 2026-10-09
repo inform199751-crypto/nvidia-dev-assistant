@@ -1,4 +1,4 @@
-"""網頁介面:在瀏覽器裡跟小助理聊天(像 Claude 的網頁版)。
+"""網頁介面:在瀏覽器裡跟 HSUAN 聊天(像 Claude 的網頁版)。
 
     python webui.py            → 開 http://127.0.0.1:8765 並自動打開瀏覽器(只有這台電腦連得到)
     python webui.py --lan      → 同一個 Wi-Fi 的手機也能開:終端機會印出網址和 6 位數 PIN
@@ -145,7 +145,7 @@ class PhoneLink:
             (self.store / "phone.json").write_text(json.dumps({"on": on}), encoding="utf-8")
 
     def resume(self) -> None:
-        """上次關掉小助理時是開著的,就再打開。"""
+        """上次關掉 HSUAN 時是開著的,就再打開。"""
         try:
             on = json.loads((self.store / "phone.json").read_text(encoding="utf-8")).get("on") if self.store else False
         except (OSError, ValueError, AttributeError):
@@ -174,7 +174,7 @@ class PhoneLink:
         return ""
 
     def close(self) -> None:
-        """關掉伺服器(小助理結束時用:不改記住的開關狀態)。"""
+        """關掉伺服器(HSUAN 結束時用:不改記住的開關狀態)。"""
         with self.lock:
             server, self.server = self.server, None
             self.lan.open = False  # 連著的手機在下一次檢查時斷開
@@ -200,7 +200,7 @@ PUBLIC_FILES = {"/favicon.ico": ("assistant.ico", "image/x-icon"),
                 "/icon-maskable-512.png": ("icon-maskable-512.png", "image/png"),
                 "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png")}
 # 手機「加到主畫面」:有這個 manifest,主畫面的圖示點開就是全螢幕的小助理(沒有網址列)
-MANIFEST = {"name": "小助理", "short_name": "小助理", "id": "/", "start_url": "/", "scope": "/",
+MANIFEST = {"name": "HSUAN", "short_name": "HSUAN", "id": "/", "start_url": "/", "scope": "/",
             "display": "standalone", "background_color": "#121212", "theme_color": "#0a0a0a",
             "icons": [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
                       {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"},
@@ -210,8 +210,8 @@ MANIFEST = {"name": "小助理", "short_name": "小助理", "id": "/", "start_ur
 LOGIN_PAGE = """<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#121212">
 <link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="小助理">
-<title>小助理 · 登入</title>
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="HSUAN">
+<title>HSUAN · 登入</title>
 <style>
 :root{color-scheme:dark;--bg:#121212;--text:#ececec;--muted:#b4b4b4;--line:#2a2a2a;--btn:#fff;--btn-ink:#0d0d0d;--error:#f87171}
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--text);
@@ -223,7 +223,7 @@ padding:10px;border:1px solid var(--line);border-radius:14px;background:transpar
 button{margin-top:14px;width:100%;padding:12px;border:0;border-radius:999px;background:var(--btn);color:var(--btn-ink);font:inherit;font-weight:600}
 .err{color:var(--error);min-height:1.6em;margin-top:10px;font-size:14px}
 </style></head><body>
-<form id="f"><h1>小助理</h1><p>輸入電腦上顯示的 6 位數 PIN</p>
+<form id="f"><h1>HSUAN</h1><p>輸入電腦上顯示的 6 位數 PIN</p>
 <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required autofocus aria-label="PIN">
 <button type="submit">登入</button><div class="err" id="err" role="alert"></div></form>
 <script>
@@ -417,7 +417,7 @@ class Hub:
     def compact(self) -> str:
         with self.cond:
             if self.busy:
-                return "小助理還在回答,等這一輪結束再整理"
+                return "HSUAN 還在回答,等這一輪結束再整理"
             self.busy = True  # 整理摘要要呼叫模型,期間不接新問題
         try:
             return "" if self.session.compact() else "還沒有可以整理的對話"
@@ -469,7 +469,7 @@ class Hub:
         """action:apply 套用草稿 / keep 先不要(草稿留著繼續改)/ discard 捨棄草稿。"""
         with self.cond:
             if self.busy:
-                return "小助理還在回答,等這一輪結束再處理"
+                return "HSUAN 還在回答,等這一輪結束再處理"
         if index == -1:  # 「待命」頁面:最新的那份(包含草稿全部修改)
             index = len(self.bench.patches) - 1
         if not 0 <= index < len(self.bench.patches):
@@ -487,7 +487,7 @@ class Hub:
                 result = toolbox.discard_draft()
                 self.note += "<note>使用者已捨棄你草稿裡的所有修改,檔案回到原本的內容。</note>\n"
             else:
-                result = "沒有套用。草稿留著,可以繼續請小助理改,之後再套用。"
+                result = "沒有套用。草稿留著,可以繼續請 HSUAN 改,之後再套用。"
         self.publish("applied", {"patch": index, "text": result})
         return result
 
@@ -1165,7 +1165,7 @@ def local_desk(registry, quota, tools: list, status: str, model: str, role: str 
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="小助理的網頁介面")
+    ap = argparse.ArgumentParser(description="HSUAN 的網頁介面")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true", help="不要自動打開瀏覽器")
     ap.add_argument("--lan", action="store_true", help="讓同一個 Wi-Fi 的手機也能開(要輸入啟動時顯示的 PIN)")
@@ -1212,15 +1212,15 @@ def main() -> None:
     try:
         server = serve(hubs, args.port, token=args.token, lan=lan, host=host, team=team)
     except OSError:
-        raise SystemExit(f"port {args.port} 已經被占用:可能已經有一個小助理在跑了(請先關掉它),"
+        raise SystemExit(f"port {args.port} 已經被占用:可能已經有一個 HSUAN 在跑了(請先關掉它),"
                          f"或用 --port 換一個")
     url = f"http://127.0.0.1:{args.port}/"
     if team:
-        print(f"小助理多人模式:{host}:{args.port}  (工作區 {toolbox.WORKSPACE},身分標頭 {team.user_header},"
+        print(f"HSUAN 多人模式:{host}:{args.port}  (工作區 {toolbox.WORKSPACE},身分標頭 {team.user_header},"
               f"同時執行上限 {args.max_concurrent})")
         server.serve_forever()
         return
-    print(f"小助理網頁介面:{url}  (工作區 {toolbox.WORKSPACE};按 Ctrl+C 結束)")
+    print(f"HSUAN 網頁介面:{url}  (工作區 {toolbox.WORKSPACE};按 Ctrl+C 結束)")
     if lan:
         print("\n手機連線(手機要連同一個 Wi-Fi):")
         print(f"  http://{lan.ips[0]}:{args.port}")
