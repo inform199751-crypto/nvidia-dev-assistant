@@ -37,6 +37,8 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 
 **多人模式**(`webui.py --team`,部署見 `deploy/`):`Hubs` 每個使用者一個 `Hub`;身分只看 `TeamAccess.user_header`(登入代理放的,預設 `X-Forwarded-Email`),沒有就 401——所以小助理絕對不能直接對外開 port。工作區唯讀共用:不能 apply(改成 `/api/patch?i=` 下載)、不能 /remember,patch 存 `OUTPUT_DIR/patches/<使用者>/`。`Gate` 是全體共用的同時執行上限(其他人排隊)。有 `REDIS_URL` 時 `token_guard.make_quota` 換成 `RedisTokenQuota`(每人每日 key、同時請求數 key 都有過期時間)。
 
+**桌面版**(`desktop_app.py`):桌面捷徑跑 `.venv\Scripts\pythonw.exe desktop_app.py`(沒有主控台;stdout 為 None,所以改寫進 `output/desktop_app.log`,出錯看這裡)。同一個行程裡起 webui(port 8780,`serve` 綁不上就代表已經在跑,只開視窗),再用 Edge `--app` + 獨立 `--user-data-dir`(`output/.app-profile`)開視窗。**不要用瀏覽器行程結束判斷視窗關了**(Edge 的啟動行程交出視窗後就先結束,實測 0.5 秒),改看 `Hub.listeners`(事件串流連線數):第一個視窗 60 秒內要連上,之後連續 4 次(20 秒)沒人連著才結束;用次數不用時鐘,睡眠喚醒才不會被誤判。`DESKTOP_APP_HEADLESS=1` 是測試用(無頭 Edge)。
+
 **VS Code 外掛**(`vscode-extension/`,純 JS、不用編譯):外掛自己用 `<projectPath>/.venv` 的 Python 跑 `webui.py --no-browser --port 8770 --token <隨機>`,環境變數 `AGENT_WORKSPACE` 設成 VS Code 開著的資料夾(`load_dotenv` 不會蓋掉),面板是 iframe 指到那個 port;「問選取的程式碼」直接 POST `/api/ask`。Windows 上關伺服器要 `taskkill /T`(venv 的 python.exe 只是轉介,真正的 Python 是子行程)。打包:`python vscode-extension/build_vsix.py`。沒有 Node 也能測:`ELECTRON_RUN_AS_NODE=1` 跑 VS Code 的 Code.exe 就是 Node,可以 `--check` 或用假的 vscode 模組跑外掛(Code.exe 是視窗程式,輸出要寫檔)。
 
 `agent.AgentSession` 保存一段對話(messages、估算倍率 `scale`、累計 tokens);`ask()` 是一輪,中途出錯會把這一輪的訊息退掉。`run_agent()` = 開新 session 只問一輪;`chat()` 是互動模式的 REPL,問題裡的 `@路徑` 由 `file_mentions` 轉成附檔。每輪開始重新 `pick_role`,之後每一步送出前依序做:

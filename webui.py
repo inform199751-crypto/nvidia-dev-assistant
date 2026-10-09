@@ -134,6 +134,7 @@ class Hub:
         self.busy = False
         self.note = ""  # 下一個問題要先告訴模型的事(例如已經套用 patch)
         self.pending: dict[str, list] = {}  # 等使用者回答的確認:id → [threading.Event, 答案]
+        self.listeners = 0  # 現在有幾個頁面連著事件串流(桌面版用來判斷視窗是不是都關了)
         self.always: set[str] = set()
         self.session = new_session(self.publish)
 
@@ -393,6 +394,11 @@ def make_handler(hubs: Hubs | Hub, token: str, port: int, lan: LanAccess | None 
                 return
             url = urlsplit(self.path)
             qs = parse_qs(url.query)
+            if url.path == "/favicon.ico":  # 視窗和工作列的圖示(桌面版也用這個)
+                icon = Path(__file__).with_name("assets") / "assistant.ico"
+                if icon.is_file():
+                    return self._send(200, icon.read_bytes(), "image/x-icon")
+                return self._json(404, {"error": "沒有圖示"})
             if url.path == "/":
                 if team and not self._signed_in():
                     return self._json(401, {"error": f"沒有登入身分(登入代理沒有送 {team.user_header})"})
@@ -443,6 +449,8 @@ def make_handler(hubs: Hubs | Hub, token: str, port: int, lan: LanAccess | None 
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
+            with hub.cond:
+                hub.listeners += 1
             try:
                 while True:
                     batch = hub.events_since(since, timeout=15)
@@ -454,6 +462,9 @@ def make_handler(hubs: Hubs | Hub, token: str, port: int, lan: LanAccess | None 
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 return  # 瀏覽器關掉或重新整理
+            finally:
+                with hub.cond:
+                    hub.listeners -= 1
 
         def do_POST(self) -> None:
             # 先把內容讀完再回應:拒絕時沒讀完就關連線,Windows 會直接中斷(WinError 10053),對方收不到錯誤碼

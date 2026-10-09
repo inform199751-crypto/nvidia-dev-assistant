@@ -1284,3 +1284,20 @@ def test_webui_refuses_port_already_in_use(workspace):
             webui.serve(hub, first.server_address[1])
     finally:
         first.server_close()
+
+
+def test_desktop_icon_and_favicon(webui_app, tmp_path):
+    """桌面版圖示:合法的多尺寸 .ico(PNG 內容);網頁的 /favicon.ico 送這個圖示(視窗和工作列用)。"""
+    import struct
+    import httpx
+    import desktop_app
+    ico = desktop_app.make_icon(tmp_path / "a.ico", sizes=(16, 32))
+    data = ico.read_bytes()
+    reserved, kind, count = struct.unpack("<HHH", data[:6])
+    assert (reserved, kind, count) == (0, 1, 2)
+    for i in range(count):
+        w, _, _, _, _, bits, size, offset = struct.unpack("<BBBBHHII", data[6 + 16 * i: 22 + 16 * i])
+        assert w in (16, 32) and bits == 32 and data[offset:offset + 8] == b"\x89PNG\r\n\x1a\n"
+    app = webui_app([])
+    r = httpx.get(app.base + "/favicon.ico")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/x-icon" and r.content[:4] == b"\x00\x00\x01\x00"
