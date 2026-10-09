@@ -844,9 +844,11 @@ const handlers = {
         old.appendChild(el("div", "result", "已有更新的修改,請看下面"));
       }
     }
+    if (e.copy) q.appendChild(el("div", "notice", "這個專案是拖進來的副本:套用只會改副本,原本的資料夾不會變。"
+      + "要改原本的,請再拖一次資料夾並貼上它的路徑,或下載 patch 自己套用。"));
     const first = e.team  // 多人模式:共用的工作區不能直接改,下載 patch 回去自己套
       ? ["下載 patch", e.passed ? "primary" : "", () => { download(patchUrl(conv, e.patch)); return false; }]
-      : ["套用到專案", e.passed ? "primary" : "", choose("apply")];
+      : [e.copy ? "套用到副本" : "套用到專案", e.passed ? "primary" : "", choose("apply")];
     cardButtons(card, [first, ["先不要", "", choose("keep")], ["捨棄修改", "", choose("discard")]]);
     cards["patch" + e.patch] = card; refreshSoon();
     card.scrollIntoView({ block: "end", behavior: "smooth" });
@@ -1005,7 +1007,8 @@ function renderSide() {
     const name = head.appendChild(button("", "project-name", () => {
       sec.classList.toggle("collapsed"); store.set("collapsed:" + p.id, sec.classList.contains("collapsed") ? "1" : "");
     }));
-    name.title = p.source ? `${p.source}(下載到 ${p.path})` : p.path;
+    name.title = p.source === "upload" ? `拖進來的「${p.name}」的副本(${p.path});原本的資料夾不會被改`
+      : p.source ? `${p.source}(下載到 ${p.path})` : p.path;
     name.appendChild(el("span", "", p.name));
     name.insertAdjacentHTML("beforeend", '<svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l5 5 5-5"/></svg>');
     const plus = head.appendChild(button("", "icon-btn", () => newConv(p.id)));
@@ -1128,7 +1131,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/10", ["設定 → 外觀多了 7 種參考車廠官網的配色:黑金、賽道紅、深海藍、碳纖黑、純黑白、黃黑、電光藍;拿掉淺色、跟著系統",
+  ["10/10", ["可以把資料夾直接拖進視窗:貼上路徑就能讓 HSUAN 改原本的檔案,留空就上傳一份副本給它分析",
+             "設定 → 外觀多了 7 種參考車廠官網的配色:黑金、賽道紅、深海藍、碳纖黑、純黑白、黃黑、電光藍;拿掉淺色、跟著系統",
              "回答語言拿掉簡體中文(以前選它的會回到繁體中文)",
              "上網讀到的網頁和訪客的問題先經過安全檢查(Nemotron 3.5 Content Safety),藏著要 AI 照做的指令會被擋下",
              "讀得懂掃描的 PDF 了:沒有文字層的頁交給看圖模型讀,知識庫也收得進去",
@@ -1487,6 +1491,7 @@ async function renderPage() {
       "掃描的 PDF(沒有文字層)也讀得到:HSUAN 會用看圖的模型一頁一頁讀出來,可能有錯字。",
       "想用說的:Windows 按 Win+H、手機用鍵盤上的麥克風,系統的語音輸入比較準(10/10 測過 HSUAN 自己的語音辨識,錯字太多)。",
       "左邊每個專案是一個資料夾,底下是它的對話;「新增專案」可以加你自己的資料夾或公開的 GitHub 專案。",
+      "也可以直接把資料夾拖進視窗:貼上它的路徑,HSUAN 就能改原本的檔案(套用前一樣會先給你看);留空就只上傳一份副本給它看。",
       "輸入框右下角可以換這段對話用的模型;回答語言在左下角的帳號選單換。",
       "對話會自動存檔,關掉再打開還在。",
     ]) ul.appendChild(el("li", "", t));
@@ -1600,9 +1605,90 @@ input.addEventListener("paste", (ev) => {  // Ctrl+V 貼上截圖
   if (!ev.clipboardData.getData("text/plain")) ev.preventDefault();  // 從 Word 之類複製的會同時有文字,文字照貼
   addImages(files);
 });
-form.addEventListener("dragover", (ev) => { if ([...ev.dataTransfer.types].includes("Files")) { ev.preventDefault(); form.classList.add("drop"); } });
-form.addEventListener("dragleave", () => form.classList.remove("drop"));
-form.addEventListener("drop", (ev) => { ev.preventDefault(); form.classList.remove("drop"); addImages([...ev.dataTransfer.files]); });
+// 拖放:整個視窗都收(不用剛好丟在輸入框上);資料夾 → dropFolder,其他檔案當圖片
+const hasFiles = (ev) => [...(ev.dataTransfer?.types || [])].includes("Files");
+document.addEventListener("dragover", (ev) => { if (hasFiles(ev)) { ev.preventDefault(); form.classList.add("drop"); } });
+document.addEventListener("dragleave", (ev) => { if (!ev.relatedTarget) form.classList.remove("drop"); });  // 拖出視窗
+document.addEventListener("drop", (ev) => {
+  if (!hasFiles(ev)) return;
+  ev.preventDefault(); form.classList.remove("drop");
+  // 資料夾要在 drop 當下就拿到 entry,事件結束後 dataTransfer 就讀不到了
+  const dirs = [...ev.dataTransfer.items].map((i) => i.webkitGetAsEntry?.()).filter((x) => x && x.isDirectory);
+  if (dirs.length) return dropFolder(dirs[0]);
+  addImages([...ev.dataTransfer.files]);
+});
+
+// ---------- 把資料夾拖進來(像 Claude):瀏覽器拿不到資料夾原本的位置,只拿得到裡面的檔案 ----------
+// 所以先問路徑:貼了(而且裡面的檔案對得上)就直接用原本的資料夾,HSUAN 改的東西套用時會寫回去;
+// 留空就把檔案傳一份副本給 HSUAN(只看、分析,原本的不會變)
+const UP_SKIP_DIRS = new Set(["node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build", ".next", "target", ".idea", ".vs"]);
+const UP_BINARY = /\.(exe|dll|so|dylib|zip|7z|rar|gz|tar|iso|mp4|mov|avi|mkv|mp3|wav|bin|pyc|class|jar|psd|ai)$/i;
+const UP_FILE = 5e6, UP_TOTAL = 50e6, UP_COUNT = 2000, UP_BATCH = 6e6;  // 跟伺服器的 UPLOAD_MAX_* 一樣
+const readEntries = (dir) => new Promise((ok, fail) => {  // readEntries 一次只給一部分,要一直讀到空的
+  const reader = dir.createReader(), out = [];
+  const next = () => reader.readEntries((batch) => { if (!batch.length) return ok(out); out.push(...batch); next(); }, fail);
+  next();
+});
+async function walkFolder(entry, base, out) {
+  if (out.length > UP_COUNT * 2) return;
+  if (entry.isFile) {
+    out.push({ path: entry.fullPath.slice(base.length + 1), file: await new Promise((ok, fail) => entry.file(ok, fail)) });
+  } else if (entry.fullPath === base || !(entry.name.startsWith(".") || UP_SKIP_DIRS.has(entry.name))) {
+    for (const child of await readEntries(entry)) await walkFolder(child, base, out);
+  }
+}
+const fileB64 = (file) => new Promise((ok, fail) => {
+  const r = new FileReader();
+  r.onload = () => ok(String(r.result).split(",")[1] || "");
+  r.onerror = () => fail(new Error(`讀不到 ${file.name}`));
+  r.readAsDataURL(file);
+});
+async function dropFolder(root) {
+  if (!desk.can_add_projects) return alert("這裡不能加資料夾(訪客或多人模式)");
+  const all = [];
+  await walkFolder(root, root.fullPath, all);
+  const files = [];
+  let total = 0, skipped = 0;
+  for (const x of all) {
+    const name = x.path.split("/").pop();
+    if (name.startsWith(".") || UP_BINARY.test(name) || x.file.size > UP_FILE || files.length >= UP_COUNT
+        || total + x.file.size > UP_TOTAL) { skipped++; continue; }
+    files.push(x); total += x.file.size;
+  }
+  if (!files.length) return alert(`「${root.name}」裡沒有可以讀的檔案`);
+  const path = prompt(`要讓 HSUAN 能直接修改「${root.name}」裡的檔案,請貼上這個資料夾的完整路徑\n`
+    + "(在檔案總管上方的網址列按右鍵 →「複製位址」)。\n\n"
+    + `留空按「確定」= 只上傳一份副本給 HSUAN 看(${files.length} 個檔案、${fmtSize(total)}),原本的檔案不會被改。`
+    + (skipped ? `\n(會略過 ${skipped} 個隱藏檔、執行檔或太大的檔案)` : ""), "");
+  if (path === null) return;  // 按了取消
+  let proj;
+  try {
+    if (path.trim()) {  // 用原本的資料夾:伺服器會比對幾個檔案的大小,貼錯資料夾就擋下來
+      const expect = files.filter((_, i) => i % Math.ceil(files.length / 20) === 0).map((x) => ({ path: x.path, size: x.file.size }));
+      const r = await api("/api/project/add", { path, expect });
+      if (!r.ok) return alert(r.data.error || "加入失敗");
+      proj = r.data;
+    } else {
+      let upload = null, batch = [], size = 0, sent = 0;
+      const flush = async (done) => {
+        const r = await api("/api/project/upload", { name: root.name, upload, done, files: batch });
+        if (!r.ok) throw new Error(r.data.error || "上傳失敗");
+        upload = r.data.upload || upload; sent += batch.length; batch = []; size = 0;
+        $("hint").textContent = `上傳「${root.name}」中… ${sent} / ${files.length}`;
+        return r.data;
+      };
+      for (const x of files) {
+        batch.push({ path: x.path, data: await fileB64(x.file) }); size += x.file.size;
+        if (size >= UP_BATCH) await flush(false);
+      }
+      proj = await flush(true);
+    }
+  } catch (e) { applyMode(); return alert(e.message); }
+  applyMode();  // 提示文字還原
+  await loadDesk();
+  await newConv(proj.id, "code");  // 資料夾一定是在「程式」模式看(對話模式讀不到檔案)
+  input.value = "這個專案在做什麼?先看結構,再說明主要的檔案和流程。"; autosize(); updateSend();
+}
 // 輸入框的「選模型」:上面是努力程度滑桿,下面是模型;這段對話之後都用它們。自動 = 依難度和長度選
 // 努力程度:[代碼, 名稱, 說明](伺服器端的實際設定在 agent.EFFORTS)
 const EFFORTS = [["low", "低", "不思考,最快、最省 token"], ["medium", "中", "平常的問題用這個就好"],

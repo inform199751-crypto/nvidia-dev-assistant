@@ -6,6 +6,7 @@ import json
 import logging
 import subprocess
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -2904,3 +2905,75 @@ def test_removed_simplified_chinese_falls_back_to_traditional(workspace, tmp_pat
     assert "Answer language" not in desk.hub(desk.new_conversation()).session.messages[0].content
     with pytest.raises(ValueError):
         desk.set_lang("zh-CN")
+
+
+def _b64(data: bytes) -> str:
+    import base64
+    return base64.b64encode(data).decode()
+
+
+def test_dragged_folder_is_uploaded_as_a_copy(workspace, tmp_path_factory, monkeypatch):
+    """10/10 使用者要的「像 Claude 可以把資料夾拖進聊天」:瀏覽器拿不到資料夾原本的位置,所以分批把檔案傳上來存成副本專案。
+    ..、絕對路徑、隱藏檔、.env、node_modules 裡的、太大的都略過;沒有東西可收就不建專案;
+    上傳代號不對要報錯;副本專案的「套用」卡片要說改的是副本。訪客 / 多人模式不能上傳。"""
+    import httpx
+    import webui
+    store, uploads = tmp_path_factory.mktemp("state"), tmp_path_factory.mktemp("uploads")
+    monkeypatch.setattr(webui, "UPLOAD_MAX_FILE", 1000)
+    reg, _ = scripted_registry([])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=store, uploads_dir=uploads)
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    png = b"\x89PNG\r\n\x1a\nbinary\x00\xff"
+    try:
+        first = httpx.post(base + "/api/project/upload", headers=h, json={"name": "鳥璇點餐", "files": [
+            {"path": "app/server.py", "data": _b64("print('hi')\n".encode())},
+            {"path": "docs/screenshots/01.png", "data": _b64(png)},
+            {"path": "../evil.txt", "data": _b64(b"x")}, {"path": "C:/abs.txt", "data": _b64(b"x")},
+            {"path": ".env", "data": _b64(b"KEY=1")}, {"path": "node_modules/x.js", "data": _b64(b"x")},
+            {"path": "big.txt", "data": _b64(b"x" * 1001)}, {"path": "bad.txt", "data": "不是 base64"}]}).json()
+        assert (first["files"], first["skipped"]) == (2, 6)
+        assert httpx.post(base + "/api/project/upload", headers=h,
+                          json={"name": "x", "upload": "nope", "files": []}).status_code == 400
+        proj = httpx.post(base + "/api/project/upload", headers=h, json={
+            "name": "鳥璇點餐", "upload": first["upload"], "done": True,
+            "files": [{"path": "README.md", "data": _b64("# 鳥璇\n".encode())}]}).json()
+        assert proj["source"] == "upload" and proj["files"] == 3 and proj["name"] == "鳥璇點餐"
+        dest = Path(proj["path"])
+        assert dest.parent == uploads.resolve() and (dest / "docs/screenshots/01.png").read_bytes() == png
+        assert sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()) == \
+            ["README.md", "app/server.py", "docs/screenshots/01.png"]
+        assert not (uploads / "evil.txt").exists()
+        listed = httpx.get(base + "/api/desk", headers=h).json()["projects"]
+        assert any(p["id"] == proj["id"] and p["source"] == "upload" for p in listed)
+        cid = httpx.post(base + "/api/conv/new", json={"project": proj["id"]}, headers=h).json()["id"]
+        assert desk.hubs[cid].workspace == dest and desk.hubs[cid].copy
+        empty = httpx.post(base + "/api/project/upload", headers=h, json={"name": "空的", "done": True,
+                                                                          "files": [{"path": ".env", "data": ""}]})
+        assert empty.status_code == 400 and not (uploads / "空的").exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+    with pytest.raises(PermissionError):
+        webui.Desk(lambda ws: None, workspace, store=store, can_add_projects=False,
+                   uploads_dir=uploads).upload_project("x", [])
+
+
+def test_dropped_folder_path_must_match_its_files(workspace, tmp_path_factory):
+    """拖資料夾進來時貼的路徑:裡面要真的有拖進來的那些檔案、大小一樣,才當成「原本的資料夾」加進來
+    (之後「套用」會直接改它,貼錯資料夾就會改到別的地方)。"""
+    import webui
+    real, other = tmp_path_factory.mktemp("pos"), tmp_path_factory.mktemp("other")
+    (real / "app").mkdir()
+    (real / "app" / "server.py").write_text("print('pos')\n", encoding="utf-8")
+    (other / "app").mkdir()
+    (other / "app" / "server.py").write_text("print('something else')\n", encoding="utf-8")
+    desk = webui.Desk(lambda ws: None, workspace)
+    expect = [{"path": "app/server.py", "size": (real / "app" / "server.py").stat().st_size}]
+    with pytest.raises(ValueError, match="不一樣"):
+        desk.add_project(str(other), expect=expect)
+    with pytest.raises(ValueError, match="不一樣"):
+        desk.add_project(str(real), expect=[{"path": "app/missing.py", "size": 1}])
+    proj = desk.add_project(str(real), expect=expect)
+    assert Path(proj["path"]) == real.resolve() and "source" not in proj

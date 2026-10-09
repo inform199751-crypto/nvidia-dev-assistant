@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import logging
@@ -29,7 +30,7 @@ from dataclasses import dataclass, field
 from functools import cache
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable
 from urllib.parse import parse_qs, quote, urlsplit
 
@@ -403,6 +404,7 @@ class Hub:
         self.always: set[str] = set()
         self.on_event: Callable[[str], None] | None = None  # Desk 用來在重要事件後存檔
         self.chat = False  # 「對話」模式(側邊欄切到「對話」開的):不綁專案,見 use_chat()
+        self.copy = False  # 拖進來的資料夾的副本(Desk._make 設定):「套用」改的是副本,不是原本的資料夾
         self.session = self._new_session()
 
     def _new_session(self) -> agent.AgentSession:
@@ -605,7 +607,7 @@ class Hub:
                          "mode": mode, "used": r.role, "steps": r.steps}
             if len(patches) > before:  # 這一輪提了 patch:問要不要套用(沒通過測試也給看,但會警告)
                 patch, passed = patches[-1]
-                self.publish("offer_apply", {"patch": len(patches) - 1, "passed": passed, "team": self.team,
+                self.publish("offer_apply", {"patch": len(patches) - 1, "passed": passed, "team": self.team, "copy": self.copy,
                                              "name": toolbox.patch_label(patch),
                                              "diff": patch.read_text(encoding="utf-8")[:MAX_DIFF_CHARS]})
         except guard.Blocked as e:  # 訪客的問題沒通過安全檢查:模型沒有收到,對話照常
@@ -867,6 +869,20 @@ def parse_images(raw) -> list[dict]:
     return out
 
 
+UPLOAD_MAX_FILE = 5_000_000    # 拖進來的資料夾:一個檔案最大多少(瀏覽器那邊也會先略過)
+UPLOAD_MAX_TOTAL = 50_000_000  # 整個資料夾最多多少
+UPLOAD_MAX_FILES = 2000
+
+
+def upload_path(raw) -> PurePosixPath | None:
+    """拖進來的檔案在資料夾裡的相對路徑;不安全或不該收的回 None:..、磁碟代號 / 絕對路徑、隱藏檔、
+    大型目錄(node_modules、.git…)裡的、機密檔(.env、金鑰)。"""
+    parts = [p for p in str(raw or "").replace("\\", "/").split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." or ":" in p or p.startswith(".") or p in toolbox._SKIP_DIRS for p in parts):
+        return None
+    return None if toolbox._is_secret(Path(parts[-1])) else PurePosixPath(*parts)
+
+
 def _title(text: str) -> str:
     line = " ".join(text.split())
     return line[:28] + ("…" if len(line) > 28 else "") or "新對話"
@@ -881,12 +897,14 @@ class Desk:
 
     def __init__(self, make_hub: Callable[[Path], Hub], default_workspace: Path, store: Path | None = None,
                  can_add_projects: bool = True, docs_dir: Path | None = None, repos_dir: Path | None = None,
-                 embed: knowledge.Embedder | None = None):
+                 embed: knowledge.Embedder | None = None, uploads_dir: Path | None = None):
         self.make_hub = make_hub
         self.store = store
         self.can_add_projects = can_add_projects
         self.docs_dir = docs_dir  # 這個人的文件放哪;None = OUTPUT_DIR
         self.repos_dir = repos_dir  # 從 GitHub 下載的專案放哪;None = 不能下載
+        self.uploads_dir = uploads_dir  # 拖進來的資料夾的副本放哪;None = 不能上傳
+        self.uploads: dict[str, dict] = {}  # 上傳到一半的資料夾:上傳代號 → {dest, name, files, bytes, skipped}
         self.embed = embed  # 知識庫算向量用的(registry.embedder());None = 只能用關鍵字搜尋
         self.kb_meta: list[dict] = []  # 知識庫:[{id, name, path}],存在 store/knowledge.json
         self.kbs: dict[str, knowledge.KnowledgeBase] = {}  # 用到才載入索引
@@ -1003,8 +1021,10 @@ class Desk:
     def project(self, pid: str) -> dict | None:
         return next((p for p in self.projects if p["id"] == pid), None)
 
-    def add_project(self, path: str, name: str = "") -> dict:
-        """加一個專案:電腦上的資料夾,或公開的 GitHub 網址(下載到 repos_dir)。"""
+    def add_project(self, path: str, name: str = "", expect: list | None = None) -> dict:
+        """加一個專案:電腦上的資料夾,或公開的 GitHub 網址(下載到 repos_dir)。
+        expect:拖資料夾進來時,瀏覽器量到的幾個檔案 [{path, size}]。使用者貼的路徑裡要真的有這些檔案、大小一樣,
+        不然就是貼錯資料夾 —— 之後「套用」會直接改這個資料夾,不能改到別的地方。"""
         if not self.can_add_projects:
             raise PermissionError("多人模式的專案由管理者設定")
         if gh := github_repo(path):
@@ -1013,6 +1033,12 @@ class Desk:
         if not p.is_dir():
             raise ValueError(f"找不到資料夾:{path}")
         p = p.resolve()
+        for f in (expect or [])[:50]:
+            rel = upload_path(f.get("path") if isinstance(f, dict) else None)
+            target = p.joinpath(*rel.parts) if rel else None
+            if not (target and target.is_file() and target.stat().st_size == f.get("size")):
+                raise ValueError(f"這個路徑裡的檔案跟拖進來的不一樣(例如 {f.get('path') if isinstance(f, dict) else '?'}),"
+                                 "請確認是同一個資料夾")
         with self.lock:
             if existing := next((x for x in self.projects if Path(x["path"]) == p), None):
                 return existing
@@ -1043,6 +1069,55 @@ class Desk:
             self._save_projects()
             return proj
 
+    def upload_project(self, name: str, files: list, upload: str | None = None, done: bool = False) -> dict:
+        """拖進來的資料夾:瀏覽器拿不到它原本的路徑,只能把檔案內容傳上來,所以存一份副本當專案(10/10 使用者要的,
+        像 Claude 可以把資料夾拖進聊天)。分批上傳:第一批不給 upload、回傳上傳代號,之後每批帶著它,done=True 那批才建專案。
+        路徑不對(..、絕對路徑)、隱藏檔、機密檔、大型目錄裡的、太大的檔案都略過。"""
+        if not (self.can_add_projects and self.uploads_dir):
+            raise PermissionError("這裡不能上傳資料夾")
+        if not isinstance(files, list):
+            raise ValueError("格式錯誤")
+        with self.lock:
+            if upload:
+                up = self.uploads.get(upload)
+                if not up:
+                    raise ValueError("找不到這次上傳(可能程式重開過),請重新拖一次")
+            else:
+                safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name.strip())[:60].strip(". ") or "資料夾"
+                dest, n = self.uploads_dir / safe, 2
+                while dest.exists():
+                    dest, n = self.uploads_dir / f"{safe}-{n}", n + 1
+                dest.mkdir(parents=True)
+                upload = secrets.token_hex(8)
+                up = self.uploads[upload] = {"dest": dest.resolve(), "name": name.strip() or safe,
+                                             "files": 0, "bytes": 0, "skipped": 0}
+        for f in files:
+            rel = upload_path(f.get("path") if isinstance(f, dict) else None)
+            try:
+                data = base64.b64decode(str(f.get("data", "")), validate=True) if rel else b""
+            except ValueError:
+                rel = None
+            if rel is None or len(data) > UPLOAD_MAX_FILE or up["files"] >= UPLOAD_MAX_FILES \
+                    or up["bytes"] + len(data) > UPLOAD_MAX_TOTAL:
+                up["skipped"] += 1
+                continue
+            target = up["dest"].joinpath(*rel.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            up["files"] += 1
+            up["bytes"] += len(data)
+        if not done:
+            return {"upload": upload, "files": up["files"], "skipped": up["skipped"]}
+        with self.lock:
+            self.uploads.pop(upload, None)
+            if not up["files"]:
+                _rmtree(up["dest"])
+                raise ValueError("資料夾裡沒有可以讀的檔案")
+            proj = {"id": f"p{secrets.token_hex(3)}", "name": up["name"], "path": str(up["dest"]), "source": "upload"}
+            self.projects.append(proj)
+            self._save_projects()
+        return {**proj, "files": up["files"], "skipped": up["skipped"]}
+
     def _make(self, meta: dict) -> Hub:
         if meta.get("kind") == "chat":  # 不綁專案:工具裡沒有讀檔的,工作區只是佔位
             hub = self.make_hub(Path(self.project(self.default_pid)["path"]))
@@ -1052,6 +1127,7 @@ class Desk:
         hub = self.make_hub(Path(proj["path"]))
         if proj.get("rules"):
             hub.use_rules(Path(proj["rules"]))
+        hub.copy = proj.get("source") == "upload"  # 拖進來的副本:「套用」改的是副本,畫面上要說清楚
         return hub
 
     def _attach(self, cid: str, hub: Hub) -> Hub:
@@ -1557,10 +1633,17 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                     return self._json(400, {"error": "要搜尋什麼?"})
                 hits, how = knowledge.search_all(desk.ready_knowledge(), q)
                 return self._json(200, {"how": how, "hits": [{**h, "where": knowledge.label(h)} for h in hits]})
-            if path == "/api/project/add":
+            if path == "/api/project/add":  # expect:拖資料夾進來後貼的路徑,要跟拖進來的檔案對得上
+                expect = body.get("expect") if isinstance(body.get("expect"), list) else None
                 try:
-                    return self._json(200, desk.add_project(str(body.get("path", "")), str(body.get("name", ""))))
+                    return self._json(200, desk.add_project(str(body.get("path", "")), str(body.get("name", "")), expect))
                 except (ValueError, PermissionError) as e:
+                    return self._json(400, {"error": str(e)})
+            if path == "/api/project/upload":  # 拖進來的資料夾,分批傳上來存成副本
+                try:
+                    return self._json(200, desk.upload_project(str(body.get("name", "")), body.get("files"),
+                                                               body.get("upload") or None, bool(body.get("done"))))
+                except (ValueError, PermissionError, OSError) as e:
                     return self._json(400, {"error": str(e)})
             hub = self._hub()
             if path == "/api/ask":
@@ -1641,7 +1724,7 @@ def local_desk(registry, quota, tools: list, status: str, model: str, role: str 
                                                        on_event=on_event),
                    status=status, model=model, workspace=workspace)
     return Desk(make_hub, toolbox.WORKSPACE, store=toolbox.OUTPUT_DIR / "state", repos_dir=toolbox.OUTPUT_DIR / "repos",
-                embed=registry.embedder())
+                embed=registry.embedder(), uploads_dir=toolbox.OUTPUT_DIR / "uploads")
 
 
 GUEST_DAILY_TOKENS = 200_000  # 每支訪客手機每天的額度(用的是主人的 API 金鑰)
