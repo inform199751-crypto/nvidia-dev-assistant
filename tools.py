@@ -41,6 +41,7 @@ class Workbench:
     output_dir: Path | None = None  # save_document 存哪裡;None = OUTPUT_DIR(多人模式每人一個子資料夾)
     confirm: Callable[[str, str], bool] | None = None
     workspace: Path | None = None   # 這段對話的工作區(網頁的每個專案不同);None = WORKSPACE
+    rules: Path | None = None       # 專案規則檔;None = 工作區的 ASSISTANT.md(見 agent.rules_file)
 
 
 _bench: ContextVar[Workbench] = ContextVar("workbench", default=Workbench())

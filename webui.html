@@ -294,7 +294,7 @@
     </nav>
     <div id="projects"></div>
     <button type="button" class="nav-btn add-project" id="add-project" hidden>
-      <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6.5V15a1.5 1.5 0 001.5 1.5h11A1.5 1.5 0 0017 15V8a1.5 1.5 0 00-1.5-1.5H10L8.5 4.5h-4A1.5 1.5 0 003 6v.5zM10 9.5v4M8 11.5h4"/></svg>新增專案(資料夾)
+      <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6.5V15a1.5 1.5 0 001.5 1.5h11A1.5 1.5 0 0017 15V8a1.5 1.5 0 00-1.5-1.5H10L8.5 4.5h-4A1.5 1.5 0 003 6v.5zM10 9.5v4M8 11.5h4"/></svg>新增專案(資料夾 / GitHub)
     </button>
   </div>
   <div class="side-user">
@@ -804,7 +804,7 @@ function renderSide() {
     const name = head.appendChild(button("", "project-name", () => {
       sec.classList.toggle("collapsed"); store.set("collapsed:" + p.id, sec.classList.contains("collapsed") ? "1" : "");
     }));
-    name.title = p.path;
+    name.title = p.source ? `${p.source}(下載到 ${p.path})` : p.path;
     name.appendChild(el("span", "", p.name));
     name.insertAdjacentHTML("beforeend", '<svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l5 5 5-5"/></svg>');
     const plus = head.appendChild(button("", "icon-btn", () => newConv(p.id)));
@@ -845,11 +845,18 @@ function renderSide() {
 }
 $("new-chat").onclick = () => newConv();
 $("add-project").onclick = async () => {
-  const path = prompt("專案資料夾的完整路徑(例如 C:\\Users\\User\\Desktop\\my-project):");
+  const path = prompt("專案資料夾的完整路徑(例如 C:\\Users\\User\\Desktop\\my-project),\n或公開的 GitHub 網址(例如 https://github.com/作者/專案):");
   if (!path || !path.trim()) return;
-  const r = await api("/api/project/add", { path });
-  if (!r.ok) return alert(r.data.error || "新增失敗");
-  await loadDesk(); newConv(r.data.id);
+  const btn = $("add-project"), label = btn.innerHTML, github = /github\.com\//i.test(path);
+  btn.disabled = true;
+  if (github) btn.lastChild.textContent = "下載中…(大專案要等一下)";
+  try {
+    const r = await api("/api/project/add", { path });
+    if (!r.ok) return alert(r.data.error || "新增失敗");
+    await loadDesk(); newConv(r.data.id);
+  } finally {
+    btn.disabled = false; btn.innerHTML = label;
+  }
 };
 
 // ---------- 這段對話的狀態、待命數量 ----------
@@ -958,6 +965,8 @@ async function renderPage() {
     box.appendChild(el("p", "lead", "讓小助理照你的習慣做事。"));
     section(box, `專案規則(${r.data.project} 的 ASSISTANT.md)`);
     box.appendChild(el("p", "lead", "每段對話開始時小助理都會先讀,例如「回答都要附檔案路徑」、「測試用 pytest」。"));
+    if (r.data.downloaded) box.appendChild(el("p", "lead",
+      "這是從 GitHub 下載的專案:它自帶的 ASSISTANT.md 是別人寫的,小助理不會照著做;你在這裡加的規則另外存在小助理自己的資料夾。"));
     if (r.data.text) box.appendChild(el("pre", "rules", r.data.text)); else box.appendChild(el("div", "none", "這個專案還沒有規則。"));
     if (r.data.team) box.appendChild(el("p", "lead", "多人模式的專案規則由管理者維護。"));
     else {

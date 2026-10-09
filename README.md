@@ -51,9 +51,9 @@ flowchart LR
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
 | 難度分類器(10/9) | 14 題示範問題(一般 7、難題 7,含「繼續」「好」這種要看前文的短回覆) | 14/14 符合預期;Super 關思考每次 0.6–1.1 秒、約 300 tokens。題目是自己出的,真實準確度要看影子模式的紀錄 |
-| 離線測試 | 假模型,不需金鑰 | 89 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 92 個全過 |
 
-## 實測與審查抓到的 26 個問題
+## 實測與審查抓到的 28 個問題
 
 | # | 問題 | 怎麼發現 | 處理 |
 |---|---|---|---|
@@ -83,6 +83,8 @@ flowchart LR
 | 24 | 草稿、patch 紀錄、上網確認都是全程式共用的變數:多人同時用會看到別人的草稿,上網確認也會跳到別人畫面 | 做多人模式前審查 | 改成每人一個 `Workbench`(ContextVar),每個使用者的執行緒各自設定;測試確認兩人互相看不到 |
 | 25 | 容器裡時區是 UTC,patch 檔名的時間差 8 小時;唯讀掛進來的 repo 擁有者不同,git 會拒絕(dubious ownership) | Docker 實測 | 映像設 `TZ=Asia/Taipei`(裝 tzdata)、`git config --system safe.directory '*'` |
 | 26 | 難度分類器把「test_add 失敗了,找出 bug」判成難題(這題 Super 7 步就修好);開成 on 的話,最常見的改 bug 請求都會丟給慢約 10 倍的 DeepSeek | 分類器實測(10/9) | 判斷標準改成「單一測試或錯誤訊息」算一般、「跨多個檔案且沒有頭緒」才算難題;同 14 題重跑全部符合預期 |
+| 27 | 從 GitHub 加專案用一般的 `git clone`,會自動用電腦上存的 GitHub 登入(系統的 Git Credential Manager、gh 設的 helper):私人 / 公司 repo 會被抓下來,再送到 build.nvidia.com | 做 GitHub 下載前實測(10/9,本機要求帳密的假伺服器 + 會留記號的假 helper:兩個都被叫到) | clone 時清掉 credential helper 和 askpass、關掉終端機提示;同一個實驗兩個 helper 都沒被叫到,私人 repo 0.5 秒就失敗 |
+| 28 | 下載的 repo 自帶 `ASSISTANT.md` 的話會直接進系統提示:別人寫的內容被當成「團隊規則」照做 | 做 GitHub 下載時審查 | 下載的專案規則改存在 repo 外面(`output/repos/<名稱>.rules.md`),repo 自帶的那份只是一般檔案 |
 
 ## 執行
 
@@ -94,6 +96,8 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python webui.py                     # 網頁介面(只開在本機):回答邊產生邊顯示,套用 / 上網前用按鈕確認
                                                   # 側邊欄:新增 / 成品(文件、patch)/ 待命(等你處理的草稿、確認、計畫)/ 自訂 / 更多,
                                                   # 下面是專案和它們的對話(自動存檔,關掉再開還在);新對話首頁有分類的主題建議
+                                                  # 「新增專案」可以貼公開的 GitHub 網址(下載到 output/repos/,只抓公開的);
+                                                  # 開了上網的話,對話裡貼 PR / issue / 檔案網址,會讀成純文字(PR 附 diff)
 .venv/Scripts/python webui.py --lan               # 同一個 Wi-Fi 的手機也能開:終端機印出網址和 6 位數 PIN
 .venv/Scripts/python agent.py                     # 互動模式:一直聊下去,記得前面的內容;@calc.py 附檔、/clear 新對話
                                                   # 修改先放在小助理的草稿上;通過沙箱測試後會問要不要套用,回答 y 才改工作區

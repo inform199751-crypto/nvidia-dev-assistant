@@ -12,8 +12,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import secrets
+import shutil
 import socket
+import stat
+import subprocess
 import sys
 import threading
 import time
@@ -148,6 +152,16 @@ class Hub:
     @property
     def workspace(self) -> Path:
         return self.bench.workspace or toolbox.WORKSPACE
+
+    @property
+    def rules_file(self) -> Path:
+        return self.bench.rules or self.workspace / agent.INSTRUCTIONS_FILE
+
+    def use_rules(self, path: Path) -> None:
+        """改用 path 當專案規則檔(從 GitHub 下載的專案:不信任 repo 自帶的 ASSISTANT.md)。"""
+        self.bench.rules = path
+        with toolbox.using(self.bench):
+            self.session.refresh_system_prompt()
 
     # ---------- 事件 ----------
 
@@ -406,6 +420,54 @@ def docs_in(d: Path) -> list[dict]:
     return [{"name": p.name, "size": p.stat().st_size, "mtime": p.stat().st_mtime} for p in docs]
 
 
+GITHUB_REPO = re.compile(r"(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9._-]+?)(?:\.git)?(?:[/?#].*)?")
+CLONE_DEPTH = 200    # git_log / git_blame 看得到最近的歷史,又不用整包下載
+CLONE_TIMEOUT = 300  # 秒
+
+
+def github_repo(text: str) -> tuple[str, str] | None:
+    """「新增專案」貼的是 GitHub 網址的話,回傳 (作者, 專案);github.com/作者/專案/tree/main/... 也認得。"""
+    m = GITHUB_REPO.fullmatch(text.strip())
+    return (m[1], m[2]) if m and m[2] not in (".", "..") else None
+
+
+def _rmtree(p: Path) -> None:
+    """git 的物件檔是唯讀的,Windows 上要先改權限才刪得掉;刪不掉(還有行程開著)就算了。"""
+    def writable(func, path, _):
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    try:
+        if p.exists():
+            shutil.rmtree(p, onexc=writable)
+    except OSError:
+        logging.warning("刪不掉下載到一半的 %s", p)
+
+
+def clone_public(url: str, dest: Path) -> str:
+    """下載公開的 repo;成功回空字串,不然回錯誤訊息。
+    不用任何登入資訊:清掉 credential helper(含系統的 Git Credential Manager、gh 設的)和 askpass、關掉終端機提示,
+    私人 repo 直接失敗 —— 公司程式碼不會被抓下來、再送到 build.nvidia.com。LFS 大檔不下載(留指標檔)。"""
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_ASKPASS", "SSH_ASKPASS")}
+    env.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never", GIT_LFS_SKIP_SMUDGE="1")
+    cmd = ["git", "-c", "credential.helper=", "-c", "core.askPass=", "clone", "--quiet", "--depth", str(CLONE_DEPTH),
+           "--single-branch", "--no-tags", url, str(dest)]
+    try:
+        r = subprocess.run(cmd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=CLONE_TIMEOUT)
+    except FileNotFoundError:
+        return "找不到 git,請先安裝 Git for Windows"
+    except subprocess.TimeoutExpired:
+        _rmtree(dest)
+        return f"下載超過 {CLONE_TIMEOUT // 60} 分鐘,專案可能太大"
+    if r.returncode == 0:
+        return ""
+    _rmtree(dest)
+    err = r.stderr.strip()
+    if re.search(r"could not read Username|Authentication failed|Repository not found|not found", err, re.I):
+        return "找不到這個公開的 repo。私人 repo 不能下載(模型現在在 build.nvidia.com,公司程式碼不能送過去)"
+    return "下載失敗:" + (err.splitlines()[-1] if err else f"git 結束代碼 {r.returncode}")
+
+
 def _title(text: str) -> str:
     line = " ".join(text.split())
     return line[:28] + ("…" if len(line) > 28 else "") or "新對話"
@@ -419,11 +481,12 @@ class Desk:
     """
 
     def __init__(self, make_hub: Callable[[Path], Hub], default_workspace: Path, store: Path | None = None,
-                 can_add_projects: bool = True, docs_dir: Path | None = None):
+                 can_add_projects: bool = True, docs_dir: Path | None = None, repos_dir: Path | None = None):
         self.make_hub = make_hub
         self.store = store
         self.can_add_projects = can_add_projects
         self.docs_dir = docs_dir  # 這個人的文件放哪;None = OUTPUT_DIR
+        self.repos_dir = repos_dir  # 從 GitHub 下載的專案放哪;None = 不能下載
         self.lock = threading.RLock()
         self.hubs: dict[str, Hub] = {}
         self.meta: dict[str, dict] = {}  # 對話 id → {"id","title","project","created","updated"}
@@ -506,8 +569,11 @@ class Desk:
         return next((p for p in self.projects if p["id"] == pid), None)
 
     def add_project(self, path: str, name: str = "") -> dict:
+        """加一個專案:電腦上的資料夾,或公開的 GitHub 網址(下載到 repos_dir)。"""
         if not self.can_add_projects:
             raise PermissionError("多人模式的專案由管理者設定")
+        if gh := github_repo(path):
+            return self._clone(*gh, name)
         p = Path(path.strip().strip('"')).expanduser()
         if not p.is_dir():
             raise ValueError(f"找不到資料夾:{path}")
@@ -520,6 +586,34 @@ class Desk:
             self._save_projects()
             return proj
 
+    def _clone(self, owner: str, repo: str, name: str = "") -> dict:
+        if not self.repos_dir:
+            raise ValueError("這裡不能從 GitHub 下載專案")
+        url = f"https://github.com/{owner}/{repo}"
+        with self.lock:
+            if existing := next((x for x in self.projects if (x.get("source") or "").lower() == url.lower()), None):
+                return existing
+        dest, n = self.repos_dir / f"{owner}-{repo}", 2
+        while dest.exists():
+            dest, n = self.repos_dir / f"{owner}-{repo}-{n}", n + 1
+        self.repos_dir.mkdir(parents=True, exist_ok=True)
+        if err := clone_public(url + ".git", dest):  # 不拿著鎖下載:大專案要好幾分鐘,其他對話不能卡住
+            raise ValueError(err)
+        dest = dest.resolve()
+        with self.lock:
+            # 規則檔放在 repo 外面:repo 自帶的 ASSISTANT.md 是別人寫的,不能直接進系統提示
+            proj = {"id": f"p{secrets.token_hex(3)}", "name": name.strip() or repo, "path": str(dest),
+                    "source": url, "rules": str(dest.with_name(dest.name + ".rules.md"))}
+            self.projects.append(proj)
+            self._save_projects()
+            return proj
+
+    def _make(self, proj: dict) -> Hub:
+        hub = self.make_hub(Path(proj["path"]))
+        if proj.get("rules"):
+            hub.use_rules(Path(proj["rules"]))
+        return hub
+
     def _attach(self, cid: str, hub: Hub) -> Hub:
         hub.on_event = lambda kind: self.save(cid) if kind in SAVE_ON else None
         self.hubs[cid] = hub
@@ -531,7 +625,7 @@ class Desk:
             cid = f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
             self.meta[cid] = {"id": cid, "title": "新對話", "project": proj["id"],
                               "created": time.time(), "updated": time.time()}
-            self._attach(cid, self.make_hub(Path(proj["path"])))
+            self._attach(cid, self._make(proj))
             return cid
 
     def hub(self, cid: str | None) -> Hub:
@@ -545,7 +639,7 @@ class Desk:
                 return self.hubs[cid]
             meta = self.meta[cid]
             proj = self.project(meta["project"]) or self.project(self.default_pid)  # 專案被拿掉了:放回預設專案
-            hub = self._attach(cid, self.make_hub(Path(proj["path"])))
+            hub = self._attach(cid, self._make(proj))
             try:
                 hub.restore(json.loads((self._conv_dir() / f"{cid}.json").read_text(encoding="utf-8")))
             except (OSError, ValueError, TypeError) as e:
@@ -732,7 +826,7 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                     state = {"workspace": str(hub.workspace), "status": hub.status, "busy": hub.busy,
                              "model": hub.model, "draft": sorted(hub.bench.draft), "team": hub.team,
                              "user": self._user() if team else "", "conv": self._desk().cid_of(hub),
-                             "instructions": (hub.workspace / agent.INSTRUCTIONS_FILE).is_file()}
+                             "instructions": hub.rules_file.is_file()}
                     if lan and self._local():  # 手機連線方式只給這台電腦看
                         state["lan"] = {"urls": [f"http://{ip}:{port}" for ip in lan.ips], "pin": lan.pin}
                     self._json(200, state)
@@ -748,9 +842,10 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             elif url.path == "/api/instructions":  # 自訂:這段對話所在專案的 ASSISTANT.md
                 if self._token_ok(self.headers.get("X-Token")):
                     hub = self._hub()
-                    f = hub.workspace / agent.INSTRUCTIONS_FILE
+                    f = hub.rules_file
                     self._json(200, {"text": f.read_text(encoding="utf-8", errors="replace")[:20000] if f.is_file() else "",
-                                     "project": hub.workspace.name, "team": hub.team})
+                                     "project": hub.workspace.name, "team": hub.team,
+                                     "downloaded": hub.bench.rules is not None})
             elif url.path == "/api/events":
                 if self._token_ok((qs.get("token") or [None])[0]):  # EventSource 不能帶標頭,token 放網址
                     hub, desk = self._hub(), self._desk()
@@ -901,7 +996,7 @@ def local_desk(registry, quota, tools: list, status: str, model: str, role: str 
         return Hub(lambda on_event: agent.AgentSession(registry, quota, role=role, thinking=thinking, tools=tools,
                                                        on_event=on_event),
                    status=status, model=model, workspace=workspace)
-    return Desk(make_hub, toolbox.WORKSPACE, store=toolbox.OUTPUT_DIR / "state")
+    return Desk(make_hub, toolbox.WORKSPACE, store=toolbox.OUTPUT_DIR / "state", repos_dir=toolbox.OUTPUT_DIR / "repos")
 
 
 def main() -> None:
