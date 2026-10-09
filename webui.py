@@ -288,6 +288,28 @@ class Hub:
         if self.on_event:
             self.on_event(kind)
 
+    # ---------- 輸入框的「選模型」 ----------
+
+    def roles(self) -> list[dict]:
+        """選項:自動(依難度和長度選)+ 這個後端有、能用工具的角色。"""
+        reg = self.session.registry
+        out = [{"role": None, "name": "自動", "desc": "依難度和長度自動選"}]
+        for role, desc in ROLE_CHOICES.items():
+            spec = reg.specs.get(role)
+            if spec and spec.supports_tools and reg.backend in spec.available_on:
+                out.append({"role": role, "name": spec.model.split("/")[-1], "desc": desc})
+        return out
+
+    def set_role(self, role: str | None) -> str:
+        """這段對話之後都用 role(None = 自動);回傳錯誤訊息,空字串 = 成功。"""
+        if role not in {r["role"] for r in self.roles()}:
+            return "沒有這個模型"
+        with self.cond:
+            if self.busy:
+                return "HSUAN 還在回答,等這一輪結束再換"
+            self.session.requested_role = role
+        return ""
+
     # ---------- 存檔 / 讀檔(Desk 用:關掉程式再打開,對話還在) ----------
 
     def export(self) -> dict:
@@ -303,7 +325,7 @@ class Hub:
                     events.append(dict(ev))
         return {"messages": messages_to_dict(self.session.messages), "events": events,
                 "tokens_used": self.session.tokens_used, "draft": dict(self.bench.draft),
-                "patches": [[str(p), ok] for p, ok in self.bench.patches]}
+                "patches": [[str(p), ok] for p, ok in self.bench.patches], "role": self.session.requested_role}
 
     def restore(self, data: dict) -> None:
         events = [dict(ev) for ev in data.get("events", [])]
@@ -325,6 +347,8 @@ class Hub:
             with toolbox.using(self.bench):
                 self.session.refresh_system_prompt()  # 今天日期、專案規則用現在的
         self.session.tokens_used = data.get("tokens_used", 0)
+        if "role" in data:  # 輸入框選的模型;模型清單改過、已經沒有這個角色就回到自動
+            self.session.requested_role = data["role"] if data["role"] in {r["role"] for r in self.roles()} else None
         self.bench.draft.update(data.get("draft", {}))
         self.bench.patches.extend((Path(p), ok) for p, ok in data.get("patches", []) if Path(p).is_file())
 
@@ -405,8 +429,10 @@ class Hub:
         with self.cond:
             if self.busy:
                 return False
+            role = self.session.requested_role  # 選好的模型留著
             with toolbox.using(self.bench):
                 self.session = self.new_session(self.publish)
+            self.session.requested_role = role
             self.note, self.plan_waiting, self.escalation = "", False, None
         self.bench.draft.clear()  # 新對話不記得草稿,留著會混淆
         self.publish("clear")
@@ -547,6 +573,8 @@ class Gate:
 
 SAVE_ON = {"user", "done", "error", "applied", "offer_apply", "offer_plan", "plan_answered", "offer_escalate",
            "escalate_answered", "confirm_done", "clear"}
+# 輸入框「選模型」列出的角色(models.yaml)和說明;備援角色不列(主模型掛了才會自動用到)
+ROLE_CHOICES = {"code": "日常,快", "code_deep": "難題,慢但推理強", "long_context": "超長內容(整份文件、很多檔案)"}
 
 
 def doc_path(d: Path, name: str) -> Path | None:
@@ -971,7 +999,8 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                     state = {"workspace": str(hub.workspace), "status": hub.status, "busy": hub.busy,
                              "model": hub.model, "draft": sorted(hub.bench.draft), "team": hub.team,
                              "user": self._user() if team else "", "conv": self._desk().cid_of(hub),
-                             "instructions": hub.rules_file.is_file()}
+                             "instructions": hub.rules_file.is_file(),
+                             "role": hub.session.requested_role, "roles": hub.roles()}
                     if lan and self._local():  # 手機連線方式只給這台電腦看
                         state["lan"] = {"urls": [f"http://{ip}:{port}" for ip in lan.ips], "pin": lan.pin}
                     self._json(200, state)
@@ -1121,6 +1150,12 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             elif path == "/api/clear":
                 ok = hub.clear()
                 self._json(200 if ok else 409, {} if ok else {"error": "還在回答中,等結束再開新對話"})
+            elif path == "/api/role":  # 輸入框的「選模型」:這段對話之後都用它(null = 自動)
+                role = body.get("role")
+                if msg := hub.set_role(str(role) if role else None):
+                    return self._json(409, {"error": msg})
+                desk.save(desk.cid_of(hub) or "")
+                self._json(200, {"role": hub.session.requested_role})
             elif path == "/api/compact":
                 msg = hub.compact()  # 成功時摘要通知會從事件串流送出
                 self._json(200, {"text": msg})

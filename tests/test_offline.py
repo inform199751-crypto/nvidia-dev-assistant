@@ -2082,3 +2082,62 @@ def test_train_models_end_to_end(tmp_path, monkeypatch):
     tokens, seconds = runtime.estimate(F.extract("解釋 calc.py"))
     assert 1000 < tokens < 20000 and seconds > 0
     assert "資料還不夠" in train_models.write_report(out, None, None, 3).read_text(encoding="utf-8")
+
+
+def test_webui_model_picker_per_conversation(workspace, tmp_path_factory):
+    """輸入框的「選模型」:列出自動 + 能用工具的角色(地端才有的 code_writer 不列);選了之後這段對話都用它,
+    「新對話」也保留;存檔重開還在;回答中不能換;null 回到自動。"""
+    import threading
+    import httpx
+    import webui
+    store = tmp_path_factory.mktemp("state")
+    cfg = copy.deepcopy(CONFIG)
+    cfg["roles"]["code_deep"] = {"model": "deepseek-ai/deepseek-v4.1-flash", "context_window": 131072, "max_output": 8192}
+    reg, seen = scripted_registry([ai("一般的答案"), ai("深入的答案"), ai("新對話也用它")], cfg)
+
+    def start():
+        desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                               workspace=ws), workspace, store=store)
+        server = webui.serve(desk, 0, token="t0k")
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return desk, server, f"http://127.0.0.1:{server.server_address[1]}"
+
+    def wait_done(base, cid, n):
+        with httpx.stream("GET", f"{base}/api/events?token=t0k&c={cid}", timeout=10) as r:
+            done = 0
+            for line in r.iter_lines():
+                if line.startswith("data: ") and json.loads(line[6:])["kind"] == "done":
+                    done += 1
+                    if done == n:
+                        return
+
+    desk, server, base = start()
+    h = {"X-Token": "t0k"}
+    try:
+        cid = httpx.post(base + "/api/conv/new", json={}, headers=h).json()["id"]
+        h["X-Conv"] = cid
+        st = httpx.get(base + "/api/state", headers=h).json()
+        assert st["role"] is None and [r["role"] for r in st["roles"]] == [None, "code", "code_deep", "long_context"]
+        httpx.post(base + "/api/ask", json={"text": "第一題"}, headers=h)
+        wait_done(base, cid, 1)
+        assert httpx.post(base + "/api/role", json={"role": "code_writer"}, headers=h).status_code == 409  # 不能用工具
+        assert httpx.post(base + "/api/role", json={"role": "code_deep"}, headers=h).json() == {"role": "code_deep"}
+        httpx.post(base + "/api/ask", json={"text": "第二題"}, headers=h)
+        wait_done(base, cid, 2)
+        httpx.post(base + "/api/clear", json={}, headers=h)
+        httpx.post(base + "/api/ask", json={"text": "新對話"}, headers=h)
+        wait_done(base, cid, 1)
+        assert [role for role, _, _ in seen] == ["code", "code_deep", "code_deep"]
+        desk.hubs[cid].busy = True
+        assert httpx.post(base + "/api/role", json={"role": None}, headers=h).status_code == 409  # 回答中不能換
+        desk.hubs[cid].busy = False
+    finally:
+        server.shutdown()
+        server.server_close()
+    desk, server, base = start()  # 重開:選的模型還在
+    try:
+        assert httpx.get(base + "/api/state", headers=h).json()["role"] == "code_deep"
+        assert httpx.post(base + "/api/role", json={"role": None}, headers=h).json() == {"role": None}
+    finally:
+        server.shutdown()
+        server.server_close()

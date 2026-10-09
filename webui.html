@@ -118,8 +118,20 @@
   main { flex: 1; overflow-y: auto; }
   .log { max-width: 768px; margin: 0 auto; padding: 8px 24px 24px; display: flex; flex-direction: column; gap: 22px; }
 
-  .welcome { text-align: center; margin-top: 12vh; }
-  .welcome h2 { font-size: 28px; font-weight: 600; margin: 0 0 6px; }
+  /* 新對話:圖示、名稱、一句說明、輸入框、快捷按鈕都放在畫面中間;開始對話後輸入框回到最下面 */
+  body.hero .log { min-height: 100%; justify-content: center; }
+  body.hero footer { display: none; }  /* 輸入框在中間時,最下面的提示文字也不顯示 */
+  .welcome { text-align: center; padding-bottom: 6vh; }
+  .welcome .logo { width: 52px; height: 52px; border-radius: 14px; box-shadow: 0 0 0 1px var(--line); }
+  .welcome h1 { font-size: 30px; font-weight: 700; margin: 14px 0 4px; letter-spacing: .02em; }
+  .welcome .tagline { color: var(--muted); font-size: 15px; margin: 0 0 22px; }
+  .welcome .composer { text-align: left; }
+  .welcome textarea { min-height: 56px; }
+  .chips { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 16px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: transparent;
+          border-radius: 999px; padding: 7px 16px; font-size: 14px; color: var(--muted); }
+  .chip:hover { background: var(--hover); color: var(--text); }
+  .chip.more { width: 36px; height: 36px; padding: 0; justify-content: center; }
   .msg { overflow-wrap: anywhere; }
   .msg.user { align-self: flex-end; max-width: 75%; background: var(--user); border-radius: 22px; padding: 10px 18px; white-space: pre-wrap; }
   .msg.user .mode-tag { display: block; font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 2px; }
@@ -221,10 +233,18 @@
 
   /* ---------- 輸入框 ---------- */
   footer { padding: 0 16px 14px; }
-  .composer { max-width: 768px; margin: 0 auto; display: flex; align-items: flex-end; gap: 6px; background: var(--input);
-              border: 1px solid var(--line); border-radius: 28px; padding: 8px 8px 8px 8px; box-shadow: var(--shadow); }
-  textarea { flex: 1; resize: none; border: 0; outline: none; background: transparent; color: var(--text);
-             font: inherit; line-height: 1.6; padding: 6px 4px; max-height: 200px; min-height: 26px; }
+  /* 兩層:上面打字;下面左邊附加檔案、先規劃,右邊選模型、送出 */
+  .composer { max-width: 768px; margin: 0 auto; display: flex; flex-direction: column; gap: 6px; background: var(--input);
+              border: 1px solid var(--line); border-radius: 22px; padding: 12px 10px 10px 14px; box-shadow: var(--shadow); }
+  textarea { width: 100%; resize: none; border: 0; outline: none; background: transparent; color: var(--text);
+             font: inherit; line-height: 1.6; padding: 2px 2px; max-height: 200px; min-height: 28px; }
+  .composer-bar { display: flex; align-items: center; gap: 6px; }
+  .composer-bar .spacer { flex: 1; }
+  .model-pick { display: inline-flex; align-items: center; gap: 4px; background: none; border: 0; border-radius: 8px;
+                padding: 4px 8px; font-size: 14px; font-weight: 600; color: var(--text); max-width: 46vw; }
+  .model-pick span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .model-pick:hover { background: var(--hover); }
+  .popup button small { display: block; color: var(--faint); font-size: 12px; }
   textarea::placeholder { color: var(--faint); }
   .mode-btn { flex-shrink: 0; align-self: center; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line);
               background: transparent; border-radius: 999px; padding: 4px 12px 4px 9px; font-size: 13px; color: var(--muted); }
@@ -249,8 +269,8 @@
     #close-side, #open-side { display: block; }
     .log, .page-in { padding-left: 16px; padding-right: 16px; }
     .msg.user { max-width: 88%; }
-    .welcome { margin-top: 6vh; }
-    .welcome h2 { font-size: 24px; }
+    .welcome h1 { font-size: 26px; }
+    .chip { padding: 6px 12px; font-size: 13px; }
     .kv { grid-template-columns: 1fr; }
     .phone { flex-direction: column; align-items: flex-start; }
     .conv .menu-btn { opacity: 1; }
@@ -306,7 +326,7 @@
     <button type="button" class="icon-btn" id="back" aria-label="回到對話" hidden>
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l-6 6 6 6"/></svg>
     </button>
-    <div class="model"><span style="color:var(--text);font-size:17px;font-weight:600" id="top-title">HSUAN</span><span id="model"></span></div>
+    <div class="model"><span style="color:var(--text);font-size:17px;font-weight:600" id="top-title">HSUAN</span></div>
   </div>
   <main id="scroller">
     <div class="log" id="log" aria-live="polite"></div>
@@ -314,14 +334,24 @@
   <section class="page" id="page" hidden><div class="page-in" id="page-in"></div></section>
   <footer id="composer-area">
     <form id="form" class="composer">
-      <button type="button" class="mode-btn" id="plan-mode" aria-pressed="false" title="開啟後,HSUAN 先只讀不改、交出計畫,你同意才照計畫做">
-        <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5h10M7 10h10M7 15h10M3 5h.01M3 10h.01M3 15h.01"/></svg>
-        先規劃
-      </button>
-      <textarea id="input" rows="1" placeholder="問 HSUAN 任何事…" aria-label="輸入問題"></textarea>
-      <button type="submit" class="send" id="send" aria-label="送出" disabled>
-        <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 16V4M5 9l5-5 5 5"/></svg>
-      </button>
+      <textarea id="input" rows="1" placeholder="請輸入訊息…" aria-label="輸入問題"></textarea>
+      <div class="composer-bar">
+        <button type="button" class="round-btn" id="attach" aria-label="附加專案裡的檔案" title="附加專案裡的檔案(輸入 @檔名)">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>
+        </button>
+        <button type="button" class="mode-btn" id="plan-mode" aria-pressed="false" title="開啟後,HSUAN 先只讀不改、交出計畫,你同意才照計畫做">
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5h10M7 10h10M7 15h10M3 5h.01M3 10h.01M3 15h.01"/></svg>
+          先規劃
+        </button>
+        <span class="spacer"></span>
+        <button type="button" class="model-pick" id="model-pick" aria-label="選擇模型" title="選擇這段對話用的模型">
+          <span id="model-name">自動</span>
+          <svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l5 5 5-5"/></svg>
+        </button>
+        <button type="submit" class="send" id="send" aria-label="送出" disabled>
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 16V4M5 9l5-5 5 5"/></svg>
+        </button>
+      </div>
     </form>
     <div class="hint">用 @檔名 附上專案裡的檔案 · Enter 送出、Shift+Enter 換行 · HSUAN 也會出錯,重要的結果請自己確認</div>
   </footer>
@@ -433,8 +463,8 @@ function button(label, cls, onclick) {
   const b = el("button", cls, label); b.type = "button"; b.onclick = onclick; return b;
 }
 function add(node) {
+  dock();
   const stick = nearBottom();
-  log.querySelector(".welcome")?.remove();
   log.appendChild(node);
   if (stick) node.scrollIntoView({ block: "end" });
   return node;
@@ -444,12 +474,47 @@ const fmtTime = (t) => new Date(t * 1000).toLocaleString("zh-TW", { month: "nume
 let timers = {};
 const later = (key, fn, ms = 300) => { clearTimeout(timers[key]); timers[key] = setTimeout(fn, ms); };
 
-function showEmpty() {  // 新對話:只有一句問候,畫面保持乾淨
+// ---------- 新對話的畫面:圖示、名稱、一句說明、輸入框、快捷按鈕都在中間 ----------
+const form = $("form");
+const icon = (d) => `<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+// [名稱, 圖示, 填進輸入框的開頭(不直接送出,讓你補完), 要不要開「先規劃」]
+const CHIPS = [
+  ["找 bug", icon('<path d="M7 6l-4 4 4 4M13 6l4 4-4 4"/>'), "幫我找出這個錯誤的原因並修正:"],
+  ["解釋程式", icon('<path d="M3 4.5h5a2 2 0 012 2V16a1.5 1.5 0 00-1.5-1.5H3zM17 4.5h-5a2 2 0 00-2 2V16a1.5 1.5 0 011.5-1.5H17z"/>'), "解釋 @"],
+  ["寫文件", icon('<path d="M13.5 3.5l3 3L7 16H4v-3z"/>'), "幫我寫一份文件:"],
+  ["整理摘要", icon('<path d="M7 5h10M7 10h10M7 15h7M3 5h.01M3 10h.01M3 15h.01"/>'), "把下面的內容整理成重點摘要:\n"],
+];
+const MORE_CHIPS = [["上網查資料", "", "上網查:"], ["讀辦公檔案", "", "摘要 @"], ["先規劃再動手", "", "", true]];
+function useChip([, , text, plan]) {
+  if (plan) setPlanMode(true);
+  input.value = text; autosize(); updateSend(); input.focus();
+  input.setSelectionRange(text.length, text.length);
+}
+function showEmpty() {
   log.innerHTML = "";
+  document.body.classList.add("hero");
   const box = el("div", "welcome");
-  box.appendChild(el("h2", "", "今天想做什麼?"));
+  const logo = box.appendChild(el("img", "logo"));
+  logo.src = "/icon-192.png"; logo.alt = "";
+  box.appendChild(el("h1", "", "HSUAN"));
+  box.appendChild(el("p", "tagline", "你的 AI 研發助理:寫程式、整理文件、上網查資料。"));
+  box.appendChild(form);  // 輸入框搬到中間;開始對話時 dock() 搬回最下面
+  const chips = box.appendChild(el("div", "chips"));
+  for (const c of CHIPS) {
+    const b = chips.appendChild(button("", "chip", () => useChip(c)));
+    b.innerHTML = c[1]; b.append(c[0]);
+  }
+  const more = chips.appendChild(button("", "chip more", () => popup(more, MORE_CHIPS.map((c) => [c[0], () => useChip(c)]))));
+  more.innerHTML = icon('<path d="M10 4v12M4 10h12"/>');
+  more.setAttribute("aria-label", "更多"); more.title = "更多";
   log.appendChild(box);
   setBusy(busy);
+}
+function dock() {  // 開始對話:輸入框回到最下面
+  if (!document.body.classList.contains("hero")) return;
+  document.body.classList.remove("hero");
+  $("composer-area").prepend(form);
+  log.querySelector(".welcome")?.remove();
 }
 
 // ---------- 送出 / 狀態 ----------
@@ -688,7 +753,10 @@ async function loadDesk() {
 function popup(anchor, items) {
   document.querySelector(".popup")?.remove();
   const box = el("div", "popup");
-  for (const [label, fn, cls] of items) box.appendChild(button(label, cls || "", () => { box.remove(); fn(); }));
+  for (const [label, fn, cls] of items) {  // label 可以是 [名稱, 說明]:說明用小字放第二行
+    const b = box.appendChild(button(Array.isArray(label) ? label[0] : label, cls || "", () => { box.remove(); fn(); }));
+    if (Array.isArray(label)) b.appendChild(el("small", "", label[1]));
+  }
   document.body.appendChild(box);
   const r = anchor.getBoundingClientRect();
   box.style.left = Math.min(r.left, innerWidth - box.offsetWidth - 8) + "px";
@@ -768,8 +836,8 @@ async function loadState() {
   const r = await api("/api/state");
   if (!r.ok) return;
   state = r.data;
-  $("model").textContent = state.model || "";
   $("who-model").textContent = state.model || "";
+  renderModel();
   setBusy(state.busy);
   if (page === "more" || page === "custom") renderPage();
 }
@@ -965,8 +1033,27 @@ let planMode = false;
 function setPlanMode(on) {
   planMode = on;
   $("plan-mode").setAttribute("aria-pressed", String(on));
-  input.placeholder = on ? "要規劃什麼任務?" : "問 HSUAN 任何事…";
+  input.placeholder = on ? "要規劃什麼任務?" : "請輸入訊息…";
 }
+// 輸入框的「+」:插入 @,接著打專案裡的檔名(問題裡的 @檔名 會自動附上那個檔案)
+$("attach").onclick = () => {
+  const at = input.selectionStart ?? input.value.length;
+  const before = input.value.slice(0, at), sep = before && !/\s$/.test(before) ? " " : "";
+  input.value = before + sep + "@" + input.value.slice(at);
+  autosize(); updateSend(); input.focus();
+  input.setSelectionRange(before.length + sep.length + 1, before.length + sep.length + 1);
+};
+// 輸入框的「選模型」:這段對話之後都用它;自動 = 依難度和長度選
+function renderModel() {
+  const cur = (state.roles || []).find((r) => r.role === (state.role ?? null));
+  $("model-name").textContent = cur ? cur.name : "自動";
+}
+$("model-pick").onclick = () => popup($("model-pick"), (state.roles || []).map((r) => [
+  [(r.role === (state.role ?? null) ? "✓ " : "") + r.name, r.desc], async () => {
+    const x = await api("/api/role", { role: r.role });
+    if (!x.ok) return alert(x.data.error || "換模型失敗");
+    state.role = x.data.role; renderModel();
+  }]));
 $("plan-mode").onclick = () => { setPlanMode(!planMode); input.focus(); };
 async function submit() {
   const text = input.value.trim();
