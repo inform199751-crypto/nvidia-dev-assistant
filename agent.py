@@ -217,8 +217,8 @@ CHAT_PROMPT = """You are HSUAN, an assistant for everyday questions: writing, tr
 CHAT_TOOLS = {"web_search", "fetch_url", "save_document", "search_knowledge"}  # 對話模式只留這些(有開上網才有前兩個,有知識庫才有最後一個)
 
 # 網頁「帳號選單 → 回答語言」:代碼 → 寫進系統提示的名稱。繁中是預設,選它不加任何字(系統提示和 token 都跟以前一樣)
-ANSWER_LANGS = {"zh-TW": "Traditional Chinese (zh-TW)", "en": "English", "ja": "Japanese",
-                "zh-CN": "Simplified Chinese (zh-CN)"}
+# 10/10 拿掉簡體中文:以前選它的人,Desk.lang 會回到繁中(不在這張表裡)
+ANSWER_LANGS = {"zh-TW": "Traditional Chinese (zh-TW)", "en": "English", "ja": "Japanese"}
 
 
 def language_line() -> str:

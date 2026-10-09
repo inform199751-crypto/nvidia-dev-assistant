@@ -13,40 +13,27 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="HSUAN">
-<script>  /* 外觀(預設深色):在畫面畫出來之前就設好,才不會先閃一下白的 */
-  try { document.documentElement.dataset.theme = localStorage.getItem("theme") || "dark"; } catch (e) { /* 不能存就用預設 */ }
+<script>  /* 外觀(預設深色):在畫面畫出來之前就設好,才不會先閃一下白的;10/10 拿掉的淺色、跟著系統回到深色 */
+  try {
+    const t = localStorage.getItem("theme");
+    document.documentElement.dataset.theme = ["gold", "red", "navy", "carbon", "mono", "yellow", "blue"].includes(t) ? t : "dark";
+  } catch (e) { /* 不能存就用預設 */ }
 </script>
 <style>
   /* 版面參考 Claude / ChatGPT 桌面版:左側欄(新增、成品、待命、自訂、更多,下面是專案和對話),中間置中的對話欄。
-     外觀:<html data-theme> = dark(預設,黑底)/ light / system(跟著系統)/ gold(黑金)/ red(賽道紅);在「設定」切換 */
-  :root {
-    color-scheme: light;  /* 捲軸等瀏覽器內建元件跟著深淺色 */
-    --bg: #ffffff; --sidebar: #f9f9f8; --text: #0d0d0d; --muted: #5d5d5d; --faint: #8f8f8f;
-    --line: #e5e5e5; --hover: #ececeb; --active: #e7e6e3; --user: #f4f4f4; --input: #ffffff; --code: #f7f7f8;
-    --btn: #0d0d0d; --btn-ink: #ffffff; --btn-off: #d7d7d7; --accent: #10a37f; --accent-ink: #ffffff;
-    --dot: #e8a03a; --warn: #c2410c; --error: #d93025; --add: #e7f6ec; --del: #fdecec;
-    --shadow: 0 2px 12px rgba(0, 0, 0, .06);
-  }
-  :root[data-theme="dark"] {
-    color-scheme: dark;
+     外觀:<html data-theme> = dark(預設,黑底)或下面幾組配色,在「設定」切換。每組都要給齊全部變數;
+     --accent 是填色(按鈕、進度條),--accent-text 是當文字用的(「測試通過」、「先規劃」、焦點框),沒給就跟 --accent 一樣。
+     參考 awesome-design-md 的車廠分析時只取配色,不用品牌名稱、標誌和專屬字型;主色不能跟錯誤 / 警告同色。
+     10/10 每組都用 WCAG 算過對比:內文 >= 4.5,次要文字和介面 >= 3 */
+  :root, :root[data-theme="dark"] {
+    color-scheme: dark;  /* 捲軸等瀏覽器內建元件跟著深淺色 */
     --bg: #121212; --sidebar: #0a0a0a; --text: #ececec; --muted: #b4b4b4; --faint: #858585;
     --line: #2a2a2a; --hover: #1e1e1e; --active: #262626; --user: #242424; --input: #1c1c1c; --code: #0a0a0a;
     --btn: #ffffff; --btn-ink: #0d0d0d; --btn-off: #4a4a4a; --accent: #10a37f; --accent-ink: #ffffff;
     --dot: #f0b45b; --warn: #f59e0b; --error: #f87171; --add: #10291e; --del: #331717;
     --shadow: 0 2px 12px rgba(0, 0, 0, .5);
   }
-  @media (prefers-color-scheme: dark) {
-    :root[data-theme="system"] {  /* 跟上面深色同一組 */
-      color-scheme: dark;
-      --bg: #121212; --sidebar: #0a0a0a; --text: #ececec; --muted: #b4b4b4; --faint: #858585;
-      --line: #2a2a2a; --hover: #1e1e1e; --active: #262626; --user: #242424; --input: #1c1c1c; --code: #0a0a0a;
-      --btn: #ffffff; --btn-ink: #0d0d0d; --btn-off: #4a4a4a; --accent: #10a37f; --accent-ink: #ffffff;
-      --dot: #f0b45b; --warn: #f59e0b; --error: #f87171; --add: #10291e; --del: #331717;
-      --shadow: 0 2px 12px rgba(0, 0, 0, .5);
-    }
-  }
-  /* 黑金:參考 awesome-design-md 的藍寶堅尼分析 —— 純黑底、金色是唯一的彩色,只用在主要按鈕和選中的地方;
-     警告改成偏紅的橘(原本的橘黃跟金色分不出來)。不用它的名字、牛標誌和專屬字型 */
+  /* 黑金(藍寶堅尼):純黑底、金色是唯一的彩色;警告改成偏紅的橘(原本的橘黃跟金色分不出來) */
   :root[data-theme="gold"] {
     color-scheme: dark;
     --bg: #000000; --sidebar: #0a0a0a; --text: #ffffff; --muted: #b8b8b8; --faint: #7d7d7d;
@@ -55,7 +42,7 @@
     --dot: #ffc000; --dot-ink: #000000; --warn: #ff6a3d; --error: #ff5c5c; --add: #102a17; --del: #3a1414;
     --shadow: 0 2px 14px rgba(0, 0, 0, .7);
   }
-  /* 賽道紅:參考法拉利的分析 —— 深灰黑底、紅色只用在主要按鈕;錯誤改成偏粉的淺紅、警告用黃色,才不會跟主色搞混 */
+  /* 賽道紅(法拉利):深灰黑底、紅色只用在主要按鈕;錯誤改成偏粉的淺紅、警告用黃色 */
   :root[data-theme="red"] {
     color-scheme: dark;
     --bg: #181818; --sidebar: #111111; --text: #ffffff; --muted: #b5b5b5; --faint: #8f8f8f;
@@ -64,13 +51,62 @@
     --dot: #f6e500; --dot-ink: #000000; --warn: #f6e500; --error: #ff8a9a; --add: #102a17; --del: #3a1418;
     --shadow: 0 2px 12px rgba(0, 0, 0, .55);
   }
-  /* 賽道紅的「測試通過」不能用主色:紅色看起來像失敗(10/10 截圖看到),改成綠色 */
-  :root[data-theme="red"] .tag.ok { color: #3ddc84; background: rgba(61, 220, 132, .14); }
-  /* 黑金的形狀:藍寶堅尼是完全直角,這裡改成小圓角(俐落,但不會太硬) */
-  :root[data-theme="gold"] :is(.composer, .msg.user, .card, .rows, .popup, .phone, .none, .plan, .md pre, .tool pre,
-    .diff, .page pre.rules, .field input, .msg-images img, .thumb) { border-radius: 4px; }
-  :root[data-theme="gold"] :is(.pill, .chip, .mode-btn, .tag, .send, .round-btn, .nav-btn, .conv, .model-pick, .icon-btn,
-    .mode-switch, .mode-switch button, .side-user, .popup button) { border-radius: 3px; }
+  /* 深海藍(BMW):深藍灰底、藍色按鈕;藍色當文字太暗,改用淺藍 */
+  :root[data-theme="navy"] {
+    color-scheme: dark;
+    --bg: #1a2129; --sidebar: #141a21; --text: #ffffff; --muted: #c3c9d1; --faint: #8a94a1;
+    --line: #2f3946; --hover: #222b35; --active: #262e38; --user: #262e38; --input: #202832; --code: #141a21;
+    --btn: #1c69d4; --btn-ink: #ffffff; --btn-off: #3b4552; --accent: #1c69d4; --accent-text: #7cb1f7; --accent-ink: #ffffff;
+    --dot: #f59e0b; --dot-ink: #000000; --warn: #f59e0b; --error: #f87171; --add: #13301f; --del: #3a1d22;
+    --shadow: 0 2px 12px rgba(0, 0, 0, .5);
+  }
+  /* 碳纖黑(BMW M):純黑底、碳灰卡片、白色按鈕、藍色重點。不做 M 的三色條紋(那是它的商標) */
+  :root[data-theme="carbon"] {
+    color-scheme: dark;
+    --bg: #000000; --sidebar: #0d0d0d; --text: #ffffff; --muted: #bbbbbb; --faint: #7e7e7e;
+    --line: #262626; --hover: #1a1a1a; --active: #262626; --user: #1a1a1a; --input: #111111; --code: #0d0d0d;
+    --btn: #ffffff; --btn-ink: #000000; --btn-off: #3c3c3c; --accent: #1c69d4; --accent-text: #5aa0ec; --accent-ink: #ffffff;
+    --dot: #f4b400; --dot-ink: #000000; --warn: #f4b400; --error: #ff5c5c; --add: #102a17; --del: #3a1414;
+    --shadow: 0 2px 14px rgba(0, 0, 0, .7);
+  }
+  /* 純黑白(Bugatti):只有黑白,沒有彩色重點;「測試通過」另外用綠色 */
+  :root[data-theme="mono"] {
+    color-scheme: dark;
+    --bg: #000000; --sidebar: #0a0a0a; --text: #ffffff; --muted: #cccccc; --faint: #999999;
+    --line: #262626; --hover: #141414; --active: #1f1f1f; --user: #141414; --input: #0d0d0d; --code: #0d0d0d;
+    --btn: #ffffff; --btn-ink: #000000; --btn-off: #3a3a3a; --accent: #ffffff; --accent-ink: #000000;
+    --dot: #d4a017; --dot-ink: #000000; --warn: #d4a017; --error: #ff6b6b; --add: #102a17; --del: #3a1414;
+    --shadow: 0 2px 14px rgba(0, 0, 0, .7);
+  }
+  /* 黃黑(Renault):白底、黃色按鈕配黑字;黃色當文字看不見,文字一律用黑色 */
+  :root[data-theme="yellow"] {
+    color-scheme: light;
+    --bg: #ffffff; --sidebar: #f7f7f7; --text: #000000; --muted: #333333; --faint: #666666;
+    --line: #e6e6e6; --hover: #f0f0f0; --active: #ebebeb; --user: #f7f7f7; --input: #ffffff; --code: #f7f7f7;
+    --btn: #ffed00; --btn-ink: #000000; --btn-off: #d7d7d7; --accent: #ffed00; --accent-text: #000000; --accent-ink: #000000;
+    --dot: #000000; --dot-ink: #ffed00; --warn: #c2410c; --error: #b42318; --add: #e7f6ec; --del: #fdecec;
+    --shadow: 0 2px 12px rgba(0, 0, 0, .08);
+  }
+  /* 電光藍(Tesla):白底、只有一個藍色 */
+  :root[data-theme="blue"] {
+    color-scheme: light;
+    --bg: #ffffff; --sidebar: #f4f4f4; --text: #171a20; --muted: #393c41; --faint: #5c5e62;
+    --line: #e2e3e4; --hover: #ececec; --active: #e6e6e6; --user: #f4f4f4; --input: #ffffff; --code: #f4f4f4;
+    --btn: #3e6ae1; --btn-ink: #ffffff; --btn-off: #d0d1d2; --accent: #3e6ae1; --accent-ink: #ffffff;
+    --dot: #f59e0b; --dot-ink: #000000; --warn: #b45309; --error: #d93025; --add: #e7f6ec; --del: #fdecec;
+    --shadow: 0 2px 12px rgba(0, 0, 0, .06);
+  }
+  /* 「測試通過」不能用主色的:紅色看起來像失敗(10/10 截圖看到)、白色看不出是好消息 → 改成綠色 */
+  :root[data-theme="red"] .tag.ok, :root[data-theme="mono"] .tag.ok { color: #3ddc84; background: rgba(61, 220, 132, .14); }
+  /* 黃黑:黃色進度條和「回答中」的點在白底上看不到,改成黑色 */
+  :root[data-theme="yellow"] :is(.usage-bar i, .conv .dot.busy) { background: #000000; border-color: #000000; }
+  /* 小圓角:這幾家的按鈕都是直角或接近直角,改成小圓角(俐落,但不會太硬) */
+  :root:is([data-theme="gold"], [data-theme="carbon"], [data-theme="navy"], [data-theme="blue"])
+    :is(.composer, .msg.user, .card, .rows, .popup, .phone, .none, .plan, .md pre, .tool pre,
+        .diff, .page pre.rules, .field input, .msg-images img, .thumb) { border-radius: 4px; }
+  :root:is([data-theme="gold"], [data-theme="carbon"], [data-theme="navy"], [data-theme="blue"])
+    :is(.pill, .chip, .mode-btn, .tag, .send, .round-btn, .nav-btn, .conv, .model-pick, .icon-btn,
+        .mode-switch, .mode-switch button, .side-user, .popup button) { border-radius: 3px; }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
@@ -79,7 +115,7 @@
   }
   button { font: inherit; color: inherit; cursor: pointer; }
   button:disabled { cursor: default; }
-  button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--accent-text, var(--accent)); outline-offset: 2px; }
   svg { display: block; flex-shrink: 0; }
   [hidden] { display: none !important; }
 
@@ -189,7 +225,7 @@
   .chip.more { width: 36px; height: 36px; padding: 0; justify-content: center; }
   .msg { overflow-wrap: anywhere; }
   .msg.user { align-self: flex-end; max-width: 75%; background: var(--user); border-radius: 22px; padding: 10px 18px; white-space: pre-wrap; }
-  .msg.user .mode-tag { display: block; font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 2px; }
+  .msg.user .mode-tag { display: block; font-size: 12px; color: var(--accent-text, var(--accent)); font-weight: 600; margin-bottom: 2px; }
   .msg-images { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
   .msg-images img { display: block; max-width: 180px; max-height: 140px; border-radius: 12px; }
   .msg.bot > :first-child { margin-top: 0; }
@@ -232,14 +268,14 @@
   .plan li { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
   .plan li::before { content: "○"; color: var(--faint); width: 16px; flex-shrink: 0; text-align: center; }
   .plan li.in_progress { font-weight: 600; }
-  .plan li.in_progress::before { content: "◐"; color: var(--accent); }
+  .plan li.in_progress::before { content: "◐"; color: var(--accent-text, var(--accent)); }
   .plan li.done { color: var(--faint); text-decoration: line-through; }
-  .plan li.done::before { content: "✓"; color: var(--accent); }
+  .plan li.done::before { content: "✓"; color: var(--accent-text, var(--accent)); }
 
   .card { border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; background: var(--bg); box-shadow: var(--shadow); }
   .card .q { margin-bottom: 10px; overflow-wrap: anywhere; line-height: 1.6; }
   .tag { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 8px; margin-right: 6px; vertical-align: 1px; }
-  .tag.ok { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+  .tag.ok { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-text, var(--accent)); }
   .tag.warn { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
   .card code { background: var(--code); border-radius: 6px; padding: 1px 6px; font: 14px ui-monospace, Consolas, monospace; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -296,7 +332,7 @@
   textarea { width: 100%; resize: none; border: 0; outline: none; background: transparent; color: var(--text);
              font: inherit; line-height: 1.6; padding: 2px 2px; max-height: 200px; min-height: 28px; }
   .composer-bar { display: flex; align-items: center; gap: 6px; }
-  .composer.drop { border-color: var(--accent); }  /* 圖片拖進來的時候 */
+  .composer.drop { border-color: var(--accent-text, var(--accent)); }  /* 圖片拖進來的時候 */
   /* 還沒送出的圖片:縮圖 + 右上角的 × */
   .thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
   .thumbs:empty { display: none; }
@@ -324,7 +360,7 @@
   .mode-btn { flex-shrink: 0; align-self: center; display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line);
               background: transparent; border-radius: 999px; padding: 4px 12px 4px 9px; font-size: 13px; color: var(--muted); }
   .mode-btn:hover { background: var(--hover); color: var(--text); }
-  .mode-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .mode-btn[aria-pressed="true"] { border-color: var(--accent-text, var(--accent)); color: var(--accent-text, var(--accent)); background: color-mix(in srgb, var(--accent) 10%, transparent); }
   .round-btn { flex-shrink: 0; align-self: center; width: 32px; height: 32px; border-radius: 50%; border: 0; background: transparent;
                color: var(--muted); display: grid; place-items: center; }
   .round-btn:hover { background: var(--hover); color: var(--text); }
@@ -469,12 +505,15 @@ const kindOf = (c) => (c && c.kind) || "code";
 
 const theme = () => document.documentElement.dataset.theme || "dark";
 // 外觀選項:[代碼, 名稱];標題列(桌面版、手機)的顏色跟側邊欄一樣
-const THEMES = [["dark", "深色"], ["light", "淺色"], ["system", "跟著系統"], ["gold", "黑金"], ["red", "賽道紅"]];
-const BAR_COLORS = { gold: "#0a0a0a", red: "#111111" };
+// 外觀:深色 + 參考車廠官網的配色(10/10 拿掉淺色、跟著系統);標題列(桌面版、手機)的顏色跟側邊欄一樣
+const THEMES = [["dark", "深色"], ["gold", "黑金"], ["red", "賽道紅"], ["navy", "深海藍"], ["carbon", "碳纖黑"],
+                ["mono", "純黑白"], ["yellow", "黃黑"], ["blue", "電光藍"]];
+const BAR_COLORS = { dark: "#0a0a0a", gold: "#0a0a0a", red: "#111111", navy: "#141a21", carbon: "#0d0d0d", mono: "#0a0a0a",
+                     yellow: "#f7f7f7", blue: "#f4f4f4" };
 function setTheme(t) {
+  if (!BAR_COLORS[t]) t = "dark";
   document.documentElement.dataset.theme = t; store.set("theme", t);
-  const dark = t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
-  document.querySelector('meta[name="theme-color"]').content = BAR_COLORS[t] || (dark ? "#0a0a0a" : "#f9f9f8");
+  document.querySelector('meta[name="theme-color"]').content = BAR_COLORS[t];
 }
 
 function api(path, body, convId) {
@@ -1036,7 +1075,7 @@ document.querySelectorAll(".nav-btn[data-page]").forEach((b) => (b.onclick = () 
 $("back").onclick = closePage;
 
 // ---------- 帳號選單(點左下角):設定、回答語言、說明、手機與訪客、更新紀錄、了解更多、登出 ----------
-const LANGS = [["zh-TW", "繁體中文"], ["en", "English"], ["ja", "日本語"], ["zh-CN", "简体中文"]];
+const LANGS = [["zh-TW", "繁體中文"], ["en", "English"], ["ja", "日本語"]];  // 10/10 拿掉簡體中文
 const langName = () => (LANGS.find(([c]) => c === state.lang) || LANGS[0])[1];
 const MI = (d) => `<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 const MENU_ICONS = {
@@ -1089,7 +1128,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/10", ["設定 → 外觀多了兩種配色:黑金(純黑底、金色重點、小圓角)和賽道紅(深灰黑底、紅色重點)",
+  ["10/10", ["設定 → 外觀多了 7 種參考車廠官網的配色:黑金、賽道紅、深海藍、碳纖黑、純黑白、黃黑、電光藍;拿掉淺色、跟著系統",
+             "回答語言拿掉簡體中文(以前選它的會回到繁體中文)",
              "上網讀到的網頁和訪客的問題先經過安全檢查(Nemotron 3.5 Content Safety),藏著要 AI 照做的指令會被擋下",
              "讀得懂掃描的 PDF 了:沒有文字層的頁交給看圖模型讀,知識庫也收得進去",
              "設定的「手機與訪客」把配對過的裝置一筆一筆列出來(iPhone · 主畫面 App、Windows · Chrome…),各自可以取消"]],
@@ -1628,7 +1668,6 @@ $("close-side").onclick = closeSide;
 $("scrim").onclick = closeSide;
 
 setTheme(theme());
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => setTheme(theme()));  // 跟著系統時,系統切換也跟著變
 loadDesk();
 loadPending();
 setInterval(() => {  // 別段對話在背景跑完、有事等你,側邊欄也會更新;「更多」開著時更新配對的手機數

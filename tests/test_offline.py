@@ -2890,3 +2890,17 @@ def test_scanned_pdf_tokens_count_for_the_conversation(workspace, monkeypatch):
     assert [role for role, _, _ in seen] == ["vision", "code"] and "第一季營收 120 萬" in seen[-1][1][-1].content
     assert quota.used("cli") == session.tokens_used == 600 and r.answer == "營收是 120 萬"
     assert agent._billing.get() is None  # 這一輪結束就不再算給它
+
+
+def test_removed_simplified_chinese_falls_back_to_traditional(workspace, tmp_path_factory):
+    """10/10 使用者要求拿掉簡體中文:以前存了 zh-CN 的人回到繁中(系統提示不加語言那行),也不能再選它。"""
+    import webui
+    store = tmp_path_factory.mktemp("state")
+    (store / "settings.json").write_text('{"lang": "zh-CN"}', encoding="utf-8")
+    reg, _ = scripted_registry([])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=store)
+    assert desk.lang == "zh-TW"
+    assert "Answer language" not in desk.hub(desk.new_conversation()).session.messages[0].content
+    with pytest.raises(ValueError):
+        desk.set_lang("zh-CN")
