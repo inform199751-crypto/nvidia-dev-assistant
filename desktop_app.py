@@ -35,7 +35,7 @@ CLOSED_AFTER = 4     # 之後連續 4 次(20 秒)都沒有視窗連著,才當作
 
 # ---------- 圖示:純 Python 畫,不用另外裝套件 ----------
 
-GREEN, WHITE = (16, 163, 127), (255, 255, 255)
+BLACK, WHITE = (13, 13, 13), (255, 255, 255)
 
 
 def _rounded(x: float, y: float, x0: float, y0: float, x1: float, y1: float, r: float) -> bool:
@@ -51,15 +51,15 @@ def _in_triangle(x, y, a, b, c) -> bool:
 
 
 def _color(x: float, y: float):
-    """座標 0~1:綠色圓角方塊,中間白色對話泡泡,泡泡裡三個綠點。回傳 (r,g,b) 或 None(透明)。"""
+    """座標 0~1:黑色圓角方塊,中間白色對話泡泡,泡泡裡三個黑點。回傳 (r,g,b) 或 None(透明)。"""
     if not _rounded(x, y, 0.02, 0.02, 0.98, 0.98, 0.22):
         return None
     for dx in (0.36, 0.50, 0.64):
         if (x - dx) ** 2 + (y - 0.45) ** 2 <= 0.048 ** 2:
-            return GREEN
+            return BLACK
     if _rounded(x, y, 0.18, 0.24, 0.82, 0.66, 0.13) or _in_triangle(x, y, (0.30, 0.62), (0.27, 0.80), (0.46, 0.64)):
         return WHITE
-    return GREEN
+    return BLACK
 
 
 def _png(size: int) -> bytes:
