@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -99,14 +99,14 @@ class ModelRegistry:
 
     # ---------- 建立模型 ----------
 
-    def chat(self, role: str, *, thinking: bool | None = None) -> BaseChatModel:
-        """thinking=None 用伺服器預設;True/False 明確開關。
+    def chat(self, role: str, *, thinking: bool | None = None, **overrides) -> BaseChatModel:
+        """thinking=None 用伺服器預設;True/False 明確開關。overrides 暫時改 spec 欄位(例如分類器用短逾時、短輸出)。
 
         開關參數寫在 YAML 而不是靠套件的 with_thinking_mode():
         1. 地端 NIM 若用自訂的 served model name,套件查不到內建模型表,with_thinking_mode 會默默失效;
         2. with_thinking_mode 會整包覆蓋 chat_template_kwargs,把 extra_body 裡的其他鍵蓋掉。
         """
-        spec = self.spec(role)
+        spec = replace(self.spec(role), **overrides)
         if self.backend not in spec.available_on:
             raise ValueError(f"{role}({spec.model})在 {self.backend} 上沒有提供,只能用於:{', '.join(spec.available_on)}")
         if self.backend == "nim":

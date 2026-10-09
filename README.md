@@ -4,7 +4,7 @@
 改走 NVIDIA 生態系:開發期接 API Catalog(build.nvidia.com),正式環境換成地端 NIM 容器,**程式碼不用改**。
 
 重點不在「接上了模型」,而在:**依任務與 token 數動態切換模型、控制 token 與顯存、讓 agent 只能在沙箱裡動手**,
-而且每個設計都用真模型實測過。實測與審查抓到 25 個問題,見下方。
+而且每個設計都用真模型實測過。實測與審查抓到 26 個問題,見下方。
 
 ## 架構
 
@@ -15,6 +15,7 @@ flowchart LR
     G --> R{"路由<br/>llm_registry"}
     R -->|放得下| S["code<br/>Nemotron 3 Super 120B"]
     R -->|"超過約 11 萬 tokens"| L["long_context<br/>Nemotron 3 Ultra 550B · 1M"]
+    R -->|"難題(分類器判斷,預設影子模式只記錄)"| D
     S -. 失敗備援 .-> D["code_deep<br/>DeepSeek v4.1-flash"]
     L -. 失敗備援 .-> S2["Super(1M)"]
     A --> T[工具]
@@ -29,6 +30,8 @@ flowchart LR
 |---|---|
 | `models.yaml` | 模型註冊表。換模型、換 catalog / 地端都只改這裡 |
 | `llm_registry.py` | 依角色建模型、備援鏈、依 token 數路由 |
+| `difficulty.py` | 依難度選模型:每輪先請 Super(關思考)判斷一般 / 難題,難題改用 DeepSeek;分類器只看問題、上一輪摘要和附檔名稱,失敗就照預設;每輪記一行到 `output/routing_log.jsonl` |
+| `report_routing.py` | 讀上面的紀錄產生報表:判斷分布、分類器成本、各模型實際步數 / tokens / 秒數、判斷為難題的題目給人工抽查 |
 | `agent.py` | agent 迴圈:每步送出前清舊思考 → 瘦身 → 放不下就升級模型 → 檢查配額;`AgentSession` 支援多輪互動 |
 | `token_guard.py` | token 估算(實測校準)、截斷、歷史瘦身、大檔大綱、每人配額 |
 | `tools.py` | 列檔 / 讀檔 / 搜尋 / git 紀錄 / 沙箱測試與指令 / 提 patch / 存文件,含機密檔封鎖 |
@@ -47,9 +50,10 @@ flowchart LR
 | 模型冒煙測試 | 三顆模型 × 回應 / 開思考 / 關思考 / tool calling | 全過;Super 每次 0.4–2.6 秒,DeepSeek 18–27 秒 |
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
-| 離線測試 | 假模型,不需金鑰 | 81 個全過 |
+| 難度分類器(10/9) | 14 題示範問題(一般 7、難題 7,含「繼續」「好」這種要看前文的短回覆) | 14/14 符合預期;Super 關思考每次 0.6–1.1 秒、約 300 tokens。題目是自己出的,真實準確度要看影子模式的紀錄 |
+| 離線測試 | 假模型,不需金鑰 | 89 個全過 |
 
-## 實測與審查抓到的 25 個問題
+## 實測與審查抓到的 26 個問題
 
 | # | 問題 | 怎麼發現 | 處理 |
 |---|---|---|---|
@@ -78,6 +82,7 @@ flowchart LR
 | 23 | 執行計畫時模型單獨呼叫 update_plan,15 步裡約 6 步只在更新進度,做到一半就停(13.2 萬 tokens) | 規劃模式實測(10/9) | 要求跟下一個動作一起呼叫、計畫限 3–6 步、執行模式上限 25 步;同一題重跑 12 步全部完成(9.4 萬 tokens) |
 | 24 | 草稿、patch 紀錄、上網確認都是全程式共用的變數:多人同時用會看到別人的草稿,上網確認也會跳到別人畫面 | 做多人模式前審查 | 改成每人一個 `Workbench`(ContextVar),每個使用者的執行緒各自設定;測試確認兩人互相看不到 |
 | 25 | 容器裡時區是 UTC,patch 檔名的時間差 8 小時;唯讀掛進來的 repo 擁有者不同,git 會拒絕(dubious ownership) | Docker 實測 | 映像設 `TZ=Asia/Taipei`(裝 tzdata)、`git config --system safe.directory '*'` |
+| 26 | 難度分類器把「test_add 失敗了,找出 bug」判成難題(這題 Super 7 步就修好);開成 on 的話,最常見的改 bug 請求都會丟給慢約 10 倍的 DeepSeek | 分類器實測(10/9) | 判斷標準改成「單一測試或錯誤訊息」算一般、「跨多個檔案且沒有頭緒」才算難題;同 14 題重跑全部符合預期 |
 
 ## 執行
 
@@ -97,13 +102,27 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python agent.py "test_add 失敗了,找出 bug 並提出修正" -f calc.py
 .venv/Scripts/python agent.py "為這個專案寫技術文件" -f a.py -f b.py --whole   # 整檔 → 自動走長文本模型
 .venv/Scripts/python agent.py "這個 race condition 的根因" -f x.py --role code_deep --think on
+.venv/Scripts/python report_routing.py --days 7   # 依難度選模型的報表(影子模式累積的紀錄)
 .venv/Scripts/python -m pytest -q                 # 離線測試,不需金鑰
 ```
+
+### 依難度選模型(預設影子模式)
+
+長度路由只管「放不放得下」;`difficulty.py` 每輪開始再問一次「難不難」。作法參考 jev-codex-router,
+但它把每一步的任務摘要送到外部的 TypeSafe 做判斷,這裡改用自己的模型,**資料不出公司,地端 NIM 也一樣能用**:
+
+- `models.yaml` 的 `routing.difficulty.mode`:`off` 不判斷、`shadow` 只記錄「本來會選哪個」(實際仍用 Super)、`on` 照判斷切換。
+- 分類器只看這次的問題、上一個問題和回答的結尾、附檔名稱(不看檔案內容和工具輸出)。一輪只判斷一次,照計畫執行沿用規劃那輪的判斷。
+- 分類失敗(逾時 20 秒、伺服器掛掉、回答看不懂)就照預設模型回答,不擋這一題;`--role` 指定時不判斷。
+- 緊急關閉不用改設定檔:環境變數 `DIFFICULTY_ROUTING=off`。
+- 每輪一行記在 `output/routing_log.jsonl`(只留問題開頭 80 字,不記使用者;8 MB 輪替)。`report_routing.py` 會依判斷分組比較步數、tokens、秒數;
+  判斷為難題的那組如果明顯比較吃力,再人工抽查列出的題目,確認準了才改 `on`。
 
 ## 還沒做 / 限制
 
 - **地端 NIM 沒實際部署過**:需要 GPU 伺服器。Ultra 550B 要 8×B200/H200 等級,建議第一階段用 Super 120B(FP8 約 2×H100)。
 - 多人部署(`deploy/`)已在本機 Docker 實測(兩個身分同時問、Redis 額度正確、唯讀工作區提 patch),但**還沒在公司 SSO 和 GPU 主機上實際跑過**;對話存在每人的資料夾,多台伺服器要設 sticky session。
+- 依難度選模型還在影子模式:分類器只用 14 題自己出的題目測過,每輪多約 1 秒、300 tokens;要累積真實紀錄、抽查準確後才改 `on`。
 - 模型清單會汰換,上線前用 `ChatNVIDIA.get_available_models()` 或 `smoke_test.py` 再對一次。
 - `requirements.txt` 鎖在實測過的版本:程式依賴 langchain-nvidia-ai-endpoints 的內部行為,升版前先跑離線測試和 `smoke_test.py`。
 - 地端的 `nim_context_window`(Ultra / Super 備援 256K)是規劃值,部署時 `NIM_MAX_MODEL_LEN` 要設成一樣。

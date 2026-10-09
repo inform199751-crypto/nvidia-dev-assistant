@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from langchain_core.runnables import Runnable
 from llm_registry import ModelRegistry
 from token_guard import (TAIPEI, TokenQuota, compact_history, estimate_tokens, make_quota, message_tokens,
                          outline, strip_stale_reasoning, strip_think_text, tool_tokens, truncate_middle)
+import difficulty
 import documents
 import tools as toolbox
 import web
@@ -59,6 +61,7 @@ class AgentResult:
     role: str
     steps: int
     tokens_used: int
+    hit_limit: bool = False  # 做到步數上限還沒完成
 
 
 def _numbered(text: str) -> str:
@@ -224,6 +227,7 @@ class AgentSession:
         self.scale = 1.0  # 估算偏低時,用伺服器回報的實際 input tokens 往上修正
         self.tokens_used = 0  # 整段對話累計
         self.on_event = on_event
+        self.decision: difficulty.Decision | None = None  # 這一輪的難度判斷;照計畫執行時沿用規劃那輪的
 
     def _emit(self, kind: str, **data) -> None:
         if self.on_event:
@@ -299,12 +303,32 @@ class AgentSession:
         mode="execute":照上一輪的計畫做,多給 update_plan 讓它回報進度。
         """
         self._maybe_compact()  # 要在記下 start 之前:摘要會把訊息變短
-        start = len(self.messages)
+        start, began = len(self.messages), time.monotonic()
+        d = self.decision = self._route(task, list(attachments), mode)
+
+        def record(**kw) -> None:
+            difficulty.record(d, task=task, turn=mode, ms=int((time.monotonic() - began) * 1000), **kw)
+
         try:
-            return self._ask(task, list(attachments), mode)
-        except BaseException:
+            r = self._ask(task, list(attachments), mode, d.role)
+        except BaseException as e:
             del self.messages[start:]
+            record(used=None, steps=0, tokens=None, outcome=type(e).__name__)
             raise
+        r.tokens_used += d.tokens  # 分類器也是真的用量
+        record(used=r.role, steps=r.steps, tokens=r.tokens_used, outcome="max_steps" if r.hit_limit else "done")
+        return r
+
+    def _route(self, task: str, attachments: list[str], mode: str) -> difficulty.Decision:
+        """這一輪用一般還是難題模型。一輪只判斷一次(中途不換,換模型要重送整段對話);照計畫執行沿用規劃那輪。"""
+        routing = self.registry.routing
+        if self.requested_role:
+            return difficulty.skipped(routing, "manual", self.requested_role)
+        if mode == "execute" and self.decision:
+            return difficulty.skipped(routing, "plan", self.decision.pick, self.decision.reason)
+        d = difficulty.classify(self.registry, self.quota, self.user, self.messages, task, attachments)
+        self.tokens_used += d.tokens
+        return d
 
     def _tools_for(self, mode: str) -> list:
         if mode == "plan":
@@ -313,7 +337,8 @@ class AgentSession:
             return self.tools + [toolbox.update_plan]
         return self.tools
 
-    def _ask(self, task: str, attachments: list[str], mode: str = "normal") -> AgentResult:
+    def _ask(self, task: str, attachments: list[str], mode: str = "normal", routed: str | None = None) -> AgentResult:
+        """routed:難度判斷選的角色(None = 照預設);使用者指定的角色優先。"""
         reg, limits = self.registry, self.registry.limits
         tools = self._tools_for(mode)
         tool_map = {t.name: t for t in tools}
@@ -322,7 +347,11 @@ class AgentSession:
             task += PLAN_MODE_NOTE
         self.messages.append(HumanMessage(
             build_user_prompt(task, attachments, limits["inline_file_max_tokens"], self.whole)))
-        role = reg.pick_role(prompt_tokens=self.sized(), needs_tools=bool(tools), requested=self.requested_role)
+        role = reg.pick_role(prompt_tokens=self.sized(), needs_tools=bool(tools),
+                             requested=self.requested_role or routed)
+        if not self.requested_role and routed and role == routed != reg.routing["default_role"]:
+            self._notice("判斷這題比較難(%s),改用 %s(%s)", self.decision.reason or "分類器判斷", role,
+                         reg.spec(role).model.split("/")[-1])
         llm = reg.agent_model(role, tools, thinking=self.thinking)
         used = 0
         max_steps = limits.get("max_execute_steps", 25) if mode == "execute" else limits["max_agent_steps"]
@@ -379,7 +408,7 @@ class AgentSession:
                     out = f"錯誤:{bad.get('name')} 的參數不是合法 JSON,請修正後重送。\n{bad.get('error') or ''}"
                     self.messages.append(ToolMessage(truncate_middle(out, limits["tool_output_max_tokens"]),
                                                      tool_call_id=bad.get("id") or ""))
-        return AgentResult(f"[已達 {max_steps} 步上限,停止。請把問題拆小再問]", role, max_steps, used)
+        return AgentResult(f"[已達 {max_steps} 步上限,停止。請把問題拆小再問]", role, max_steps, used, hit_limit=True)
 
 
 def run_agent(task: str, *, registry: ModelRegistry, quota: TokenQuota, user: str = "cli",

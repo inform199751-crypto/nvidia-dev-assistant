@@ -972,6 +972,144 @@ def test_malformed_tool_call_is_fed_back_not_final(workspace):
     assert "不是合法 JSON" in feedback.content and "delimiter" in feedback.content
 
 
+# ---------- 依難度選模型 ----------
+
+def difficulty_config(mode: str) -> dict:
+    cfg = copy.deepcopy(CONFIG)
+    cfg["roles"]["code_deep"] = {"model": "deepseek-ai/deepseek-v4.1-flash", "context_window": 131072,
+                                 "max_output": 8192}
+    cfg["routing"]["difficulty"] = {"mode": mode, "classifier_role": "code", "hard_role": "code_deep"}
+    return cfg
+
+
+@pytest.fixture
+def routing_log(tmp_path_factory, monkeypatch):
+    out = tmp_path_factory.mktemp("output")
+    monkeypatch.setattr(tools, "OUTPUT_DIR", out)
+    monkeypatch.delenv("DIFFICULTY_ROUTING", raising=False)
+    return out / "routing_log.jsonl"
+
+
+def log_entries(path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_difficulty_shadow_logs_but_keeps_default_model(workspace, routing_log):
+    """影子模式:分類器說難題,這一輪仍用預設模型;分類器只看到檔名(不是內容)、沒綁工具,它的 tokens 也算進用量。"""
+    from difficulty import CLASSIFY_PROMPT
+    (workspace / "calc.py").write_text("SECRET_BODY = 1\n", encoding="utf-8")
+    reg, seen = scripted_registry([ai('{"level": "hard", "reason": "跨檔除錯"}', tokens=40), ai("答案")],
+                                  difficulty_config("shadow"))
+    r = run_agent("找出 race condition", registry=reg, quota=TokenQuota(10**6, 2), attachments=["calc.py"])
+    (_, to_classifier, classifier_tools), (main_role, to_main, _) = seen
+    assert to_classifier[0].content == CLASSIFY_PROMPT and classifier_tools is None
+    assert "calc.py" in to_classifier[1].content and "SECRET_BODY" not in to_classifier[1].content
+    assert main_role == "code" and "SECRET_BODY" in to_main[-1].content
+    assert (r.role, r.tokens_used) == ("code", 140)
+    [entry] = log_entries(routing_log)
+    assert {k: entry[k] for k in ("mode", "by", "pick", "reason", "used", "steps", "tokens", "outcome", "task")} == {
+        "mode": "shadow", "by": "classifier", "pick": "code_deep", "reason": "跨檔除錯", "used": "code",
+        "steps": 1, "tokens": 140, "outcome": "done", "task": "找出 race condition"}
+
+
+def test_difficulty_on_switches_hard_questions_and_says_so(workspace, routing_log):
+    reg, seen = scripted_registry([ai('好的。{"level": "hard", "reason": "並行問題"}'), ai("深入的答案"),
+                                   ai('{"level": "normal", "reason": "簡單說明"}'), ai("簡單的答案")],
+                                  difficulty_config("on"))
+    events = []
+    s = AgentSession(reg, TokenQuota(10**6, 2), on_event=lambda kind, data: events.append((kind, data)))
+    assert s.ask("偶發的 race condition").role == "code_deep"
+    assert s.ask("add 是做什麼的").role == "code"
+    assert [role for role, _, _ in seen] == ["code", "code_deep", "code", "code"]
+    notices = [d["text"] for k, d in events if k == "notice"]
+    assert len(notices) == 1 and "並行問題" in notices[0] and "code_deep" in notices[0]
+    assert [e["used"] for e in log_entries(routing_log)] == ["code_deep", "code"]
+
+
+def test_difficulty_classifier_failure_falls_back_to_default(workspace, routing_log):
+    """分類器掛掉或回答看不懂:照預設模型回答,錯誤記在紀錄裡,不擋這一題。"""
+    reg, seen = scripted_registry([RuntimeError("503 overloaded"), ai("答案一"), ai("我覺得很難"), ai("答案二")],
+                                  difficulty_config("on"))
+    s = AgentSession(reg, TokenQuota(10**6, 2))
+    assert (s.ask("問題一").answer, s.ask("問題二").answer) == ("答案一", "答案二")
+    assert [role for role, _, _ in seen] == ["code"] * 4
+    first, second = log_entries(routing_log)
+    assert first["pick"] is None and "503" in first["error"] and first["used"] == "code"
+    assert second["pick"] is None and "看不懂" in second["error"]
+
+
+def test_difficulty_skipped_for_manual_role_and_kill_switch(workspace, routing_log, monkeypatch):
+    """--role 指定時不問分類器(紀錄記 manual);DIFFICULTY_ROUTING=off 是緊急開關:YAML 寫 on 也整個關掉、不寫紀錄。"""
+    reg, seen = scripted_registry([ai("指定的"), ai("關掉的")], difficulty_config("on"))
+    AgentSession(reg, TokenQuota(10**6, 2), role="code_deep").ask("問題")
+    [entry] = log_entries(routing_log)
+    assert (entry["by"], entry["pick"], entry["used"], entry["classify_tokens"]) == ("manual", "code_deep", "code_deep", 0)
+    monkeypatch.setenv("DIFFICULTY_ROUTING", "off")
+    AgentSession(reg, TokenQuota(10**6, 2)).ask("問題")
+    assert [role for role, _, _ in seen] == ["code_deep", "code"]
+    assert len(log_entries(routing_log)) == 1
+
+
+def test_difficulty_judged_once_for_plan_and_execute(workspace, routing_log):
+    """照計畫執行沿用規劃那輪的判斷,不再問分類器(一個任務中途換模型要重送整段對話,也容易前後不一致)。"""
+    from agent import EXECUTE_TASK
+    reg, seen = scripted_registry([ai('{"level": "hard", "reason": "跨檔重構"}'), ai("計畫:1. 拆模組"),
+                                   ai("照做了")], difficulty_config("on"))
+    s = AgentSession(reg, TokenQuota(10**6, 2))
+    s.ask("把 billing 拆成三個模組", mode="plan")
+    s.ask(EXECUTE_TASK, mode="execute")
+    assert [role for role, _, _ in seen] == ["code", "code_deep", "code_deep"]
+    assert [(e["turn"], e["by"], e["pick"]) for e in log_entries(routing_log)] == [
+        ("plan", "classifier", "code_deep"), ("execute", "plan", "code_deep")]
+
+
+def test_difficulty_dossier_is_small_and_has_context():
+    """「好」這種短回覆要看得到上一個問題和回答的結尾;附檔只給名稱,檔案內容、工具輸出都不送給分類器。"""
+    from difficulty import dossier
+    messages = [SystemMessage("系統提示"),
+                HumanMessage('<file path="a.py" lines="1-1">\n    1| SECRET_BODY\n</file>\n\n<task>\n修 add\n</task>'),
+                AIMessage("", tool_calls=[{"name": "read_file", "args": {"path": "a.py"}, "id": "c1"}]),
+                ToolMessage("TOOL_OUTPUT", tool_call_id="c1"),
+                AIMessage("前面的說明" * 300 + "要我順便補測試嗎?")]
+    text = dossier(messages, "好", ["a.py"])
+    assert "修 add" in text and text.count("要我順便補測試嗎?") == 1 and "<request>\n好\n</request>" in text
+    assert "a.py" in text and "SECRET_BODY" not in text and "TOOL_OUTPUT" not in text
+    assert len(text) < 1200
+
+
+def test_routing_report(tmp_path):
+    import report_routing
+    now = datetime.now(TAIPEI).isoformat(timespec="seconds")
+    base = {"ts": now, "mode": "shadow", "turn": "normal", "by": "classifier", "reason": "", "error": None,
+            "classify_ms": 800, "classify_tokens": 300, "used": "code", "outcome": "done"}
+    rows = [{**base, "pick": "code", "reason": "說明", "steps": 2, "tokens": 5000, "ms": 4000, "task": "解釋 add"},
+            {**base, "pick": "code_deep", "reason": "跨檔除錯", "steps": 15, "tokens": 60000, "ms": 90000,
+             "outcome": "max_steps", "task": "偶發的 race condition"},
+            {**base, "pick": None, "error": "TimeoutError: 20s", "steps": 1, "tokens": 900, "ms": 21000, "task": "x"},
+            {**base, "by": "manual", "pick": "code_deep", "used": "code_deep", "classify_ms": 0, "classify_tokens": 0,
+             "steps": 3, "tokens": 9000, "ms": 30000, "task": "y"},
+            {**base, "ts": "2020-01-01T00:00:00+08:00", "pick": "code", "steps": 1, "tokens": 1, "ms": 1, "task": "舊的"}]
+    path = tmp_path / "routing_log.jsonl"
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n壞掉的一行\n", encoding="utf-8")
+    assert len(report_routing.load(path)) == 5 and len(report_routing.load(path, days=7)) == 4
+    text = "\n".join(report_routing.report(report_routing.load(path, days=7)))
+    assert "code 1(33%)" in text and "code_deep 1(33%)" in text and "分類失敗 1(33%)" in text
+    assert "手動指定 1 輪" in text and "占全部 tokens 的 1.2%" in text
+    shadow_hard = next(line for line in text.splitlines() if "判斷 code_deep" in line)
+    assert "1 輪 · 平均 15.0 步 · 60,000 tokens · 90.0 秒 · 碰到步數上限 1" in shadow_hard
+    assert "[跨檔除錯] 偶發的 race condition" in text and "TimeoutError: 20s" in text
+    assert report_routing.report([])[0].startswith("還沒有紀錄")
+
+
+def test_shipped_difficulty_config():
+    """出貨設定:分類器與難題模型都存在、難題模型能當 agent 主腦;分類器用短輸出建立。"""
+    reg = ModelRegistry.from_yaml(backend="nim")
+    cfg = reg.routing["difficulty"]
+    assert cfg["mode"] in ("off", "shadow", "on") and cfg["hard_role"] != reg.routing["default_role"]
+    assert reg.spec(cfg["hard_role"]).supports_tools
+    assert reg.chat(cfg["classifier_role"], thinking=False, max_output=512).max_tokens == 512
+
+
 # ---------- 網頁介面 ----------
 
 class _Web:

@@ -15,6 +15,7 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 .venv/Scripts/python -m pytest -q tests/test_offline.py::test_propose_patch_can_add_new_file   # 單一測試
 .venv/Scripts/python smoke_test.py                       # 對 catalog 真模型做冒煙測試,結果附加到 smoke_results.log
 .venv/Scripts/python smoke_test.py --roles long_context --checks think_off tool   # 只重跑失敗的項目
+.venv/Scripts/python report_routing.py --days 7          # 依難度選模型的報表(讀 output/routing_log.jsonl)
 .venv/Scripts/python webui.py                            # 網頁介面 http://127.0.0.1:8765(.claude/launch.json 有 "webui" 設定)
 .venv/Scripts/python agent.py                            # 互動模式(@檔案 附檔、/clear、/exit)
 .venv/Scripts/python agent.py "test_add 失敗了,找出 bug 並提出修正" -f calc.py
@@ -42,6 +43,8 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 **桌面版**(`desktop_app.py`):桌面捷徑跑 `.venv\Scripts\pythonw.exe desktop_app.py`(沒有主控台;stdout 為 None,所以改寫進 `output/desktop_app.log`,出錯看這裡)。同一個行程裡起 webui(port 8780,`serve` 綁不上就代表已經在跑,只開視窗),再用 Edge `--app` + 獨立 `--user-data-dir`(`output/.app-profile`)開視窗。**不要用瀏覽器行程結束判斷視窗關了**(Edge 的啟動行程交出視窗後就先結束,實測 0.5 秒),改看 `Desk.listeners`(全部對話的事件串流連線數):第一個視窗 60 秒內要連上,之後連續 4 次(20 秒)沒人連著才結束;用次數不用時鐘,睡眠喚醒才不會被誤判。`DESKTOP_APP_HEADLESS=1` 是測試用(無頭 Edge)。
 
 **VS Code 外掛**(`vscode-extension/`,純 JS、不用編譯):外掛自己用 `<projectPath>/.venv` 的 Python 跑 `webui.py --no-browser --port 8770 --token <隨機>`,環境變數 `AGENT_WORKSPACE` 設成 VS Code 開著的資料夾(`load_dotenv` 不會蓋掉),面板是 iframe 指到那個 port;「問選取的程式碼」直接 POST `/api/ask`。Windows 上關伺服器要 `taskkill /T`(venv 的 python.exe 只是轉介,真正的 Python 是子行程)。打包:`python vscode-extension/build_vsix.py`。沒有 Node 也能測:`ELECTRON_RUN_AS_NODE=1` 跑 VS Code 的 Code.exe 就是 Node,可以 `--check` 或用假的 vscode 模組跑外掛(Code.exe 是視窗程式,輸出要寫檔)。
+
+**依難度選模型**(`difficulty.py`):`ask()` 在 `_maybe_compact` 之後、送出前先 `_route`:`routing.difficulty.mode`(`off` / `shadow` / `on`,環境變數 `DIFFICULTY_ROUTING` 優先,沒有 `difficulty` 設定就一律 off)不是 off 就請 `classifier_role`(Super 關思考、`max_output` / `timeout_s` 用 `registry.chat(**overrides)` 暫時改小)回 `{"level": "normal"|"hard"}`;on 時 hard 就把 `hard_role` 當這一輪的 `requested` 給 `pick_role`,shadow 只記錄、照預設。分類器只看 `dossier()`(這次問題、上一個 `<task>`、上一個回答結尾、附檔名稱),不送檔案內容或工具輸出。任何錯誤都 fail-open 照預設。一輪只判斷一次;`--role` 指定時記 `by=manual`,`mode="execute"` 沿用規劃那輪(`by=plan`)。每輪(含出錯)`difficulty.record` 寫一行到 `OUTPUT_DIR/routing_log.jsonl`,`report_routing.py` 讀它;分類器 tokens 算進 `tokens_used` 與配額。測試用 `routing_log` fixture(換 `OUTPUT_DIR`、清掉環境變數)。
 
 `agent.AgentSession` 保存一段對話(messages、估算倍率 `scale`、累計 tokens);`ask()` 是一輪,中途出錯會把這一輪的訊息退掉。`run_agent()` = 開新 session 只問一輪;`chat()` 是互動模式的 REPL,問題裡的 `@路徑` 由 `file_mentions` 轉成附檔。每輪開始重新 `pick_role`,之後每一步送出前依序做:
 0. (每輪開始前)`_maybe_compact`:對話超過預設模型預算的 `limits.summarize_at`(0.6)就呼叫 `compact()`,請模型照 `SUMMARY_PROMPT` 整理成摘要,換成「系統提示 + 摘要(Human)+ 確認(AI)」;失敗只發 notice 不擋這一題。要在 `ask()` 記下 `start` 之前做(摘要會讓訊息變短,不然出錯時退不回去)。`/compact` 與網頁「整理對話」手動觸發。
