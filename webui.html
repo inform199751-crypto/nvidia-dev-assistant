@@ -1,27 +1,41 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0a0a0a"><!-- 桌面版(Edge app 模式)的標題列顏色 -->
 <title>小助理</title>
 <link rel="icon" href="/favicon.ico">
+<script>  /* 外觀(預設深色):在畫面畫出來之前就設好,才不會先閃一下白的 */
+  try { document.documentElement.dataset.theme = localStorage.getItem("theme") || "dark"; } catch (e) { /* 不能存就用預設 */ }
+</script>
 <style>
-  /* 版面參考 Claude / ChatGPT 桌面版:左側欄(新增、成品、待命、自訂、更多,下面是專案和對話),中間置中的對話欄 */
+  /* 版面參考 Claude / ChatGPT 桌面版:左側欄(新增、成品、待命、自訂、更多,下面是專案和對話),中間置中的對話欄。
+     外觀:<html data-theme> = dark(預設,黑底)/ light / system(跟著系統);在「更多」切換 */
   :root {
-    color-scheme: light dark;  /* 捲軸等瀏覽器內建元件跟著深淺色 */
+    color-scheme: light;  /* 捲軸等瀏覽器內建元件跟著深淺色 */
     --bg: #ffffff; --sidebar: #f9f9f8; --text: #0d0d0d; --muted: #5d5d5d; --faint: #8f8f8f;
     --line: #e5e5e5; --hover: #ececeb; --active: #e7e6e3; --user: #f4f4f4; --input: #ffffff; --code: #f7f7f8;
     --btn: #0d0d0d; --btn-ink: #ffffff; --btn-off: #d7d7d7; --accent: #10a37f; --accent-ink: #ffffff;
     --dot: #e8a03a; --warn: #c2410c; --error: #d93025; --add: #e7f6ec; --del: #fdecec;
     --shadow: 0 2px 12px rgba(0, 0, 0, .06);
   }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #121212; --sidebar: #0a0a0a; --text: #ececec; --muted: #b4b4b4; --faint: #858585;
+    --line: #2a2a2a; --hover: #1e1e1e; --active: #262626; --user: #242424; --input: #1c1c1c; --code: #0a0a0a;
+    --btn: #ffffff; --btn-ink: #0d0d0d; --btn-off: #4a4a4a; --accent: #10a37f; --accent-ink: #ffffff;
+    --dot: #f0b45b; --warn: #f59e0b; --error: #f87171; --add: #10291e; --del: #331717;
+    --shadow: 0 2px 12px rgba(0, 0, 0, .5);
+  }
   @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #212121; --sidebar: #171717; --text: #ececec; --muted: #b4b4b4; --faint: #8f8f8f;
-      --line: #3a3a3a; --hover: #2a2a2a; --active: #303030; --user: #303030; --input: #303030; --code: #171717;
-      --btn: #ffffff; --btn-ink: #0d0d0d; --btn-off: #5a5a5a; --accent: #10a37f; --accent-ink: #ffffff;
-      --dot: #f0b45b; --warn: #f59e0b; --error: #f87171; --add: #173226; --del: #3b1d1d;
-      --shadow: 0 2px 12px rgba(0, 0, 0, .3);
+    :root[data-theme="system"] {  /* 跟上面深色同一組 */
+      color-scheme: dark;
+      --bg: #121212; --sidebar: #0a0a0a; --text: #ececec; --muted: #b4b4b4; --faint: #858585;
+      --line: #2a2a2a; --hover: #1e1e1e; --active: #262626; --user: #242424; --input: #1c1c1c; --code: #0a0a0a;
+      --btn: #ffffff; --btn-ink: #0d0d0d; --btn-off: #4a4a4a; --accent: #10a37f; --accent-ink: #ffffff;
+      --dot: #f0b45b; --warn: #f59e0b; --error: #f87171; --add: #10291e; --del: #331717;
+      --shadow: 0 2px 12px rgba(0, 0, 0, .5);
     }
   }
   * { box-sizing: border-box; }
@@ -44,7 +58,7 @@
   .side-scroll { flex: 1; overflow-y: auto; padding: 8px 8px 12px; }
   .side-top { display: flex; align-items: center; justify-content: space-between; padding: 6px 6px 10px; }
   .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
-  .brand img { width: 22px; height: 22px; border-radius: 6px; }
+  .brand img { width: 22px; height: 22px; border-radius: 6px; box-shadow: 0 0 0 1px var(--line); }  /* 圖示本身是黑的,黑底上要一圈邊才看得到 */
   .nav-btn, .conv {
     display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
     background: none; border: 0; border-radius: 8px; padding: 6px 8px; color: var(--text);
@@ -75,7 +89,7 @@
   .empty-proj { color: var(--faint); font-size: 13px; padding: 2px 10px 2px 26px; }
   .add-project { color: var(--muted); margin-top: 10px; font-size: 13px; }
   .side-user { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--line); }
-  .side-user img { width: 28px; height: 28px; border-radius: 8px; }
+  .side-user img { width: 28px; height: 28px; border-radius: 8px; box-shadow: 0 0 0 1px var(--line); }
   .side-user .who { flex: 1; min-width: 0; line-height: 1.3; }
   .side-user .who div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .side-user .who small { color: var(--faint); font-size: 12px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -394,6 +408,12 @@ const TOPICS = [
             ["新手接手這個專案,要先看哪些檔案?", "排好閱讀順序"]] },
 ];
 let topic = store.get("topic", "code");
+const theme = () => document.documentElement.dataset.theme || "dark";
+function setTheme(t) {
+  document.documentElement.dataset.theme = t; store.set("theme", t);
+  const dark = t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.querySelector('meta[name="theme-color"]').content = dark ? "#0a0a0a" : "#f9f9f8";
+}
 
 function api(path, body, convId) {
   return fetch(path, {
@@ -957,6 +977,10 @@ async function renderPage() {
     section(box, "模型");
     box.appendChild(el("p", "lead", `${state.model || ""}(換模型改 models.yaml)`));
   } else if (name === "more") {
+    section(box, "外觀");
+    const look = box.appendChild(el("div", "actions"));
+    for (const [t, label] of [["dark", "深色"], ["light", "淺色"], ["system", "跟著系統"]])
+      look.appendChild(button(label, "pill" + (theme() === t ? " dark" : ""), () => { setTheme(t); renderPage(); }));
     section(box, "這段對話");
     const a = box.appendChild(el("div", "actions"));
     a.appendChild(button("整理對話(摘要前面的內容,省 token)", "pill", async () => {
@@ -1018,6 +1042,8 @@ $("open-side").onclick = () => document.body.classList.add("side-open");
 $("close-side").onclick = closeSide;
 $("scrim").onclick = closeSide;
 
+setTheme(theme());
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => setTheme(theme()));  // 跟著系統時,系統切換也跟著變
 loadDesk();
 loadPending();
 setInterval(() => { loadDesk(); loadPending(); }, 10000);  // 別段對話在背景跑完、有事等你,側邊欄也會更新

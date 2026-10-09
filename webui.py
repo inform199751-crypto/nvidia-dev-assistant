@@ -91,10 +91,10 @@ class LanAccess:
 
 
 LOGIN_PAGE = """<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>小助理 · 登入</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#121212">
+<title>小助理 · 登入</title>
 <style>
-:root{color-scheme:light dark;--bg:#fff;--text:#0d0d0d;--muted:#5d5d5d;--line:#e5e5e5;--btn:#0d0d0d;--btn-ink:#fff;--error:#d93025}
-@media (prefers-color-scheme:dark){:root{--bg:#212121;--text:#ececec;--muted:#b4b4b4;--line:#3a3a3a;--btn:#fff;--btn-ink:#0d0d0d;--error:#f87171}}
+:root{color-scheme:dark;--bg:#121212;--text:#ececec;--muted:#b4b4b4;--line:#2a2a2a;--btn:#fff;--btn-ink:#0d0d0d;--error:#f87171}
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--text);
 font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI","Microsoft JhengHei","PingFang TC",sans-serif}
 form{width:min(340px,calc(100vw - 32px));text-align:center}
