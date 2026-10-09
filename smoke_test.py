@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import math
 import os
 import struct
 import sys
@@ -132,6 +133,19 @@ def main() -> int:
                 emit(f"    [回答] {str(ai.content)[:800]!r}")
                 emit(f"    [推理] {(ai.additional_kwargs.get('reasoning_content') or '')[:800]!r}")
             time.sleep(args.pause)
+    if registry.embedding and (not args.roles or "embedding" in args.roles):  # 知識庫的 embedding(只送固定的示範句子)
+        t0, model = time.perf_counter(), registry.embedding["model"]
+        try:
+            embed = registry.embedder()
+            docs, tokens = embed(["請假三天以上要部門經理核准。", "計程車費要附收據才能報帳。"], "passage")
+            (q,), _ = embed(["請三天假要找誰簽?"], "query")
+            near = [sum(a * b for a, b in zip(q, d)) / math.sqrt(sum(a * a for a in d)) for d in docs]
+            ok, note = near[0] > near[1], f"{len(q)} 維,問請假時請假那句比較近:{near[0]:.3f} > {near[1]:.3f}"
+        except Exception as e:
+            ok, note, tokens = False, f"{type(e).__name__}: {str(e).splitlines()[0][:110]}", 0
+        failures += not ok
+        emit(f"{'embedding':<13}{model:<38}{'search':<10}{'通過' if ok else '失敗':<6}"
+             f"{time.perf_counter() - t0:>6.1f}{tokens:>8}  {note}")
     emit(f"\n{failures} 項失敗")
     log_file.close()
     return 1 if failures else 0

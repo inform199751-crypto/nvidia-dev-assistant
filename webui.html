@@ -241,7 +241,7 @@
   .row:first-child { border-top: 0; }
   .row .grow { flex: 1; min-width: 0; }
   .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .row small { color: var(--faint); display: block; font-size: 12.5px; }
+  .row small { color: var(--faint); display: block; font-size: 12.5px; overflow-wrap: anywhere; }  /* 長路徑才不會壓到按鈕 */
   .row .actions { flex-shrink: 0; }
   .none { color: var(--faint); font-size: 14px; padding: 14px; border: 1px dashed var(--line); border-radius: 14px; text-align: center; }
   .page pre.rules { background: var(--code); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
@@ -352,6 +352,9 @@
       </button>
       <button type="button" class="nav-btn" data-page="pending">
         <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13.5V9a5 5 0 0110 0v4.5l1.5 1.5h-13z"/><path d="M8.5 17.5a1.6 1.6 0 003 0"/></svg>待命<span class="badge" id="pending-badge" hidden></span>
+      </button>
+      <button type="button" class="nav-btn" data-page="knowledge">
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3.5h9.5A2.5 2.5 0 0116 6v10.5H6.5A2.5 2.5 0 014 14z"/><path d="M4 14a2.5 2.5 0 012.5-2.5H16M8 7h5"/></svg>知識庫
       </button>
       <button type="button" class="nav-btn" data-page="custom">
         <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="6" width="15" height="10.5" rx="2"/><path d="M7 6V4.5A1.5 1.5 0 018.5 3h3A1.5 1.5 0 0113 4.5V6M2.5 10.5h15"/></svg>自訂
@@ -984,7 +987,7 @@ async function loadPending() {
 }
 
 // ---------- 側邊欄的頁面 ----------
-const PAGE_TITLES = { outputs: "成品", pending: "待命", custom: "自訂", more: "更多", settings: "設定",
+const PAGE_TITLES = { outputs: "成品", pending: "待命", knowledge: "知識庫", custom: "自訂", more: "更多", settings: "設定",
                       help: "取得協助", changelog: "更新紀錄", about: "了解更多" };
 function openPage(name, focus) {  // focus:打開後捲到這個元素(例如設定頁的「手機」)
   page = name; closeSide();
@@ -1057,7 +1060,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/9 晚上", ["可以附圖片了:截圖、圖表、照片(輸入框的「+」、貼上或拖進來),先用看圖的模型讀懂再回答",
+  ["10/9 晚上", ["知識庫:把文件資料夾建成索引,問問題時照意思找到相關段落,回答附出處(側邊欄「知識庫」)",
+                 "可以附圖片了:截圖、圖表、照片(輸入框的「+」、貼上或拖進來),先用看圖的模型讀懂再回答",
                  "輸入框右下角的選模型多了「努力程度」滑桿:往左更快、往右更仔細",
                  "帳號選單:點左下角打開,可以換回答語言、看說明和更新紀錄;手機上可以登出",
                  "側邊欄上面切換「對話 / 程式」:對話模式不綁專案,一般問答、寫作、翻譯更省 token",
@@ -1124,6 +1128,83 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
     if (confirm("所有手機(含訪客)都要重新輸入 PIN 才能連。確定?")) act({}, "/api/phone/forget")();
   }));
 }
+// ---------- 知識庫頁面:資料夾清單、建索引進度、試搜尋 ----------
+let kbTimer = null;
+let kbSearch = { q: "" };  // 試搜尋的問題和結果(建索引時每 1.5 秒重畫頁面,不能弄丟)
+function renderKnowledge(box, data) {
+  box.appendChild(el("p", "lead", "把一個資料夾的文件(手冊、規章、規格書、會議紀錄…)建成索引。之後在對話裡直接問,"
+    + "HSUAN 會照意思找出相關的段落再回答,並附上出處。支援 Markdown、文字檔、CSV、PDF、Word、Excel;檔案改過按「更新」,只會重算改過的。"));
+  if (data.backend !== "nim") box.appendChild(el("p", "lead", "注意:建索引時文件內容會送到 build.nvidia.com 算向量,"
+    + "找到的段落也會送給模型。只放可以公開的文件(例如專案裡的 demo_knowledge 示範資料夾),不要放公司文件。"));
+  if (!data.semantic) box.appendChild(el("p", "lead", "這個環境沒有設定 embedding 模型(models.yaml 的 embedding),只能用關鍵字搜尋。"));
+  section(box, "你的知識庫");
+  if (!data.items.length) box.appendChild(el("div", "none", data.can_add ? "還沒有知識庫,按下面的「加入資料夾」。" : "這裡不能加知識庫(訪客或多人模式)。"));
+  else {
+    const list = rows(box);
+    for (const it of data.items) {
+      const sub = [];
+      if (it.missing) sub.push("找不到這個資料夾了");
+      else if (it.state === "indexing") sub.push(it.progress[1] ? `建索引中… ${it.progress[0]} / ${it.progress[1]}` : "建索引中…");
+      else {
+        sub.push(`${it.files} 個檔案 · ${it.chunks} 段` + (it.updated ? ` · 更新於 ${fmtTime(it.updated)}` : ""));
+        const c = it.changes || {}, n = (c.new || 0) + (c.changed || 0) + (c.removed || 0);
+        if (n) sub.push(`有 ${n} 個檔案改過,按「更新」`);
+        if (it.chunks && !it.semantic) sub.push("只能用關鍵字搜尋");
+        if (it.unreadable.length) sub.push(`讀不到:${it.unreadable.join("、")}`);
+        if (it.error) sub.push(`上次更新失敗:${it.error}`);
+      }
+      const act = (path) => async () => {
+        const x = await api(path, { id: it.id });
+        if (!x.ok) alert(x.data.error || "失敗");
+        renderPage();
+      };
+      const busyKb = it.state === "indexing";
+      const upd = button("更新", "pill", act("/api/knowledge/update")); upd.disabled = busyKb || it.missing;
+      const del = button("移除", "pill", () => confirm(`移除知識庫「${it.name}」?只刪掉索引,資料夾裡的文件不會動。`) && act("/api/knowledge/remove")());
+      del.disabled = busyKb;
+      const rr = row(list, it.name, sub.join(" · "), [upd, del]);
+      rr.querySelector(".grow").appendChild(el("small", "", it.path));
+    }
+  }
+  if (data.can_add) {
+    box.appendChild(el("div", "actions")).appendChild(button("加入資料夾", "pill dark", async () => {
+      const path = prompt("文件資料夾的完整路徑(例如 C:\\Users\\User\\Desktop\\nvidia-dev-assistant-main\\demo_knowledge):");
+      if (!path || !path.trim()) return;
+      const x = await api("/api/knowledge/add", { path });
+      if (!x.ok) return alert(x.data.error || "加入失敗");
+      renderPage();
+    })).parentElement.style.marginTop = "12px";
+  }
+  section(box, "試搜尋");
+  box.appendChild(el("p", "lead", "看看一個問題會找到哪幾段(不經過模型,不花對話的 token)。"));
+  const f = box.appendChild(el("div", "field"));
+  const inp = f.appendChild(el("input"));
+  inp.placeholder = "例如:請三天假要誰核准?"; inp.value = kbSearch.q;
+  inp.oninput = () => { kbSearch.q = inp.value; };
+  const go = async () => {
+    if (!inp.value.trim()) return;
+    const x = await api("/api/knowledge/search", { q: inp.value });
+    if (!x.ok) return alert(x.data.error || "搜尋失敗");
+    kbSearch = { q: inp.value, ...x.data };
+    renderPage();
+  };
+  inp.onkeydown = (ev) => { if (ev.key === "Enter" && !ev.isComposing) go(); };
+  f.appendChild(button("搜尋", "pill dark", go));
+  if (kbSearch.hits) {
+    if (!kbSearch.hits.length) box.appendChild(el("div", "none", "找不到相關的段落(還沒建好索引,或文件裡沒有寫到)。"));
+    else {
+      box.appendChild(el("p", "lead", `用「${kbSearch.how}」搜尋,最相關的 ${kbSearch.hits.length} 段:`));
+      const list = rows(box);
+      for (const h of kbSearch.hits) {
+        const rr = row(list, h.where, h.text.length > 160 ? h.text.slice(0, 160) + "…" : h.text);
+        rr.querySelector(".grow").prepend(el("span", "tag ok", h.score.toFixed(2)));
+      }
+    }
+  }
+  clearTimeout(kbTimer);  // 建索引中:每 1.5 秒看一次進度
+  if (data.items.some((it) => it.state === "indexing")) kbTimer = setTimeout(() => page === "knowledge" && renderPage(), 1500);
+}
+
 // ---------- token 用量(側邊欄左下角、設定頁) ----------
 const fmtTok = (n) => n >= 10000 ? `${(n / 10000).toFixed(n >= 1000000 ? 0 : 1)} 萬` : Number(n).toLocaleString();
 function paintBar(bar, used, limit) {
@@ -1151,7 +1232,7 @@ function row(list, name, sub, actions) {
 async function renderPage() {
   const box = $("page-in"), name = page;
   const r = name === "outputs" ? await api("/api/outputs") : name === "custom" ? await api("/api/instructions")
-    : name === "settings" ? await api("/api/phone") : null;
+    : name === "settings" ? await api("/api/phone") : name === "knowledge" ? await api("/api/knowledge") : null;
   if (page !== name) return;
   box.innerHTML = "";
   box.appendChild(el("h2", "", PAGE_TITLES[name]));
@@ -1200,6 +1281,8 @@ async function renderPage() {
         [button("照計畫執行", "pill primary", async () => { await act("/api/execute", { go: true })(); openConv(it.conv); }),
          button("先不要", "pill", act("/api/execute", { go: false })), button("打開對話", "pill", () => openConv(it.conv))]);
     }
+  } else if (name === "knowledge") {
+    renderKnowledge(box, r.data);
   } else if (name === "custom") {
     box.appendChild(el("p", "lead", "讓 HSUAN 照你的習慣做事。"));
     if (r.data.chat) {
@@ -1283,6 +1366,7 @@ async function renderPage() {
     const ul = box.appendChild(el("ul", "help"));
     for (const t of [
       "用 @檔名 附上專案裡的檔案,例如:解釋 @calc.py(程式模式)。",
+      "知識庫:側邊欄的「知識庫」加入一個文件資料夾(手冊、規章、規格書…),之後直接問,HSUAN 會照意思找出相關段落、附上出處再回答。",
       "附圖片:輸入框的「+」→ 上傳圖片,或直接貼上(Ctrl+V)、拖進輸入框。截圖、圖表、照片都可以,HSUAN 會先用看圖的模型讀懂再回答。",
       "修改先放在 HSUAN 的草稿上,你按「套用到專案」才會真的改檔案;還沒套用的會出現在「待命」。",
       "大任務打開「先規劃」:HSUAN 先只讀不改、交出計畫,你同意才照計畫做。",

@@ -2523,3 +2523,130 @@ def test_vision_description_repeats_are_dropped():
     import agent
     text = "這是終端機的截圖。\n\nE   ZeroDivisionError\n\n這是終端機的截圖。\n\n  這是終端機的截圖。 \n\n第 12 行"
     assert agent.drop_repeats(text) == "這是終端機的截圖。\n\nE   ZeroDivisionError\n\n第 12 行"
+
+
+def fake_embedder(calls: list | None = None):
+    """假的 embedding:中文兩字一組、英數字一詞,雜湊到 64 維(字面越像越接近);calls 記錄每次算了哪些文字。"""
+    import zlib
+    import knowledge
+
+    def embed(texts, kind):
+        if calls is not None:
+            calls.append((kind, list(texts)))
+        out = []
+        for t in texts:
+            v = [0.0] * 64
+            for term in knowledge.terms(t):
+                v[zlib.crc32(term.encode()) % 64] += 1.0
+            out.append(v if any(v) else [1.0] + [0.0] * 63)
+        return out, 10 * len(texts)
+
+    embed.model = "fake-embed"
+    return embed
+
+
+def test_knowledge_splits_by_heading_and_page():
+    """知識庫依標題切段,每段帶著標題路徑;只有標題沒有內容的不算一段;PDF 記頁碼、不跨頁;太長的段落再切開。"""
+    import knowledge
+    from token_guard import estimate_tokens
+    md = "# 手冊\n\n## 一、請假\n\n### 申請流程\n送單。\n\n### 病假\n附證明。\n\n## 二、加班\n\n## 三、出差\n住宿上限 2,800 元。\n"
+    chunks = knowledge.split("手冊.md", md)
+    assert [(c["where"], c["text"]) for c in chunks] == [
+        ("手冊 › 一、請假 › 申請流程", "送單。"), ("手冊 › 一、請假 › 病假", "附證明。"), ("手冊 › 三、出差", "住宿上限 2,800 元。")]
+    assert knowledge.label(chunks[0]) == "手冊.md › 手冊 › 一、請假 › 申請流程"
+    pdf = knowledge.split("規格.pdf", "--- 第 1 頁 ---\n第一頁\n--- 第 2 頁 ---\n## 介面\n第二頁")
+    assert [(c["page"], c["where"], c["text"]) for c in pdf] == [(1, "", "第一頁"), (2, "介面", "第二頁")]
+    assert knowledge.label(pdf[1]) == "規格.pdf › 介面(第 2 頁)"
+    long = "\n\n".join(f"第 {i} 段:" + "很長的說明文字" * 40 for i in range(12))
+    parts = knowledge.split("長.md", "# 長\n" + long)
+    assert len(parts) > 1 and all(estimate_tokens(p["text"]) <= knowledge.CHUNK_TOKENS + 20 for p in parts)
+    assert "".join(p["text"] for p in parts).count("第 11 段") == 1
+
+
+def test_knowledge_update_is_incremental(tmp_path_factory):
+    """只重算新增 / 改過的檔案、刪掉的拿掉;重開程式從存檔載入,不用重算;機密檔、隱藏資料夾、程式碼不收;
+    Big5 的舊文字檔讀得到;換了 embedding 模型就全部重算;算向量失敗時舊的索引照用,搜尋退回關鍵字。"""
+    import knowledge
+    folder, store = tmp_path_factory.mktemp("docs"), tmp_path_factory.mktemp("kb")
+    (folder / "請假.md").write_text("# 請假\n三天以上要部門經理核准。", encoding="utf-8")
+    (folder / "報帳.md").write_text("# 報帳\n計程車要附收據。", encoding="utf-8")
+    (folder / "舊系統.txt").write_bytes("VPN 設定".encode("cp950"))
+    (folder / ".env").write_text("NVIDIA_API_KEY=secret", encoding="utf-8")
+    (folder / ".git").mkdir()
+    (folder / ".git" / "notes.md").write_text("不要收", encoding="utf-8")
+    (folder / "app.py").write_text("print('程式碼不收')", encoding="utf-8")
+    calls = []
+    kb = knowledge.KnowledgeBase(folder, store, fake_embedder(calls), "公司文件")
+    assert kb.update() == {"added": 3, "updated": 0, "removed": 0, "unchanged": 0, "chunks": 3, "tokens": 30}
+    assert sorted(kb.files) == ["報帳.md", "舊系統.txt", "請假.md"] and kb.summary()["semantic"]
+    assert any("VPN 設定" in c["text"] for c in kb.chunks)
+    calls.clear()
+    assert kb.update()["unchanged"] == 3 and calls == []  # 沒改就不重算
+    (folder / "報帳.md").write_text("# 報帳\n計程車要附電子收據。", encoding="utf-8")
+    (folder / "舊系統.txt").unlink()
+    assert kb.changes() == {"new": 0, "changed": 1, "removed": 1}
+    stats = kb.update()
+    assert (stats["updated"], stats["removed"], stats["unchanged"], stats["chunks"]) == (1, 1, 1, 2)
+    assert [t for _, texts in calls for t in texts] == ["報帳.md › 報帳\n計程車要附電子收據。"]
+    again = knowledge.KnowledgeBase(folder, store, fake_embedder(calls), "公司文件")  # 重開程式
+    hits, how = again.search("請假要誰核准")
+    assert len(again.chunks) == 2 and hits[0]["file"] == "請假.md" and how == "照意思"
+    other = fake_embedder()
+    other.model = "another-embed"
+    assert knowledge.KnowledgeBase(folder, store, other).update()["updated"] == 2  # 換模型:全部重算
+
+    def broken(texts, kind):
+        raise RuntimeError("[503] busy")
+
+    broken.model = "another-embed"
+    kb3 = knowledge.KnowledgeBase(folder, store, broken)
+    (folder / "請假.md").write_text("# 請假\n改過了", encoding="utf-8")
+    assert kb3.update()["error"].startswith("RuntimeError") and kb3.state == "error"
+    hits, how = kb3.search("計程車 收據")
+    assert len(kb3.chunks) == 2 and hits[0]["file"] == "報帳.md" and how.startswith("關鍵字(")
+
+
+def test_knowledge_page_and_search_tool(workspace, tmp_path_factory):
+    """網頁「知識庫」:加資料夾 → 背景建索引 → 對話多一個 search_knowledge(對話模式也有),系統提示列出知識庫;
+    模型查到的段落附出處;試搜尋;拿掉之後工具也拿掉、索引刪掉、文件不動。沒有知識庫時不送這個工具(每一步省 token)。
+    訪客 / 多人模式不能加。"""
+    import time as _time
+    import httpx
+    import webui
+    folder, store = tmp_path_factory.mktemp("docs"), tmp_path_factory.mktemp("state")
+    (folder / "員工手冊.md").write_text("# 員工手冊\n## 請假\n三天以上要部門經理核准。\n## 加班\n事先申請。", encoding="utf-8")
+    call = {"name": "search_knowledge", "args": {"query": "請三天假要誰核准"}, "id": "k1"}
+    reg, seen = scripted_registry([ai(tool_calls=[call]), ai("要部門經理核准(員工手冊.md › 請假)")])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=store, embed=fake_embedder())
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    try:
+        cid = httpx.post(base + "/api/conv/new", json={"kind": "chat"}, headers=h).json()["id"]
+        assert "search_knowledge" not in {t.name for t in desk.hubs[cid].session.tools}
+        assert httpx.post(base + "/api/knowledge/add", json={"path": str(folder / "沒有")}, headers=h).status_code == 400
+        kid = httpx.post(base + "/api/knowledge/add", json={"path": str(folder), "name": "公司文件"}, headers=h).json()["id"]
+        for _ in range(200):  # 等背景建好索引
+            items = httpx.get(base + "/api/knowledge", headers=h).json()["items"]
+            if items[0]["state"] == "idle" and items[0]["chunks"]:
+                break
+            _time.sleep(0.05)
+        assert (items[0]["name"], items[0]["files"], items[0]["chunks"]) == ("公司文件", 1, 2)
+        assert items[0]["changes"] == {"new": 0, "changed": 0, "removed": 0}
+        session = desk.hubs[cid].session
+        assert "search_knowledge" in {t.name for t in session.tools} and "公司文件(1 個檔案)" in session.messages[0].content
+        found = httpx.post(base + "/api/knowledge/search", json={"q": "請假誰核准"}, headers=h).json()
+        assert found["how"] == "照意思" and found["hits"][0]["where"] == "員工手冊.md › 員工手冊 › 請假"
+        httpx.post(base + "/api/ask", json={"text": "請三天假要誰核准?"}, headers={**h, "X-Conv": cid})
+        events = _events_until(base, cid, "done")
+        output = next(e["output"] for e in events if e["kind"] == "tool_done")
+        assert "員工手冊.md › 員工手冊 › 請假" in output and "部門經理核准" in output
+        assert httpx.post(base + "/api/knowledge/remove", json={"id": kid}, headers=h).status_code == 200
+        assert "search_knowledge" not in {t.name for t in desk.hubs[cid].session.tools}
+        assert not (store / "knowledge" / kid).exists() and (folder / "員工手冊.md").exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert "search_knowledge" in seen[0][2]  # 那一輪真的有把工具送給模型
+    with pytest.raises(PermissionError):
+        webui.Desk(lambda ws: None, workspace, store=store, can_add_projects=False).add_knowledge(str(folder))

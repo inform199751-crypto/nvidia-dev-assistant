@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
@@ -74,6 +75,7 @@ class ModelRegistry:
         self._backend_cfg = config["backends"][self.backend]
         self.routing: dict = config["routing"]
         self.limits: dict = config["limits"]
+        self.embedding: dict | None = config.get("embedding")  # 知識庫用的 embedding 模型(knowledge.py)
         self.specs = {}
         for role, cfg in config["roles"].items():
             cfg = dict(cfg)
@@ -136,6 +138,39 @@ class ModelRegistry:
         primary = build(role)
         backups = [build(fb) for fb in spec.fallbacks if not tools or self.spec(fb).supports_tools]
         return primary.with_fallbacks(backups) if backups else primary
+
+    def embedder(self) -> Callable[[list[str], str], tuple[list[list[float]], int]] | None:
+        """知識庫用:embed(文字們, "passage" | "query") → (向量們, 用掉的 tokens);models.yaml 沒有 embedding 就回 None。
+        直接打 /v1/embeddings 而不用套件的 NVIDIAEmbeddings:10/9 實測同一顆模型經過它回 502、直接打正常。
+        忙線(429 / 5xx)等一下再送,最多 3 次。"""
+        cfg = self.embedding
+        if not cfg:
+            return None
+        base = (cfg.get("nim_base_url") or self._backend_cfg["base_url"]) if self.backend == "nim" else self._backend_cfg["base_url"]
+        key_env = self._backend_cfg.get("api_key_env")
+
+        def embed(texts: list[str], kind: str) -> tuple[list[list[float]], int]:
+            import httpx
+
+            api_key = os.getenv(key_env) if key_env else None
+            if key_env and not api_key:
+                raise RuntimeError(f"缺少環境變數 {key_env}")
+            body = {"model": cfg["model"], "input": texts, "input_type": kind, "truncate": "END"}
+            for attempt in range(3):
+                r = httpx.post(base.rstrip("/") + "/embeddings", json=body, timeout=cfg.get("timeout_s", 60),
+                               headers={"Authorization": f"Bearer {api_key}"} if api_key else {})
+                if r.status_code in (429, 500, 502, 503) and attempt < 2:
+                    time.sleep(1 + attempt * 2)
+                    continue
+                if r.status_code != 200:
+                    raise RuntimeError(f"[{r.status_code}] {r.text[:200]}")
+                data = r.json()
+                vectors = [d["embedding"] for d in sorted(data["data"], key=lambda d: d.get("index", 0))]
+                return vectors, (data.get("usage") or {}).get("total_tokens", 0)
+            raise AssertionError("unreachable")
+
+        embed.model = cfg["model"]  # 換了模型,知識庫要全部重算
+        return embed
 
     def vision_model(self, role: str) -> Runnable:
         """看圖:關思考(10/9 實測 Nano Omni 開思考慢 5 倍、多花上千 tokens,看圖說明用不到)。

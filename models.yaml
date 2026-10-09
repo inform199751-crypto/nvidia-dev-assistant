@@ -39,6 +39,15 @@ routing:
     classifier: llm         # llm = 問 Super;tree = 用自己訓練的決策樹(train_models.py,不花 token、不用等;
                             #   還沒訓練就自動退回 llm)。先看 report_routing.py 的「一致率」夠高再換
 
+# 知識庫(knowledge.py):把文件段落和問題轉成向量,照意思找。2026-10-09 實測 12 題「換句話說」的中文問題(demo_knowledge/):
+#   Nemotron 3 Embed 第 1 名命中 10/12、前 3 名 12/12;Llama Nemotron Embed VL 一樣 10/12;關鍵字(BM25)只有 7/12、8/12
+#   清單上的 llama-3.2-nv-embedqa-1b-v1、nv-embedqa-mistral-7b-v2、arctic-embed-l、embed-qa-4 實際呼叫都 404
+# 換模型之後,每個知識庫下次「更新」會全部重算向量
+embedding:
+  model: nvidia/nemotron-3-embed-1b
+  nim_base_url: http://nim-nemotron-embed:8000/v1
+  timeout_s: 60
+
 limits:
   max_agent_steps: 15
   max_execute_steps: 25             # 照計畫執行(/plan 同意後)的步數上限:要做的事比一般問答多

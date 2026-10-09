@@ -96,6 +96,8 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 
 **看圖**(`routing.vision_role` = `vision`,Nemotron 3 Nano Omni,備援 Llama 3.2 11B Vision):主模型看不懂圖片,所以有圖片的那一題,`AgentSession.ask` 先用 `_describe_images` 請看圖模型照 `VISION_PROMPT` 把圖轉成文字(字逐字抄、圖表數字配標籤),放進問題前面的 `<image>` 區塊;工具、路由、摘要、token 估算都照舊,對話紀錄只有文字。`registry.vision_model()` 關思考、每顆先重試 `VISION_RETRIES` 次(免費層常 503)再換備援;都失敗不擋這一題(告訴主模型有一張圖沒看到),`drop_repeats` 去掉重複的段落。圖片來源:網頁上傳(瀏覽器先縮到 1600px,`/api/ask` 的 `images` 由 `webui.parse_images` 檢查;事件和存檔只留縮圖)、`@圖片.png` / `-f` 附檔(`image_from_file`,過 `_safe_path`,上限 `MAX_IMAGE_BYTES`)。看圖的 tokens 算進這一輪和額度。
 
+**知識庫**(`knowledge.py`):`KnowledgeBase(資料夾, 索引位置, embed)`,`update()` 增量更新(大小 + 修改時間沒變的沿用,換 embedding 模型全部重算,失敗時舊索引照用),依標題切段(`split`,每段帶標題路徑,PDF 記頁碼),向量正規化後存 `vectors.bin`(float32)+ `index.json`,純 Python 算相似度;算不了向量就退回 BM25(中文兩字一組)。10/9 實測混合排名比只用向量差,所以平常只用向量。embedding 由 `registry.embedder()` 直接打 `/v1/embeddings`(models.yaml 的 `embedding`,套件的 NVIDIAEmbeddings 對 Nemotron 3 Embed 回 502)。`search_knowledge` 工具讀 `bench().knowledge`;只有在有知識庫時才綁(`Hub._knowledge_tool`,對話模式也有,`CHAT_TOOLS` 含它),`agent.knowledge_line()` 把知識庫名稱放進系統提示。網頁:`Desk` 的 `kb_meta`(`store/knowledge.json`)、索引在 `store/knowledge/<id>/`,加入 / 更新在背景執行緒跑,完成後 `_share_knowledge` 更新每個 Hub;訪客、多人模式不能加(`can_add_knowledge`)。CLI:`--kb 資料夾`。測試用 `fake_embedder`(兩字一組雜湊成 64 維)。
+
 **`--whole` 模式**:附檔全部內嵌、不綁工具、一次回答,交給路由決定要不要升級到 Ultra。給工具的話模型會分段重讀,每步重送全部內容。
 
 ## 不能破壞的規則

@@ -36,6 +36,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 from langchain_core.messages import messages_from_dict, messages_to_dict
 
 import agent
+import knowledge
 import qr
 import tools as toolbox
 import web
@@ -323,7 +324,22 @@ class Hub:
             session = self.new_session(self.publish)
             if self.chat:
                 session.to_chat()
+            self._knowledge_tool(session)
         return session
+
+    def _knowledge_tool(self, session: agent.AgentSession) -> None:
+        """有知識庫才給 search_knowledge(工具定義每一步都要送,沒有知識庫就不要佔 token)。"""
+        tools = [t for t in session.tools if t.name != knowledge.search_knowledge.name]
+        if self.bench.knowledge and not session.whole:
+            tools.append(knowledge.search_knowledge)
+        session.tools = tools
+        session.refresh_system_prompt()
+
+    def use_knowledge(self, kbs: list) -> None:
+        """Desk 的知識庫變了(加了、拿掉、更新完):工具和系統提示裡的知識庫清單跟著換,下一輪生效。"""
+        self.bench.knowledge = list(kbs)
+        with toolbox.using(self.bench):
+            self._knowledge_tool(self.session)
 
     @property
     def workspace(self) -> Path:
@@ -774,12 +790,16 @@ class Desk:
     """
 
     def __init__(self, make_hub: Callable[[Path], Hub], default_workspace: Path, store: Path | None = None,
-                 can_add_projects: bool = True, docs_dir: Path | None = None, repos_dir: Path | None = None):
+                 can_add_projects: bool = True, docs_dir: Path | None = None, repos_dir: Path | None = None,
+                 embed: knowledge.Embedder | None = None):
         self.make_hub = make_hub
         self.store = store
         self.can_add_projects = can_add_projects
         self.docs_dir = docs_dir  # 這個人的文件放哪;None = OUTPUT_DIR
         self.repos_dir = repos_dir  # 從 GitHub 下載的專案放哪;None = 不能下載
+        self.embed = embed  # 知識庫算向量用的(registry.embedder());None = 只能用關鍵字搜尋
+        self.kb_meta: list[dict] = []  # 知識庫:[{id, name, path}],存在 store/knowledge.json
+        self.kbs: dict[str, knowledge.KnowledgeBase] = {}  # 用到才載入索引
         self.lock = threading.RLock()
         self.hubs: dict[str, Hub] = {}
         # 對話 id → {"id","title","project","kind","created","updated"};kind:code(綁專案)/ chat(對話模式,project 是 None)
@@ -828,6 +848,10 @@ class Desk:
             except (OSError, ValueError, KeyError):
                 continue  # 壞掉的檔案略過,不擋其他對話
         self._read_settings()
+        try:
+            self.kb_meta = json.loads((self.store / "knowledge.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            self.kb_meta = []
 
     def _read_settings(self) -> None:
         """桌面版和 VS Code 外掛共用同一份:每次開對話都重讀,另一邊改的語言新對話就會用到。"""
@@ -946,8 +970,95 @@ class Desk:
             self._read_settings()
         if self.lang != "zh-TW":
             hub.use_lang(self.lang)
+        if kbs := self.ready_knowledge():
+            hub.use_knowledge(kbs)
         self.hubs[cid] = hub
         return hub
+
+    # ---------- 知識庫(側邊欄的「知識庫」頁面) ----------
+
+    @property
+    def can_add_knowledge(self) -> bool:
+        return self.can_add_projects and self.store is not None  # 訪客、多人模式不能加;沒有存檔的地方也不能
+
+    def _kb(self, meta: dict) -> knowledge.KnowledgeBase:
+        with self.lock:
+            if meta["id"] not in self.kbs:
+                self.kbs[meta["id"]] = knowledge.KnowledgeBase(Path(meta["path"]), self.store / "knowledge" / meta["id"],
+                                                               self.embed, meta["name"])
+            return self.kbs[meta["id"]]
+
+    def ready_knowledge(self) -> list[knowledge.KnowledgeBase]:
+        """建好索引、有內容的知識庫(給 search_knowledge 搜)。"""
+        return [kb for kb in map(self._kb, list(self.kb_meta)) if kb.chunks]
+
+    def _share_knowledge(self) -> None:
+        kbs = self.ready_knowledge()
+        with self.lock:
+            hubs = list(self.hubs.values())
+        for hub in hubs:
+            hub.use_knowledge(kbs)
+
+    def _save_knowledge(self) -> None:
+        self.store.mkdir(parents=True, exist_ok=True)
+        (self.store / "knowledge.json").write_text(json.dumps(self.kb_meta, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    def add_knowledge(self, path: str, name: str = "") -> dict:
+        """加一個資料夾當知識庫,馬上在背景建索引。"""
+        if not self.can_add_knowledge:
+            raise PermissionError("這裡不能加知識庫")
+        p = Path(path.strip().strip('"')).expanduser()
+        if not p.is_dir():
+            raise ValueError(f"找不到資料夾:{path}")
+        p = p.resolve()
+        with self.lock:
+            if existing := next((m for m in self.kb_meta if Path(m["path"]) == p), None):
+                return existing
+            meta = {"id": f"k{secrets.token_hex(3)}", "name": name.strip() or p.name, "path": str(p)}
+            self.kb_meta.append(meta)
+            self._save_knowledge()
+        self.update_knowledge(meta["id"])
+        return meta
+
+    def update_knowledge(self, kid: str) -> bool:
+        """在背景更新索引(只重算改過的檔案);已經在更新就回 False。"""
+        meta = next((m for m in self.kb_meta if m["id"] == kid), None)
+        if not meta:
+            return False
+        kb = self._kb(meta)
+        if kb.state == "indexing":
+            return False
+        kb.state = "indexing"  # 先標起來:畫面馬上看得到,也不會按兩次跑兩個
+
+        def run() -> None:
+            kb.update()
+            self._share_knowledge()  # 段落、檔案數變了:系統提示裡的知識庫清單跟著換
+
+        threading.Thread(target=run, daemon=True).start()
+        return True
+
+    def remove_knowledge(self, kid: str) -> bool:
+        with self.lock:
+            meta, kb = next((m for m in self.kb_meta if m["id"] == kid), None), self.kbs.get(kid)
+            if not meta or (kb and kb.state == "indexing"):  # 建索引中不能拿掉(背景執行緒還在寫)
+                return False
+            self.kb_meta.remove(meta)
+            self.kbs.pop(kid, None)
+            self._save_knowledge()
+        _rmtree(self.store / "knowledge" / kid)  # 只刪索引,資料夾裡的文件不動
+        self._share_knowledge()
+        return True
+
+    def knowledge_listing(self, paths: bool = True) -> list[dict]:
+        out = []
+        for meta in list(self.kb_meta):
+            kb = self._kb(meta)
+            item = {"id": meta["id"], **kb.summary(), "path": meta["path"] if paths else meta["name"],
+                    "missing": not Path(meta["path"]).is_dir()}
+            if kb.state != "indexing" and not item["missing"]:
+                item["changes"] = kb.changes()  # 有幾個檔案改過、還沒更新
+            out.append(item)
+        return out
 
     def new_conversation(self, pid: str | None = None, kind: str = "code") -> str:
         """kind:code = 綁專案(pid,沒給用預設專案);chat = 對話模式,不綁專案。"""
@@ -1200,6 +1311,12 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                     if self._guest():  # 訪客不給電腦上的路徑
                         listing["projects"] = [{**p, "path": p["name"]} for p in listing["projects"]]
                     self._json(200, {**listing, "user": self._label()})
+            elif url.path == "/api/knowledge":  # 知識庫頁面:清單、建索引的進度
+                if self._token_ok(self.headers.get("X-Token")):
+                    desk = self._desk()
+                    self._json(200, {"items": desk.knowledge_listing(paths=not self._guest()),  # 訪客不給電腦上的路徑
+                                     "can_add": desk.can_add_knowledge, "semantic": desk.embed is not None,
+                                     "backend": self._hub().session.registry.backend})
             elif url.path == "/api/outputs":  # 成品
                 if self._token_ok(self.headers.get("X-Token")):
                     self._json(200, self._desk().outputs())
@@ -1326,6 +1443,23 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             if path == "/api/conv/delete":
                 ok = desk.delete(str(body.get("id")))
                 return self._json(200 if ok else 409, {} if ok else {"error": "這段對話還在回答中,等結束再刪"})
+            if path == "/api/knowledge/add":
+                try:
+                    return self._json(200, desk.add_knowledge(str(body.get("path", "")), str(body.get("name", ""))))
+                except (ValueError, PermissionError) as e:
+                    return self._json(400, {"error": str(e)})
+            if path == "/api/knowledge/update":
+                ok = desk.update_knowledge(str(body.get("id")))
+                return self._json(202 if ok else 409, {} if ok else {"error": "找不到這個知識庫,或正在建索引"})
+            if path == "/api/knowledge/remove":
+                ok = desk.remove_knowledge(str(body.get("id")))
+                return self._json(200 if ok else 409, {} if ok else {"error": "找不到這個知識庫,或正在建索引"})
+            if path == "/api/knowledge/search":  # 知識庫頁面的「試搜尋」:看找到哪幾段(不經過模型)
+                q = " ".join(str(body.get("q", "")).split())
+                if not q:
+                    return self._json(400, {"error": "要搜尋什麼?"})
+                hits, how = knowledge.search_all(desk.ready_knowledge(), q)
+                return self._json(200, {"how": how, "hits": [{**h, "where": knowledge.label(h)} for h in hits]})
             if path == "/api/project/add":
                 try:
                     return self._json(200, desk.add_project(str(body.get("path", "")), str(body.get("name", ""))))
@@ -1409,7 +1543,8 @@ def local_desk(registry, quota, tools: list, status: str, model: str, role: str 
         return Hub(lambda on_event: agent.AgentSession(registry, quota, role=role, thinking=thinking, tools=tools,
                                                        on_event=on_event),
                    status=status, model=model, workspace=workspace)
-    return Desk(make_hub, toolbox.WORKSPACE, store=toolbox.OUTPUT_DIR / "state", repos_dir=toolbox.OUTPUT_DIR / "repos")
+    return Desk(make_hub, toolbox.WORKSPACE, store=toolbox.OUTPUT_DIR / "state", repos_dir=toolbox.OUTPUT_DIR / "repos",
+                embed=registry.embedder())
 
 
 GUEST_DAILY_TOKENS = 200_000  # 每支訪客手機每天的額度(用的是主人的 API 金鑰)

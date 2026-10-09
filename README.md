@@ -36,6 +36,7 @@ flowchart LR
 | `token_guard.py` | token 估算(實測校準)、截斷、歷史瘦身、大檔大綱、每人配額 |
 | `tools.py` | 列檔 / 讀檔 / 搜尋 / git 紀錄 / 沙箱測試與指令 / 提 patch / 存文件,含機密檔封鎖 |
 | `documents.py` | PDF / Word / Excel 轉文字,給 `read_document` 和 `@附檔` 用 |
+| `knowledge.py` | 知識庫:資料夾的文件依標題切段、算向量(Nemotron 3 Embed),增量更新;`search_knowledge` 工具照意思找、附出處;`demo_knowledge/` 是虛構的示範文件 |
 | `webui.py` + `webui.html` | 網頁介面:標準函式庫的 HTTP 伺服器 + Server-Sent Events,只聽 127.0.0.1,API 要帶啟動時產生的 token;側邊欄(新增 / 成品 / 待命 / 自訂 / 更多 + 專案和對話,左上角切換「對話 / 程式」,左下角帳號選單),對話存在 `output/state/` |
 | `desktop_app.py` | 桌面版:背景啟動 webui(port 8780)+ Edge app 模式開獨立視窗,視窗都關了就結束;`--install` 建桌面捷徑,圖示 `assets/` 用純 Python 畫;「更多 → 手機」打開手機連線(QR code + PIN 配對) |
 | `qr.py` | QR code 產生器(標準函式庫):手機連線的網址畫成 QR code |
@@ -54,9 +55,10 @@ flowchart LR
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
 | 難度分類器(10/9) | 14 題示範問題(一般 7、難題 7,含「繼續」「好」這種要看前文的短回覆) | 14/14 符合預期;Super 關思考每次 0.6–1.1 秒、約 300 tokens。題目是自己出的,真實準確度要看影子模式的紀錄 |
 | 看圖(10/9) | 錯誤截圖、長條圖、1 MB 的 JPEG,先轉文字再交給 Super | Nano Omni 關思考每張 1.4–9 秒、300–2,300 tokens,檔名 / 行號 / 數字 / 逐行抄寫全對;Super 依說明答對原因和修法 |
-| 離線測試 | 假模型,不需金鑰 | 117 個全過 |
+| 知識庫(10/9) | `demo_knowledge/` 三份虛構公司文件、12 題換句話說的問題(「搭小黃的錢可以請款嗎」) | 照意思找(Nemotron 3 Embed)第 1 名 10/12、前 3 名 12/12;關鍵字只有 7/12;混在一起反而 7–8/12。實際問「連休三天找誰同意、加班費怎麼算」:Super 自己查兩次,答案和出處都對 |
+| 離線測試 | 假模型,不需金鑰 | 120 個全過 |
 
-## 實測與審查抓到的 34 個問題
+## 實測與審查抓到的 36 個問題
 
 | # | 問題 | 怎麼發現 | 處理 |
 |---|---|---|---|
@@ -94,6 +96,8 @@ flowchart LR
 | 32 | 模型清單 API 列出的看圖模型,Phi-3 Vision、Cosmos Reason2 實際呼叫是 404;Llama 3.2 90B Vision 把檔名講錯、Gemma 4 31B 兩題都逾時 | 接看圖模型前逐一實測(10/9) | 選實測全對的 Nemotron 3 Nano Omni,備援 Llama 3.2 11B Vision(看得懂但行號會錯);冒煙測試加「看圖」一項(只送一張純紅色的小圖) |
 | 33 | 免費層的 Nano Omni 約一半回 503(ResourceExhausted),一次就放棄的話常常看不到圖 | 實測(10/9) | 看圖模型先重試 2 次(每次等 1–3 秒)再換備援;都失敗也照樣回答,並告訴主模型有一張圖沒看到 |
 | 34 | 看圖說明偶爾把同一段描述重複好幾次:一張圖 22 秒、3,800 tokens | 完整流程實測(10/9) | 提示改成三段、寫完就停,圖表數字和標籤要配對;temperature 0.2、輸出上限 1024;一模一樣的段落只留一次。重跑後每張 3–9 秒、約 700 tokens |
+| 35 | 模型清單上的 embedding 模型(nv-embedqa、arctic-embed、embed-qa-4…)大多 404;Nemotron 3 Embed 經過套件的 `NVIDIAEmbeddings` 回 502,直接打 API 正常 | 接知識庫前逐一實測(10/9) | 用 Nemotron 3 Embed,`registry.embedder()` 直接打 `/v1/embeddings`(忙線重試);冒煙測試加 embedding 一項 |
+| 36 | 照意思找加上關鍵字(混合排名)以為會更好,實測第 1 名命中從 10/12 掉到 7–8/12:中文兩字一組的關鍵字把不相關的段落拉上來 | 知識庫實驗(10/9) | 平常只用向量;算不了向量(沒網路、忙線)才退回關鍵字。專有名詞和數字向量也找得到(6 題 5 對) |
 
 ## 執行
 
@@ -113,6 +117,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
                                                   # 左下角帳號選單:設定(Ctrl+,)、回答語言、使用說明、更新紀錄、了解更多;手機上可以登出
                                                   # 輸入框右下角選模型和「努力程度」(低 / 中 / 高 / 超高:思考開關、步數上限、要多仔細)
                                                   # 輸入框的「+」上傳圖片(或貼上、拖進來):先用 Nemotron Nano Omni 把圖轉成文字再回答
+                                                  # 側邊欄「知識庫」:加入文件資料夾(手冊、規章…),回答時照意思找相關段落並附出處
                                                   # 「新增專案」可以貼公開的 GitHub 網址(下載到 output/repos/,只抓公開的);
                                                   # 開了上網的話,對話裡貼 PR / issue / 檔案網址,會讀成純文字(PR 附 diff)
 .venv/Scripts/python webui.py --lan               # 不用桌面版時:同一個 Wi-Fi 的手機也能開,終端機印出網址和 6 位數 PIN(不要和桌面版同時開)
@@ -123,6 +128,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python agent.py "test_add 失敗了,找出 bug 並提出修正" -f calc.py
 .venv/Scripts/python agent.py "為這個專案寫技術文件" -f a.py -f b.py --whole   # 整檔 → 自動走長文本模型
 .venv/Scripts/python agent.py "這個 race condition 的根因" -f x.py --role code_deep --think on
+.venv/Scripts/python agent.py "連休三天要找誰同意?" --kb demo_knowledge   # 知識庫:資料夾建成索引(只重算改過的)再回答
 .venv/Scripts/python report_routing.py --days 7   # 依難度選模型的報表(影子模式累積的紀錄)
 .venv/Scripts/python train_models.py --label     # 自己的小模型:先請 Super 標註 ml/seed_questions.txt 的範例問題
 .venv/Scripts/python train_models.py             # 訓練 + 實驗(決策樹、邏輯回歸、線性回歸…),報告和圖在 output/models/report.md
