@@ -33,6 +33,8 @@ routing:
     classifier_role: code   # Super 關思考,約 1 秒;資料不出公司(地端一樣用自己的 NIM)
     hard_role: code_deep    # 也用在:一般模型做到步數上限時,問使用者要不要換它接著做(不管 mode)
     timeout_s: 20           # 分類器逾時就照預設,不讓整題卡住(只有 on 會等它)
+    classifier: llm         # llm = 問 Super;tree = 用自己訓練的決策樹(train_models.py,不花 token、不用等;
+                            #   還沒訓練就自動退回 llm)。先看 report_routing.py 的「一致率」夠高再換
 
 limits:
   max_agent_steps: 15

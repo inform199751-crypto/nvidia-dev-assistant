@@ -95,6 +95,21 @@ def report(entries: list[dict], hard_role: str = "code_deep", examples: int = 10
     if shadow:
         lines.append("影子模式依判斷分組(實際都用預設模型;判斷為難題的那組應該明顯比較吃力):")
         lines += [f"  判斷 {pick:<11}{_stats(rows)}" for pick, rows in sorted(shadow.items())]
+    # 自己訓練的小模型(ml/,train_models.py):決策樹跟 LLM 分類器判斷一不一致、線性回歸預估準不準
+    both = [e for e in classified if e.get("engine", "llm") == "llm" and e["pick"] and e.get("tree")]
+    if both:
+        agree = sum((e["tree"] == "hard") == (e["pick"] == hard_role) for e in both)
+        lines.append(f"決策樹跟 LLM 分類器判斷一致:{_share(agree, len(both))}"
+                     "(夠高就能在 models.yaml 設 classifier: tree,不花 token、不用等)")
+    if by_engine := Counter(e.get("engine", "llm") for e in classified if e["pick"]):
+        if by_engine.get("tree"):
+            lines.append(f"由決策樹判斷的:{by_engine['tree']} 輪")
+    estimated = [e for e in entries if e.get("est_tokens") is not None and e["tokens"]
+                 and e["outcome"] in ("done", "max_steps")]
+    if estimated:
+        mae_t = _avg(abs(e["est_tokens"] - e["tokens"]) for e in estimated)
+        mae_s = _avg(abs(e["est_s"] - e["ms"] / 1000) for e in estimated if e.get("est_s") is not None)
+        lines.append(f"線性回歸預估的平均誤差:tokens {mae_t:,.0f}、時間 {mae_s:.1f} 秒({len(estimated)} 輪)")
     if escalated := [e for e in entries if e["by"] == "escalate"]:
         lines.append("一般模型做到步數上限、使用者選擇換模型接著做(沒再碰到上限的,就是難題模型救回來的):")
         lines.append(f"  {_stats(escalated)}")

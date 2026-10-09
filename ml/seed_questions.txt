@@ -1,0 +1,82 @@
+# 範例問題:train_models.py --label 請 LLM 分類器標註「一般 / 難題」,當決策樹、邏輯回歸的第一批訓練資料
+# (真實紀錄累積起來後一起用)。一行一題;# 開頭是註解。涵蓋小助理常見的各種請求,難易都有。
+# 解釋、閱讀
+解釋 calc.py 在做什麼
+@calc.py 的 average 函式是怎麼算的?
+這段程式碼是什麼意思? for i, x in enumerate(items): total += x * weights[i]
+幫我看看 utils.py 裡面有哪些函式
+README 裡的安裝步驟是什麼意思
+這個 regex 在比對什麼:^\d{3}-\d{4}$
+說明一下 Python 的 decorator 怎麼用
+git rebase 和 git merge 差在哪
+這個專案的資料夾結構是怎樣?
+config.yaml 裡每個設定是做什麼的
+# 文件、寫作、翻譯
+幫這個專案寫一份 README 並存檔
+把下面這段翻成英文:系統將於週五晚上進行維護,屆時服務會暫停兩小時。
+幫我寫一封信,跟主管報告這週修了三個 bug
+把這次會議的重點整理成條列
+幫 API 寫一份使用說明文件
+摘要 @規格書.docx,列出待辦事項
+分析 @銷售.xlsx 的數字,找出異常的月份
+讀 @需求.pdf,列出裡面提到的功能
+幫我把這段說明改得更口語一點
+把錯誤訊息整理成給客服看的 FAQ
+# 小修改、單一錯誤
+test_add 失敗了,找出 bug 並修正
+calc.py 的 add 寫錯了,幫我修
+這個錯誤怎麼解決:TypeError: unsupported operand type(s) for +: 'int' and 'str'
+執行時出現 KeyError: 'user_id',幫我看哪裡錯
+幫 calc.py 補上邊界情況的測試
+把 average 改成空清單時回傳 0
+幫我加一個 divide 函式和測試
+這個函式的變數名稱改得清楚一點
+把 print 改成用 logging
+ImportError: cannot import name 'load' from 'config',怎麼修
+pytest 跑出 AssertionError: assert 3 == 4,幫我看看
+幫我把重複的程式碼抽成一個函式
+這個 SQL 查詢少了 WHERE 條件,幫我補上
+更新 requirements.txt 裡 requests 的版本
+加上型別註記
+# 上網查詢
+上網查 Python 3.14 有哪些新功能,附上來源
+上網查這個錯誤訊息的解法:ModuleNotFoundError: No module named 'yaml'
+上網比較 pypdf 和 pdfplumber 的差別
+摘要這個網頁:https://docs.python.org/3/whatsnew/
+# 規劃、繼續
+繼續
+好
+照剛剛的計畫做
+先規劃怎麼加上匯出 CSV 的功能
+# 難題:跨多個檔案、沒有頭緒
+服務偶爾會卡住不回應,找不到原因,可能跟多執行緒有關
+測試有時過有時不過,懷疑是 race condition,幫我找出根本原因
+訂單有時會重複扣款,看不出是哪個模組造成的
+把整個專案的資料庫存取從 SQLite 換成 PostgreSQL,要改哪些地方?
+重構 payment、order、inventory 三個模組,把共用邏輯抽出來
+API 回應時間從 200ms 變成 3 秒,幫我找效能瓶頸
+記憶體一直上升,跑一天就 OOM,幫我找哪裡洩漏
+幫我審查整個專案有沒有 SQL injection 和權限漏洞
+設計一個可以水平擴展的任務佇列架構
+把同步的 requests 呼叫全部改成 asyncio,要注意哪些地方
+多個 worker 同時寫同一個檔案,資料偶爾會壞掉,怎麼解決
+登入有時候會被別人的 session 蓋掉,只有在高流量時才發生
+deadlock 只在正式環境出現,本機重現不了
+從單體架構拆成微服務,要怎麼切模組、怎麼處理資料一致性
+幫整個專案加上權限控管,每個 API 依角色限制
+快取和資料庫的資料不一致,時有時無,找出原因
+跨三個服務的分散式交易要怎麼設計才不會掉資料
+上次的修正沒用,問題還是一樣,換個方向再找原因
+升級框架到新版後很多地方壞掉,幫我全面檢查要改哪些
+這個演算法太慢,資料量十萬筆要跑十分鐘,幫我優化複雜度
+# 中間的
+幫我看這個 class 的設計有沒有問題
+把這個 300 行的函式拆成幾個小函式
+幫這個專案加上 CI,跑測試和 lint
+寫一個腳本把 logs 資料夾裡的錯誤次數統計成表格
+為什麼這段 async 程式碼不會等結果就往下跑
+幫我加快 pytest 的執行速度
+把設定從程式碼裡搬到環境變數
+這兩個函式哪個比較好維護,為什麼
+幫我寫一個可以重試三次的 HTTP 呼叫
+檢查這個 API 有沒有處理逾時和錯誤

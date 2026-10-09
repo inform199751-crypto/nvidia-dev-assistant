@@ -29,6 +29,7 @@ from pathlib import Path
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 import tools as toolbox
+from ml import runtime as ml_runtime
 from token_guard import TAIPEI, TokenQuota, message_tokens, strip_think_text
 
 log = logging.getLogger("dev_assistant")
@@ -61,6 +62,7 @@ class Decision:
     tokens: int = 0
     error: str = ""
     forced: bool = False     # 使用者自己選的(escalate):不管 mode 都照用
+    engine: str = "llm"      # 誰判斷的:llm(Super 分類器)/ tree(自己訓練的決策樹,ml/)
 
     @property
     def role(self) -> str | None:
@@ -128,23 +130,34 @@ def parse(text: str) -> tuple[str, str]:
     raise ValueError(f"看不懂分類器的回答:{text.strip()[:80]!r}")
 
 
+def ask_llm(registry, quota: TokenQuota, user: str, messages: list[BaseMessage], task: str,
+            attachments: list[str], cfg: dict) -> tuple[str, int]:
+    """問 LLM 分類器,回傳 (回答原文, tokens)。train_models.py 標註範例問題也用這個。"""
+    prompt = [SystemMessage(CLASSIFY_PROMPT), HumanMessage(dossier(messages, task, attachments))]
+    quota.check(user, message_tokens(prompt) + MAX_ANSWER_TOKENS)
+    llm = registry.chat(cfg["classifier_role"], thinking=False,  # 分類不需要思考
+                        max_output=MAX_ANSWER_TOKENS, timeout_s=cfg.get("timeout_s", 20))
+    ai = llm.invoke(prompt)
+    tokens = (ai.usage_metadata or {}).get("total_tokens", 0)
+    quota.charge(user, tokens)
+    return str(ai.content), tokens
+
+
 def classify(registry, quota: TokenQuota, user: str, messages: list[BaseMessage], task: str,
-             attachments: list[str]) -> Decision:
-    """問分類器。任何錯誤(逾時、伺服器掛掉、回答看不懂)都只記在 error,不擋這一題。"""
+             attachments: list[str], features: dict | None = None) -> Decision:
+    """問分類器。任何錯誤(逾時、伺服器掛掉、回答看不懂)都只記在 error,不擋這一題。
+    routing.difficulty.classifier 設成 tree、而且決策樹訓練好了,就用決策樹(不花 token、不用等);沒有就照樣問 LLM。"""
     mode, cfg = settings(registry.routing)
     d = Decision(mode)
     if mode == "off":
         return d
     began = time.monotonic()
     try:
-        prompt = [SystemMessage(CLASSIFY_PROMPT), HumanMessage(dossier(messages, task, attachments))]
-        quota.check(user, message_tokens(prompt) + MAX_ANSWER_TOKENS)
-        llm = registry.chat(cfg["classifier_role"], thinking=False,  # 分類不需要思考
-                            max_output=MAX_ANSWER_TOKENS, timeout_s=cfg.get("timeout_s", 20))
-        ai = llm.invoke(prompt)
-        d.tokens = (ai.usage_metadata or {}).get("total_tokens", 0)
-        quota.charge(user, d.tokens)
-        level, d.reason = parse(str(ai.content))
+        if cfg.get("classifier") == "tree" and features is not None and (g := ml_runtime.guess(features)):
+            (level, d.reason), d.engine = g, "tree"
+        else:
+            text, d.tokens = ask_llm(registry, quota, user, messages, task, attachments, cfg)
+            level, d.reason = parse(text)
         d.pick = cfg["hard_role"] if level == "hard" else registry.routing["default_role"]
     except Exception as e:
         d.error = f"{type(e).__name__}: {e}"[:200]
@@ -163,12 +176,12 @@ def ready(d: Decision) -> Future:
 
 
 def judge(registry, quota: TokenQuota, user: str, messages: list[BaseMessage], task: str,
-          attachments: list[str]) -> Future:
+          attachments: list[str], features: dict | None = None) -> Future:
     """開始判斷這一輪。on 要照結果選模型,只能等;shadow 只是記錄,丟到背景、這一輪不等它
     (10/9 審查:影子模式原本也在回答前同步問分類器,每題多等約 1 秒、伺服器卡住最多 20 秒,答案卻沒有任何改變)。"""
     if settings(registry.routing)[0] == "shadow":
-        return _pool.submit(classify, registry, quota, user, list(messages), task, list(attachments))
-    return ready(classify(registry, quota, user, messages, task, attachments))
+        return _pool.submit(classify, registry, quota, user, list(messages), task, list(attachments), features)
+    return ready(classify(registry, quota, user, messages, task, attachments, features))
 
 
 def skipped(routing: dict, by: str, pick: str | None = None, reason: str = "", forced: bool = False) -> Future:
@@ -189,14 +202,16 @@ def _excerpt(task: str) -> str:
 
 
 def record(d: Decision, *, task: str, turn: str, used: str | None, steps: int, tokens: int | None,
-           ms: int, outcome: str) -> None:
-    """每輪一行 JSON。寫不進去只警告,不影響回答。"""
+           ms: int, outcome: str, features: dict | None = None, predicted: dict | None = None) -> None:
+    """每輪一行 JSON。寫不進去只警告,不影響回答。
+    features:這題的特徵(只有數字,ml/features.py)、predicted:決策樹的判斷和線性回歸的預估 —— train_models.py 拿這些
+    當訓練資料,report_routing.py 拿來看決策樹跟分類器一不一致、預估準不準。"""
     if d.mode == "off":
         return
     entry = {"ts": datetime.now(TAIPEI).isoformat(timespec="seconds"), "mode": d.mode, "turn": turn, "by": d.by,
-             "pick": d.pick, "reason": d.reason, "error": d.error or None, "classify_ms": d.ms,
+             "engine": d.engine, "pick": d.pick, "reason": d.reason, "error": d.error or None, "classify_ms": d.ms,
              "classify_tokens": d.tokens, "used": used, "steps": steps, "tokens": tokens, "ms": ms,
-             "outcome": outcome, "task": _excerpt(task)}
+             "outcome": outcome, "task": _excerpt(task), "features": features, **(predicted or {})}
     path = log_path()
     try:
         with _lock:

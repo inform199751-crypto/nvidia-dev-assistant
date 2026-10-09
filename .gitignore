@@ -7,3 +7,6 @@ smoke_results.log
 output/
 vscode-extension/*.vsix
 deploy/auth.env
+
+# 老師給的課程範例(只在本機參考,不 commit:檔案很大,也是老師的教材)
+teacher_examples/

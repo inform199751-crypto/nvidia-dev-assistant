@@ -1923,3 +1923,162 @@ def test_phone_link_pairs_and_remembers_phones(workspace, tmp_path_factory, monk
         main.shutdown()
         main.server_close()
     assert json.loads((store / "phone.json").read_text())["on"] is False
+
+
+# ---------- 自己訓練的小模型(ml/) ----------
+
+def test_ml_features_are_numbers_only():
+    """特徵只有數字和等級,不留問題內容;關鍵字中英文都認;很短的接話(「繼續」)另外標出來。"""
+    from ml import features as F
+    f = F.extract("服務偶爾卡住,懷疑是 race condition,要改 api.py 和 worker.py", ["calc.py"], 2, "plan")
+    assert f["kw_concurrency"] == 1 and f["kw_error"] == 0 and f["files"] == 2 and f["attachments"] == 1
+    assert f["mode"] == "plan" and f["history_turns"] == 2 and f["followup_short"] == 0
+    assert all(isinstance(v, (int, float)) for k, v in f.items() if k != "mode")
+    assert F.extract("繼續", history_turns=3)["followup_short"] == 1 and F.extract("繼續")["followup_short"] == 0
+    assert F.extract("Fix the flaky test in tests/test_api.py")["kw_test"] == 1
+    d = F.discrete(f)
+    assert (d["chars"], d["files"], d["attachments"], d["history_turns"]) == ("中", "2+", "1+", "1-3")  # 45 字
+    assert F.discrete(F.extract("繼續"))["chars"] == "短"
+    assert len(F.vector(f)) == len(F.VECTOR) and F.vector(f)[F.VECTOR.index("mode_plan")] == 1.0
+
+
+def test_id3_matches_course_example():
+    """手寫 ID3 用課程 DecisionTree.py 的範例資料(貸款)要長出課本上的樹:先看有沒有房子,沒房子再看有沒有工作。
+    另外:限制深度、類別權重、沒看過的值用多數決、沒有資訊增益就當葉子(課程版會拿最後一個特徵去切)。"""
+    from ml import id3
+    data, labels = id3.createDataSet()
+    tree = id3.createTree(data, labels)
+    assert tree["feature"] == "F3-HOME" and tree["children"]["1"]["label"] == "yes"
+    assert tree["children"]["0"]["feature"] == "F2-WORK"
+    assert id3.classify(tree, {"F3-HOME": 0, "F2-WORK": 1})[0] == "yes"
+    assert id3.classify(tree, {"F3-HOME": 0, "F2-WORK": 0})[:2] == ("no", [("F3-HOME", "0"), ("F2-WORK", "0")])
+    assert id3.classify(tree, {"F3-HOME": 9})[0] == tree["default"]  # 沒看過的值
+    assert (id3.getNumLeafs(tree), id3.getTreeDepth(tree)) == (3, 2)
+    assert "feature" not in id3.createTree(data, labels, max_depth=0)
+    stump = id3.createTree([[0, "a"], [0, "b"]], ["x"])  # 切了也沒有增益
+    assert "feature" not in stump
+    rare = [[1, "hard"]] + [[0, "normal"]] * 3
+    assert id3.createTree(rare, ["x"], max_depth=0)["label"] == "normal"
+    assert id3.createTree(rare, ["x"], [3.0, 1.0, 1.0, 1.0], max_depth=0)["label"] == "hard"  # 加權後難題比較重
+
+
+def test_hand_written_regressions_predict_one_row_correctly():
+    """手寫線性回歸 / 邏輯回歸(照課程的 class):梯度下降找到 y = 4 + 3x;一次預測一筆要跟一次預測整批一樣
+    (課程版 predict 會用要預測的資料自己的平均和標準差,一筆時算錯);存成 JSON 後 runtime 的純 Python 算出同樣的值。"""
+    import math
+    import numpy as np
+    from ml import runtime
+    from ml.regression import LinearRegression, LogisticRegression
+    rng = np.random.default_rng(42)
+    X = 2 * rng.random((100, 1))
+    y = 4 + 3 * X[:, 0] + rng.normal(0, 0.1, 100)
+    m = LinearRegression(X, y)
+    _, cost = m.train(alpha=0.1, num_iterations=1000)
+    assert cost[-1] < cost[0] and abs(m.predict([[0.0]])[0, 0] - 4) < 0.1 and abs(m.predict([[2.0]])[0, 0] - 10) < 0.1
+    assert m.predict(X[:1])[0, 0] == pytest.approx(m.predict(X)[0, 0])
+    assert runtime.linear(m.to_json(), [1.5]) == pytest.approx(m.predict([[1.5]])[0, 0])
+    Xc = rng.normal(0, 1, (80, 2))
+    yc = (Xc[:, 0] + Xc[:, 1] > 0).astype(int)
+    lr = LogisticRegression(Xc, yc, l2=0.1)
+    lr.train()
+    assert (lr.predict(Xc) == yc).mean() > 0.9
+    p = 1 / (1 + math.exp(-runtime.linear(lr.to_json(), Xc[0].tolist())))
+    assert p == pytest.approx(lr.predict_proba(Xc[:1])[0])
+
+
+def _stump_models(models_dir):
+    """測試用的兩個小模型:提到並行就判難題;tokens 預估固定 log1p = 9(約 8 千)。"""
+    from ml import features as F
+    models_dir.mkdir(parents=True, exist_ok=True)
+    tree = {"feature": "kw_concurrency", "default": "normal", "counts": {"normal": 3, "hard": 1},
+            "children": {"0": {"label": "normal", "counts": {"normal": 3}}, "1": {"label": "hard", "counts": {"hard": 1}}}}
+    (models_dir / "difficulty_tree.json").write_text(json.dumps({"tree": tree}), encoding="utf-8")
+    flat = {"names": list(F.VECTOR), "mean": [0.0] * len(F.VECTOR), "std": [1.0] * len(F.VECTOR),
+            "theta": [9.0] + [0.0] * len(F.VECTOR)}
+    (models_dir / "cost_linear.json").write_text(json.dumps({"tokens": flat, "seconds": {**flat, "theta": [3.0] + flat["theta"][1:]}}),
+                                                 encoding="utf-8")
+
+
+def test_trained_tree_replaces_llm_classifier(workspace, routing_log):
+    """models.yaml 設 classifier: tree、決策樹也訓練好了:不問 LLM 分類器(不花 token),照決策樹選模型、說出理由;
+    回答前顯示線性回歸的預估;紀錄寫進特徵、決策樹判斷、預估,engine=tree(訓練時不拿它當標籤,免得自己學自己)。"""
+    _stump_models(routing_log.parent / "models")
+    cfg = difficulty_config("on")
+    cfg["routing"]["difficulty"]["classifier"] = "tree"
+    reg, seen = scripted_registry([ai("深入的答案"), ai("簡單的答案")], cfg)
+    events = []
+    s = AgentSession(reg, TokenQuota(10**6, 2), on_event=lambda kind, data: events.append((kind, data)))
+    assert s.ask("偶發的 race condition").role == "code_deep"
+    assert s.ask("add 是做什麼的").role == "code"
+    assert [role for role, _, _ in seen] == ["code_deep", "code"]  # 沒有分類器那一次呼叫
+    notices = [d["text"] for k, d in events if k == "notice"]
+    assert any("決策樹:提到並行/間歇=1" in n for n in notices)
+    assert sum("預估這一輪約 8,102 tokens、約 19 秒(線性回歸)" in n for n in notices) == 2
+    first, second = log_entries(routing_log)
+    assert (first["engine"], first["pick"], first["tree"], first["classify_tokens"]) == ("tree", "code_deep", "hard", 0)
+    assert first["features"]["kw_concurrency"] == 1 and first["est_tokens"] == 8102
+    assert second["features"]["history_turns"] == 1 and second["tree"] == "normal"
+
+
+def test_tree_shadows_llm_classifier_until_switched(workspace, routing_log):
+    """預設還是 LLM 分類器判斷:決策樹的判斷只記在紀錄裡(report_routing 拿來看一致率);沒訓練就照舊、紀錄裡是 None。"""
+    reg, _ = scripted_registry([ai('{"level": "normal", "reason": "簡單"}'), ai("答案"),
+                                ai('{"level": "hard", "reason": "並行"}'), ai("答案二")], difficulty_config("shadow"))
+    AgentSession(reg, TokenQuota(10**6, 2)).ask("add 是做什麼的")
+    _stump_models(routing_log.parent / "models")
+    AgentSession(reg, TokenQuota(10**6, 2)).ask("偶發的 race condition")
+    before, after = log_entries(routing_log)
+    assert (before["engine"], before["tree"], before["est_tokens"]) == ("llm", None, None)
+    assert (after["engine"], after["pick"], after["tree"]) == ("llm", "code_deep", "hard")
+
+
+def test_train_models_end_to_end(tmp_path, monkeypatch):
+    """train_models:讀範例標註 + 紀錄 → 分類實驗(手寫 ID3 / 邏輯回歸 vs scikit-learn)、回歸實驗 → 模型 JSON、圖、報告;
+    決策樹自己判斷的紀錄不拿來當標籤;資料不夠時不訓練。"""
+    pytest.importorskip("sklearn")
+    pytest.importorskip("matplotlib")
+    import math
+    import random
+    import tools as toolbox
+    import train_models
+    from ml import features as F
+    from ml import runtime
+    rnd = random.Random(0)
+    hard_words = ["偶發的 race condition 找不到原因", "整個專案的效能瓶頸", "跨多個模組重構架構", "權限漏洞的安全審查"]
+    easy_words = ["解釋 calc.py", "把這段翻成英文", "幫我寫一封信", "test_add 失敗了"]
+    out = tmp_path / "models"
+    out.mkdir()
+    with (out / "seed_labels.jsonl").open("w", encoding="utf-8") as f:
+        for i in range(40):
+            q, label = (rnd.choice(hard_words), "hard") if i % 3 == 0 else (rnd.choice(easy_words), "normal")
+            f.write(json.dumps({"task": q, "label": label, "features": F.extract(q + " " * rnd.randint(0, 50))},
+                               ensure_ascii=False) + "\n")
+    log = tmp_path / "routing_log.jsonl"
+    with log.open("w", encoding="utf-8") as f:
+        for i in range(36):
+            q = rnd.choice(hard_words + easy_words) + "。" * rnd.randint(0, 300)
+            feats = F.extract(q, ["a.py"] * rnd.randint(0, 2))
+            tokens = int(3000 * math.exp(0.004 * feats["chars"] + 0.5 * feats["attachments"]) * rnd.uniform(0.9, 1.1))
+            pick = "code_deep" if q.rstrip("。") in hard_words else "code"
+            f.write(json.dumps({"by": "classifier", "engine": "tree" if i % 2 else "llm", "pick": pick, "outcome": "done",
+                                "tokens": tokens, "ms": tokens // 2, "features": feats}) + "\n")
+    rows, reg_rows = train_models.load_rows(out, log, "code_deep")
+    assert len(rows) == 40 + 18 and len(reg_rows) == 36  # engine=tree 的那半不當標籤
+    clf = train_models.classification_experiment(rows, out)
+    table = {r["model"]: r for r in clf["table"]}
+    id3_row = next(r for n, r in table.items() if n.startswith("ID3 決策樹"))
+    assert id3_row["accuracy"] > max(r["accuracy"] for n, r in table.items() if n.startswith("基準"))
+    assert 1 <= clf["depth"] <= 6 and len(clf["sweep"]) == 6 and (out / "depth.png").stat().st_size > 0
+    reg = train_models.regression_experiment(reg_rows, out)
+    by_name = {r["model"]: r for r in reg["tokens"]["table"]}
+    assert by_name["線性回歸(手寫,梯度下降)"]["mae"] < by_name["基準:猜平均"]["mae"]
+    report = train_models.write_report(out, clf, reg, len(reg_rows)).read_text(encoding="utf-8")
+    assert "ID3 決策樹" in report and "MAE" in report
+    for name in ("difficulty_tree.json", "cost_linear.json", "tree_id3.png", "tree_sklearn.png", "roc.png",
+                 "confusion_matrix.png", "regression_tokens.png", "regression_seconds.png"):
+        assert (out / name).stat().st_size > 0, name
+    monkeypatch.setattr(toolbox, "OUTPUT_DIR", tmp_path)  # runtime 讀 OUTPUT_DIR/models
+    assert runtime.guess(F.extract("偶發的 race condition 找不到原因"))[0] == "hard"
+    tokens, seconds = runtime.estimate(F.extract("解釋 calc.py"))
+    assert 1000 < tokens < 20000 and seconds > 0
+    assert "資料還不夠" in train_models.write_report(out, None, None, 3).read_text(encoding="utf-8")

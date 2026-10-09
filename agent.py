@@ -28,6 +28,8 @@ import difficulty
 import documents
 import tools as toolbox
 import web
+from ml import features as ml_features
+from ml import runtime as ml_runtime
 from tools import ALL_TOOLS
 
 log = logging.getLogger("dev_assistant")
@@ -315,17 +317,24 @@ class AgentSession:
         """
         self._maybe_compact()  # 要在記下 start 之前:摘要會把訊息變短
         start, began = len(self.messages), time.monotonic()
-        judging = self.judging = self._route(task, list(attachments), mode, role)
+        # 自己訓練的小模型(ml/,還沒訓練就是 None):決策樹判斷難不難、線性回歸預估這一輪的用量
+        feats = ml_features.extract(task, list(attachments), sum(isinstance(m, HumanMessage) for m in self.messages[1:]),
+                                    mode)
+        tree, est = ml_runtime.guess(feats), ml_runtime.estimate(feats)
+        if est:
+            self._notice("預估這一輪%s(線性回歸)", ml_runtime.describe(*est))
+        predicted = {"tree": tree and tree[0], "est_tokens": est and round(est[0]), "est_s": est and round(est[1], 1)}
+        judging = self.judging = self._route(task, list(attachments), mode, role, feats)
         try:  # on 已經等到判斷結果;影子模式還在背景判斷就不等它(反正不換模型)
             r = self._ask(task, list(attachments), mode, judging.result() if judging.done() else None)
         except BaseException as e:
             del self.messages[start:]
-            self._record_when_judged(judging, task, mode, began, None, type(e).__name__)
+            self._record_when_judged(judging, task, mode, began, None, type(e).__name__, feats, predicted)
             raise
-        self._record_when_judged(judging, task, mode, began, r, "max_steps" if r.hit_limit else "done")
+        self._record_when_judged(judging, task, mode, began, r, "max_steps" if r.hit_limit else "done", feats, predicted)
         return r
 
-    def _route(self, task: str, attachments: list[str], mode: str, role: str | None) -> Future:
+    def _route(self, task: str, attachments: list[str], mode: str, role: str | None, feats: dict | None = None) -> Future:
         """這一輪用一般還是難題模型。一輪只判斷一次(中途不換,換模型要重送整段對話);照計畫執行沿用規劃那輪。"""
         routing = self.registry.routing
         if role:
@@ -335,10 +344,10 @@ class AgentSession:
         if mode == "execute" and self.judging and self.judging.done():
             prev = self.judging.result()
             return difficulty.skipped(routing, "plan", prev.pick, prev.reason, prev.forced)
-        return difficulty.judge(self.registry, self.quota, self.user, self.messages, task, attachments)
+        return difficulty.judge(self.registry, self.quota, self.user, self.messages, task, attachments, feats)
 
     def _record_when_judged(self, judging: Future, task: str, mode: str, began: float, r: AgentResult | None,
-                            outcome: str) -> None:
+                            outcome: str, feats: dict | None = None, predicted: dict | None = None) -> None:
         """分類器的用量算進累計、寫路由紀錄。影子模式的判斷可能比回答晚完成,就等它完成時再補。"""
         ms, answered = int((time.monotonic() - began) * 1000), r and r.tokens_used
         if r and judging.done():
@@ -348,7 +357,8 @@ class AgentSession:
             d = f.result()
             self.tokens_used += d.tokens
             difficulty.record(d, task=task, turn=mode, ms=ms, used=r and r.role, steps=r.steps if r else 0,
-                              tokens=None if r is None else answered + d.tokens, outcome=outcome)
+                              tokens=None if r is None else answered + d.tokens, outcome=outcome,
+                              features=feats, predicted=predicted)
 
         judging.add_done_callback(write)
 

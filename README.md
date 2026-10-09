@@ -39,6 +39,7 @@ flowchart LR
 | `webui.py` + `webui.html` | 網頁介面:標準函式庫的 HTTP 伺服器 + Server-Sent Events,只聽 127.0.0.1,API 要帶啟動時產生的 token;側邊欄(新增 / 成品 / 待命 / 自訂 / 更多 + 專案和對話),對話存在 `output/state/` |
 | `desktop_app.py` | 桌面版:背景啟動 webui(port 8780)+ Edge app 模式開獨立視窗,視窗都關了就結束;`--install` 建桌面捷徑,圖示 `assets/` 用純 Python 畫;「更多 → 手機」打開手機連線(QR code + PIN 配對) |
 | `qr.py` | QR code 產生器(標準函式庫):手機連線的網址畫成 QR code |
+| `ml/` + `train_models.py` | 自己訓練的小模型(照課程教材寫):ID3 決策樹判斷題目難不難、線性回歸預估每一輪的 tokens 和時間,跟 scikit-learn 的決策樹 / 邏輯回歸 / 隨機森林 / 神經網路比較;執行時讀 JSON,純 Python |
 | `deploy/` | 多人部署:Dockerfile + docker-compose(小助理 `--team` + Redis + oauth2-proxy),說明見 `deploy/README.md` |
 | `vscode-extension/` | VS Code 外掛:編輯器旁邊打開小助理、右鍵「問選取的程式碼」;`build_vsix.py` 打包成 .vsix(不需要 Node) |
 | `web.py` | 上網搜尋(Tavily)與讀網頁;`.env` 設 `ALLOW_WEB=true` 才啟用,每次上網都先問使用者 |
@@ -52,9 +53,9 @@ flowchart LR
 | 改 bug | `demo_workspace/`:加號寫成減號 | Super 7 步、1.6 萬 tokens;兩次 diff 格式錯被退回後自行修正,沙箱實測 2 passed,原檔未動 |
 | 長文本 | 客服專案 57 個檔案、19.1 萬 tokens,寫整份技術文件 | 自動升級到 Ultra,1 步完成,**482 秒**;抽查 14 處 `path:line` 引用全對 → [`demo_output/helpdesk-tech-doc.md`](demo_output/helpdesk-tech-doc.md) |
 | 難度分類器(10/9) | 14 題示範問題(一般 7、難題 7,含「繼續」「好」這種要看前文的短回覆) | 14/14 符合預期;Super 關思考每次 0.6–1.1 秒、約 300 tokens。題目是自己出的,真實準確度要看影子模式的紀錄 |
-| 離線測試 | 假模型,不需金鑰 | 99 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 105 個全過 |
 
-## 實測與審查抓到的 29 個問題
+## 實測與審查抓到的 31 個問題
 
 | # | 問題 | 怎麼發現 | 處理 |
 |---|---|---|---|
@@ -87,6 +88,8 @@ flowchart LR
 | 27 | 從 GitHub 加專案用一般的 `git clone`,會自動用電腦上存的 GitHub 登入(系統的 Git Credential Manager、gh 設的 helper):私人 / 公司 repo 會被抓下來,再送到 build.nvidia.com | 做 GitHub 下載前實測(10/9,本機要求帳密的假伺服器 + 會留記號的假 helper:兩個都被叫到) | clone 時清掉 credential helper 和 askpass、關掉終端機提示;同一個實驗兩個 helper 都沒被叫到,私人 repo 0.5 秒就失敗 |
 | 28 | 下載的 repo 自帶 `ASSISTANT.md` 的話會直接進系統提示:別人寫的內容被當成「團隊規則」照做 | 做 GitHub 下載時審查 | 下載的專案規則改存在 repo 外面(`output/repos/<名稱>.rules.md`),repo 自帶的那份只是一般檔案 |
 | 29 | 影子模式也在回答前同步問分類器:每題多等約 1 秒、伺服器卡住最多 20 秒,答案卻不會變(影子模式只記錄) | 審查(10/9) | 影子模式改在背景判斷、這一輪不等它,判斷完才補寫紀錄;只有 `on` 會等結果 |
+| 30 | 課程範例的線性回歸 `predict` 用「要預測的那批資料」自己的平均和標準差標準化:一次只預測一筆時(小助理一題一題預估)標準差是 0、平均也沒減掉,結果是錯的 | 把課程程式接進小助理時讀程式碼 | `ml/regression.py` 改用訓練時記下的平均和標準差;測試確認一次預測一筆和整批結果一樣 |
+| 31 | 手寫 ID3 決策樹判斷難易,交叉驗證準確率 0.66,比「全部猜一般」的 0.68 還差 | 決策樹實驗(10/9,73 題 Super 標註的範例) | 特徵照分類器自己的判斷標準補上「間歇發生」「沒有頭緒 / 上次修正沒用」;加樹的深度實驗(1–6,交叉驗證挑):深度 5 準確率 0.89、F1 0.81 |
 
 ## 執行
 
@@ -111,6 +114,8 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python agent.py "為這個專案寫技術文件" -f a.py -f b.py --whole   # 整檔 → 自動走長文本模型
 .venv/Scripts/python agent.py "這個 race condition 的根因" -f x.py --role code_deep --think on
 .venv/Scripts/python report_routing.py --days 7   # 依難度選模型的報表(影子模式累積的紀錄)
+.venv/Scripts/python train_models.py --label     # 自己的小模型:先請 Super 標註 ml/seed_questions.txt 的範例問題
+.venv/Scripts/python train_models.py             # 訓練 + 實驗(決策樹、邏輯回歸、線性回歸…),報告和圖在 output/models/report.md
 .venv/Scripts/python -m pytest -q                 # 離線測試,不需金鑰
 ```
 
