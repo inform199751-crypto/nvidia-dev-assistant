@@ -76,6 +76,7 @@ class ModelRegistry:
         self.routing: dict = config["routing"]
         self.limits: dict = config["limits"]
         self.embedding: dict | None = config.get("embedding")  # 知識庫用的 embedding 模型(knowledge.py)
+        self.safety: dict | None = config.get("safety")  # 安全把關的模型(guard.py)
         self.specs = {}
         for role, cfg in config["roles"].items():
             cfg = dict(cfg)
@@ -171,6 +172,36 @@ class ModelRegistry:
 
         embed.model = cfg["model"]  # 換了模型,知識庫要全部重算
         return embed
+
+    def safety_checker(self) -> Callable[[str], tuple[str, str]] | None:
+        """安全把關用(guard.py):check(文字) → ("safe" | "unsafe", 類別);models.yaml 沒有 safety 就回 None。
+        回答格式各家不同,由 guard.parse 解析。逾時設短(預設 10 秒):這是多一道保險,不能讓每次上網都卡住。"""
+        cfg = self.safety
+        if not cfg:
+            return None
+        base = (cfg.get("nim_base_url") or self._backend_cfg["base_url"]) if self.backend == "nim" else self._backend_cfg["base_url"]
+        key_env = self._backend_cfg.get("api_key_env")
+
+        def check(text: str) -> tuple[str, str]:
+            import httpx
+
+            import guard
+
+            api_key = os.getenv(key_env) if key_env else None
+            body = {"model": cfg["model"], "messages": [{"role": "user", "content": text}], "max_tokens": 64, "temperature": 0}
+            for attempt in range(2):
+                r = httpx.post(base.rstrip("/") + "/chat/completions", json=body, timeout=cfg.get("timeout_s", 10),
+                               headers={"Authorization": f"Bearer {api_key}"} if api_key else {})
+                if r.status_code in (429, 503) and attempt == 0:
+                    time.sleep(1)
+                    continue
+                if r.status_code != 200:
+                    raise RuntimeError(f"[{r.status_code}] {r.text[:120]}")
+                return guard.parse(r.json()["choices"][0]["message"]["content"] or "")
+            raise AssertionError("unreachable")
+
+        check.model = cfg["model"]
+        return check
 
     def vision_model(self, role: str) -> Runnable:
         """看圖:關思考(10/9 實測 Nano Omni 開思考慢 5 倍、多花上千 tokens,看圖說明用不到)。

@@ -1,12 +1,22 @@
-"""辦公檔案轉文字(PDF、Word、Excel),給 read_document 工具和 @附檔用。"""
+"""辦公檔案轉文字(PDF、Word、Excel),給 read_document 工具、@附檔和知識庫用。"""
 from __future__ import annotations
 
+import io
 from pathlib import Path
+from typing import Callable
 
 from token_guard import estimate_tokens
 
 DOC_SUFFIXES = {".pdf", ".docx", ".xlsx", ".xlsm"}
 MAX_SHEET_ROWS = 500  # 每個工作表最多轉幾列,大表格請使用者先篩選
+
+# 掃描檔:沒有文字層的頁,把頁面上的掃描圖交給看圖模型讀(agent.prepare 設定成 agent.page_reader)。
+# ocr(圖片, mime) → 文字;None = 不讀,照舊說是掃描檔。10/10 實測 Nano Omni 一頁約 4 秒、2,200 tokens,逐字全對;
+# Nemotron Parse 2.0 在 catalog 的 API 格式不相容(400 / 500)
+OCR: Callable[[bytes, str], str] | None = None
+MAX_OCR_PAGES = 20   # 一份最多讀幾頁掃描頁(每頁約 2,200 tokens)
+OCR_SIDE = 1600      # 掃描圖縮到這個邊長再送(字還看得清楚,tokens 少很多)
+_ocr_cache: dict[tuple, str] = {}  # (檔案, 大小, 修改時間, 頁) → 文字:同一份檔案讀第二次不用再花 token
 
 
 def extract_text(path: Path) -> str:
@@ -30,9 +40,40 @@ def _pdf(path: Path) -> str:
     if reader.is_encrypted and not reader.decrypt(""):
         raise ValueError("這份 PDF 有密碼保護,請先解除密碼再讀")
     pages = [(page.extract_text() or "").strip() for page in reader.pages]
+    note = ""
+    if OCR is not None and not all(pages):  # 有掃描頁:交給看圖模型讀(只讀沒有文字的頁)
+        pages, note = _ocr_pages(path, reader, pages)
     if not any(pages):
         return f"(這份 PDF 共 {len(pages)} 頁,但沒有文字層,可能是掃描檔,要先做 OCR 才讀得到內容)"
-    return "\n\n".join(f"--- 第 {i} 頁 ---\n{text}" for i, text in enumerate(pages, 1))
+    return "\n\n".join(f"--- 第 {i} 頁 ---\n{text}" for i, text in enumerate(pages, 1)) + note
+
+
+def _ocr_pages(path: Path, reader, pages: list[str]) -> tuple[list[str], str]:
+    """沒有文字層的頁:取頁面上最大的那張圖(掃描檔一頁就是一張圖),縮小後交給 OCR。讀不了的頁寫原因,不擋其他頁。"""
+    st = path.stat()
+    out, done = list(pages), 0
+    for i, text in enumerate(pages):
+        if text:
+            continue
+        if done >= MAX_OCR_PAGES:
+            return out, f"\n\n[掃描頁太多,只讀了前 {MAX_OCR_PAGES} 頁]"
+        key = (str(path.resolve()), st.st_size, st.st_mtime, i)
+        if key not in _ocr_cache:
+            try:
+                images = sorted(reader.pages[i].images, key=lambda im: len(im.data), reverse=True)
+                if not images:
+                    continue  # 真的是空白頁
+                img = images[0].image.convert("RGB")
+                img.thumbnail((OCR_SIDE, OCR_SIDE))
+                buf = io.BytesIO()
+                img.save(buf, "JPEG", quality=85)
+                _ocr_cache[key] = "(掃描頁,由看圖模型讀出,可能有錯字)\n" + OCR(buf.getvalue(), "image/jpeg").strip()
+            except Exception as e:  # 看圖模型忙線、圖片格式特殊:這頁先跳過,下次再讀
+                out[i] = f"(第 {i + 1} 頁是掃描頁,這次讀不出來:{str(e).splitlines()[0][:100] if str(e) else type(e).__name__})"
+                continue
+        out[i] = _ocr_cache[key]
+        done += 1
+    return out, ""
 
 
 def _docx(path: Path) -> str:

@@ -36,6 +36,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 from langchain_core.messages import messages_from_dict, messages_to_dict
 
 import agent
+import guard
 import knowledge
 import qr
 import tools as toolbox
@@ -379,8 +380,10 @@ class Hub:
 
     def __init__(self, new_session: Callable[[Callable], agent.AgentSession], status: str = "", model: str = "",
                  team: bool = False, gate: Gate | None = None, patch_dir: Path | None = None,
-                 output_dir: Path | None = None, workspace: Path | None = None):
+                 output_dir: Path | None = None, workspace: Path | None = None, screen: bool = False):
+        """screen:問題先過安全模型(guard.py),不安全就不回答 —— 訪客用的是主人的金鑰,主人自己的問題不檢查。"""
         self.new_session = new_session
+        self.screen = screen
         self.status = status
         self.model = model  # 頁面上方顯示的模型名稱
         # team:多人共用伺服器。工作區是共用的(唯讀),所以不能套用修改、不能改 ASSISTANT.md,改成下載 patch
@@ -588,6 +591,8 @@ class Hub:
         patches = self.bench.patches
         before, planned, offer = len(patches), False, None
         try:
+            if self.screen and (v := guard.screen(text)).safe is False:
+                raise guard.Blocked(f"這個問題沒有通過安全檢查({v.categories or '不當內容'}),HSUAN 不會回答。")
             with self.gate.turn(self.publish) if self.gate else nullcontext(), toolbox.using(self.bench):
                 files = [] if self.chat else agent.file_mentions(text)  # 對話模式讀不到電腦上的檔案
                 r = self.session.ask(self.note + text, files, mode, role, images or [])
@@ -603,6 +608,8 @@ class Hub:
                 self.publish("offer_apply", {"patch": len(patches) - 1, "passed": passed, "team": self.team,
                                              "name": toolbox.patch_label(patch),
                                              "diff": patch.read_text(encoding="utf-8")[:MAX_DIFF_CHARS]})
+        except guard.Blocked as e:  # 訪客的問題沒通過安全檢查:模型沒有收到,對話照常
+            self.publish("error", {"text": str(e)})
         except Exception as e:  # 額度用完、模型全掛:這輪已經退掉,對話還能繼續
             self.publish("error", {"text": f"{type(e).__name__}: {e}"})
         finally:
@@ -1663,7 +1670,7 @@ def guest_desks(registry, tools: list, status: str, model: str, base: Path | Non
                 desks[gid] = Desk(lambda ws: Hub(lambda on_event: agent.AgentSession(
                     registry, quota, user=f"guest-{gid}", tools=allowed, on_event=on_event),
                     status=status, model=model, team=True, patch_dir=home / "patches", output_dir=home / "docs",
-                    workspace=ws), space, store=home / "state", can_add_projects=False, docs_dir=home / "docs")
+                    workspace=ws, screen=True), space, store=home / "state", can_add_projects=False, docs_dir=home / "docs")
             return desks[gid]
 
     get.desks = desks  # PhoneLink.guest_listeners 用

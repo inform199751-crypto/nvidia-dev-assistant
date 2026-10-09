@@ -18,6 +18,7 @@ import httpx
 from langchain_core.tools import tool
 
 import documents
+import guard
 import tools
 
 MAX_BYTES = 2_000_000
@@ -182,7 +183,7 @@ def fetch_url(url: str) -> str:
         return f"錯誤:{e}"
     parts = documents.split_parts(text, PAGE_TOKENS)
     more = f"\n[網頁很長,只顯示開頭(共 {len(parts)} 段)]" if len(parts) > 1 else ""
-    return f"[{title or url}]\n{url}\n\n{parts[0]}{more}"
+    return guard.web_content(f"[{title or url}]\n{url}\n\n{parts[0]}{more}", "這個網頁")  # 藏在網頁裡的指令先擋下
 
 
 @tool
@@ -201,7 +202,7 @@ def web_search(query: str, max_results: int = 5) -> str:
         return f"錯誤:搜尋服務回 HTTP {r.status_code}"
     rows = [f"{i}. {x.get('title', '')}\n   {x.get('url', '')}\n   {' '.join((x.get('content') or '').split())[:300]}"
             for i, x in enumerate(r.json().get("results", []), 1)]
-    return "\n\n".join(rows) or "沒有搜尋結果"
+    return guard.web_content("\n\n".join(rows), "搜尋結果") if rows else "沒有搜尋結果"
 
 
 def web_tools() -> list:

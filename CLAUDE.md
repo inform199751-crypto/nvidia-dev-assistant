@@ -98,6 +98,10 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 
 **知識庫**(`knowledge.py`):`KnowledgeBase(資料夾, 索引位置, embed)`,`update()` 增量更新(大小 + 修改時間沒變的沿用,換 embedding 模型全部重算,失敗時舊索引照用),依標題切段(`split`,每段帶標題路徑,PDF 記頁碼),向量正規化後存 `vectors.bin`(float32)+ `index.json`,純 Python 算相似度;算不了向量就退回 BM25(中文兩字一組)。10/9 實測混合排名比只用向量差,所以平常只用向量。embedding 由 `registry.embedder()` 直接打 `/v1/embeddings`(models.yaml 的 `embedding`,套件的 NVIDIAEmbeddings 對 Nemotron 3 Embed 回 502)。`search_knowledge` 工具讀 `bench().knowledge`;只有在有知識庫時才綁(`Hub._knowledge_tool`,對話模式也有,`CHAT_TOOLS` 含它),`agent.knowledge_line()` 把知識庫名稱放進系統提示。網頁:`Desk` 的 `kb_meta`(`store/knowledge.json`)、索引在 `store/knowledge/<id>/`,加入 / 更新在背景執行緒跑,完成後 `_share_knowledge` 更新每個 Hub;訪客、多人模式不能加(`can_add_knowledge`)。CLI:`--kb 資料夾`。測試用 `fake_embedder`(兩字一組雜湊成 64 維)。
 
+**安全把關**(`guard.py`,models.yaml 的 `safety`,Nemotron 3.5 Content Safety):`guard.CHECK` 由 `agent.prepare` 設成 `registry.safety_checker()`(直接打 chat completions,`guard.parse` 認兩種回答格式)。`web.fetch_url` / `web_search` 回傳前過 `guard.web_content`:不安全就換成說明、內容不交給模型;檢查失敗(逾時、忙線)不擋,只在前面提醒。訪客的 Hub(`screen=True`)問題先過 `guard.screen`,不安全丟 `guard.Blocked`、模型不會收到;主人自己的問題不檢查。測試用 `fake_safety`。
+
+**掃描的 PDF**:`documents.OCR`(`agent.page_reader(registry)`,跟看圖同一顆模型、`OCR_PROMPT` 要求保留繁體)讀沒有文字層的頁:pypdf 取頁面上最大的圖、Pillow 縮到 `OCR_SIDE` 存 JPEG;`_ocr_cache` 依檔案大小 / 時間快取;讀不出來的頁寫「這次讀不出來」,知識庫遇到就記成錯誤、下次更新再試(`knowledge._update` 的 keep 排除有 error 的檔案)。tokens 透過 `agent._billing`(ContextVar,`ask` 設成目前的 session)算進對話和額度;知識庫的背景執行緒沒有 session,不算。
+
 **`--whole` 模式**:附檔全部內嵌、不綁工具、一次回答,交給路由決定要不要升級到 Ultra。給工具的話模型會分段重讀,每步重送全部內容。
 
 ## 不能破壞的規則

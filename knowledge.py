@@ -203,8 +203,10 @@ class KnowledgeBase:
         path = self.folder / rel
         if path.suffix.lower() in documents.DOC_SUFFIXES:
             text = documents.extract_text(path)
-            if text.startswith("(這份 PDF"):  # 掃描檔:沒有文字層
+            if text.startswith("(這份 PDF"):  # 掃描檔:沒有文字層,也沒有看圖模型可以讀
                 raise ValueError("PDF 沒有文字層(掃描檔),讀不到內容")
+            if "這次讀不出來" in text:  # 有掃描頁這次沒讀到:記成錯誤,下次更新再試(不要把錯誤訊息收進索引)
+                raise ValueError("有掃描頁這次讀不出來(看圖模型忙線?),下次更新會再試")
             return text
         data = path.read_bytes()
         for enc in ("utf-8-sig", "cp950"):  # 台灣的舊文字檔、Excel 存的 CSV 常是 Big5
@@ -232,8 +234,9 @@ class KnowledgeBase:
         model = getattr(self.embed, "model", "") if self.embed else ""
         old_chunks, old_vectors, old_dim = self.index
         same = model == self.model
-        keep = {rel for rel, (size, mtime) in found.items()
-                if same and rel in self.files and (self.files[rel]["size"], self.files[rel]["mtime"]) == (size, mtime)}
+        keep = {rel for rel, (size, mtime) in found.items()  # 上次讀不了的(看圖模型忙線…)檔案沒改也要再試
+                if same and rel in self.files and (self.files[rel]["size"], self.files[rel]["mtime"]) == (size, mtime)
+                and not self.files[rel].get("error")}
         todo = [rel for rel in found if rel not in keep]
         chunks, vectors = [], array("f")
         for i, c in enumerate(old_chunks):

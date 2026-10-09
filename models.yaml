@@ -48,6 +48,16 @@ embedding:
   nim_base_url: http://nim-nemotron-embed:8000/v1
   timeout_s: 60
 
+# 安全把關(guard.py):上網讀到的內容、訪客的問題,先讓它檢查(藏在網頁裡要 AI 照做的指令、不當內容)。
+# 2026-10-10 實測 5 題(正常網頁 / 惡意網頁 / 隱晦的提示注入 / 不當請求 / 正常請求):
+#   Nemotron 3.5 Content Safety 全對,每次約 0.7 秒;NemoGuard 8B content safety、Llama Guard 4 全部逾時(60 秒);
+#   Safety Guard 8B v3 對了 3 題、4–28 秒,其他逾時
+# 檢查失敗(逾時、忙線)不擋,只提醒模型(guard.py 開頭有寫為什麼)
+safety:
+  model: nvidia/nemotron-3.5-content-safety
+  nim_base_url: http://nim-content-safety:8000/v1
+  timeout_s: 10
+
 limits:
   max_agent_steps: 15
   max_execute_steps: 25             # 照計畫執行(/plan 同意後)的步數上限:要做的事比一般問答多
@@ -74,6 +84,9 @@ roles:
     fallbacks: [code_deep]                  # 404 / 429 / 503 / 逾時 → 自動改用下一顆
 
   # 難題用(跨檔推理、找不到 root cause 時):agent.py --role code_deep,或 routing.difficulty 開 on 自動判斷
+  # 2026-10-10 找更快的難題模型:同一題修 bug(demo_workspace)Super 6 步 16 秒、DeepSeek 4 步 136 秒、
+  #   GLM-5.3 Flash 4 步 122 秒(第一次 300 秒逾時)→ 沒有明顯比較快,不換;GLM-5.3 冒煙 43–64 秒;
+  #   Kimi K3、Laguna XS 逾時;Kimi K2.6、Nemotron Nano 3、Mistral Large 2 已 404
   code_deep:
     model: deepseek-ai/deepseek-v4.1-flash  # DeepSeek 在 catalog 上僅存的版本
     nim_base_url: http://nim-deepseek:8000/v1

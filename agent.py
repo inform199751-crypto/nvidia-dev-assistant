@@ -14,6 +14,7 @@ import re
 import sys
 import time
 from concurrent.futures import Future
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,7 @@ from token_guard import (TAIPEI, QuotaExceeded, TokenQuota, compact_history, est
                          outline, strip_stale_reasoning, strip_think_text, tool_tokens, truncate_middle)
 import difficulty
 import documents
+import guard
 import knowledge
 import tools as toolbox
 import web
@@ -155,6 +157,41 @@ def drop_repeats(text: str) -> str:
 
 def is_image(rel: str) -> bool:
     return Path(rel).suffix.lower() in IMAGE_TYPES
+
+
+# 10/10 實測:沒寫「保留原本的字」時,表格裡的繁體字被抄成簡體(預算表 → 预算表)
+OCR_PROMPT = ("Transcribe all text in this scanned page verbatim, keeping line breaks and table layout "
+              "(use | between table columns). Keep the original characters exactly: Traditional Chinese stays Traditional, "
+              "never convert to Simplified. Write [unreadable] for text you cannot read. Output only the text, no comments.")
+_billing: ContextVar["AgentSession | None"] = ContextVar("billing", default=None)  # 正在回答的那段對話(ask 設定)
+
+
+def page_reader(registry: ModelRegistry) -> Callable[[bytes, str], str] | None:
+    """掃描頁 → 文字,給 documents.OCR 用:跟看圖同一顆模型(關思考、忙線重試、去掉重複的段落)。
+    tokens 算進正在回答的那段對話和額度;建知識庫的背景執行緒沒有對話,不算(知識庫頁面另外顯示用量)。
+    第一次用到才建模型:沒有金鑰的環境(測試)載入時不會出錯。"""
+    role = registry.routing.get("vision_role")
+    spec = registry.specs.get(role) if role else None
+    if not (spec and spec.supports_images and registry.backend in spec.available_on):
+        return None
+    built: list[Runnable] = []
+
+    def ocr(data: bytes, mime: str) -> str:
+        if not built:
+            built.append(registry.vision_model(role))
+        url = f"data:{mime};base64,{base64.b64encode(data).decode()}"
+        ai = built[0].invoke([HumanMessage(content=[{"type": "text", "text": OCR_PROMPT},
+                                                    {"type": "image_url", "image_url": {"url": url}}])])
+        if session := _billing.get():
+            tokens = (ai.usage_metadata or {}).get("total_tokens", 0)
+            session.tokens_used += tokens
+            session.quota.charge(session.user, tokens)
+        text = drop_repeats(strip_think_text(str(ai.content)))
+        if not text:
+            raise RuntimeError("看圖模型沒有回傳文字")
+        return text
+
+    return ocr
 
 
 def image_from_file(rel: str) -> tuple[str, str]:
@@ -418,6 +455,14 @@ class AgentSession:
         role:只有這一輪換模型 —— 上一輪做到步數上限,使用者選擇換 escalation() 提議的模型接著做。
         images:網頁上傳的圖片 [(名稱, data URL)];附檔裡的圖片檔也算(先轉成文字,見 _describe_images)。
         """
+        billing = _billing.set(self)  # 這一輪讀掃描檔(page_reader)用掉的 tokens 算給這段對話
+        try:
+            return self._turn(task, list(attachments), mode, role, list(images))
+        finally:
+            _billing.reset(billing)
+
+    def _turn(self, task: str, attachments: list[str], mode: str, role: str | None,
+              images: list[tuple[str, str]]) -> AgentResult:
         self._maybe_compact()  # 要在記下 start 之前:摘要會把訊息變短
         start, began = len(self.messages), time.monotonic()
         pictures = list(images) + [image_from_file(a) for a in attachments if is_image(a)]
@@ -819,6 +864,8 @@ def prepare() -> tuple[ModelRegistry, TokenQuota, list, bool]:
                        store=toolbox.OUTPUT_DIR / "state" / "usage.json")  # 今天的用量存檔:重開不歸零、畫面上顯示
     allow_web = os.getenv("ALLOW_WEB", "").strip().lower() in ("1", "true", "yes")
     tools = ALL_TOOLS + (web.web_tools() if allow_web else [])  # 上網預設關閉
+    guard.CHECK = registry.safety_checker()  # 網頁內容、訪客的問題先過安全模型(models.yaml 的 safety)
+    documents.OCR = page_reader(registry)    # 掃描的 PDF 頁交給看圖模型讀
     return registry, quota, tools, allow_web
 
 
