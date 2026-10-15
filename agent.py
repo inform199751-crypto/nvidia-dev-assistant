@@ -12,8 +12,10 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,6 +24,7 @@ from typing import Callable
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import Runnable
+from langchain_core.tools import tool
 
 from llm_registry import ModelRegistry
 from token_guard import (TAIPEI, QuotaExceeded, TokenQuota, compact_history, estimate_tokens, make_quota, message_tokens,
@@ -163,7 +166,8 @@ def is_image(rel: str) -> bool:
 OCR_PROMPT = ("Transcribe all text in this scanned page verbatim, keeping line breaks and table layout "
               "(use | between table columns). Keep the original characters exactly: Traditional Chinese stays Traditional, "
               "never convert to Simplified. Write [unreadable] for text you cannot read. Output only the text, no comments.")
-_billing: ContextVar["AgentSession | None"] = ContextVar("billing", default=None)  # 正在回答的那段對話(ask 設定)
+# 正在回答的那段對話(ask 設定):讀掃描檔用掉的 tokens 算給它;delegate 從這裡拿模型、額度和事件
+_billing: ContextVar["AgentSession | None"] = ContextVar("billing", default=None)
 
 
 def page_reader(registry: ModelRegistry) -> Callable[[bytes, str], str] | None:
@@ -305,6 +309,20 @@ EXECUTE_TASK = ("照上面的計畫執行。用 update_plan 回報進度,但要�
 # 一般模型做到步數上限、使用者選擇換難題模型的那一輪:前面查到的東西都還在對話裡,接著做就好
 CONTINUE_TASK = "上一輪做到步數上限,還沒完成。請接著完成上面原本的任務:沿用已經查到的內容和草稿裡的修改,不要重做已經做過的步驟。"
 
+# 多 agent 分工(10/15):主 agent 用 delegate 把彼此獨立的調查交給子 agent 同時做,每個只回一段結論 ——
+# 子 agent 讀過的大量檔案不會進主對話(之後每一步都要重送),主對話只多幾段報告。子 agent 只能讀,不能改、不能跑沙箱
+SUBAGENT_PROMPT = """You are a sub-agent helping an engineering assistant. Investigate ONLY the task below in the user's project with the read-only tools, then reply with a short report in Traditional Chinese (zh-TW), at most about 250 words: the answer, the key evidence as path:line, and anything you could not confirm. Read only what the task needs. You cannot change files, run code or ask questions; the assistant sees only your final reply, so put everything it needs there."""
+SUBAGENT_TOOLS = {"list_files", "read_file", "search_code", "git_log", "git_blame", "read_document", "search_knowledge"}
+MAX_SUBAGENTS = 3        # 一次最多分給幾個(免費層同時呼叫太多會 429 / 503)
+SUBAGENT_PARALLEL = 3    # 同時跑幾個(測試設成 1 讓劇本照順序)
+# 輸入框的「分工」開關(CLI /split):接在這一題後面。10/15 實測 Super 不會自己用 delegate(沒提示 0/4,
+# 系統提示加一段說明也 0/2),問題裡講明要分工就會(1/1);所以改成使用者決定,跟「先規劃」一樣
+SPLIT_NOTE = """
+
+<split>
+Split this task into independent parts and give them to sub-agents with delegate (one self-contained task per part, at most 3), then write your answer from their reports. Do not re-read files a report already covers; look something up yourself only for a specific point a report says it could not confirm.
+</split>"""
+
 SUMMARY_PROMPT = """You are compacting a long conversation between a user and an engineering assistant so the work can continue in a fresh context. Write a concise summary in Traditional Chinese (zh-TW) covering: the user's goals and requests; key findings with file paths and line numbers; decisions made; patches proposed (file names, whether tests passed, whether the user applied them); open questions and next steps. Keep code identifiers, paths and error messages verbatim. Do not invent anything that is not in the conversation. At most about 400 words."""
 
 
@@ -370,6 +388,9 @@ class AgentSession:
         self.tokens_used = 0  # 整段對話累計
         self.on_event = on_event
         self.judging: Future | None = None  # 這一輪的難度判斷(影子模式在背景跑);照計畫執行時沿用規劃那輪的
+        self.sub = False         # 子 agent(delegate 建的):步數上限另算、不佔同時請求數(主 agent 那一輪已經佔了)
+        self.stream = True       # 有 on_event 時要不要串流;子 agent 只回報工具,不串流文字
+        self.sub_tokens = 0      # 這一輪子 agent 用掉的(算進這一輪的用量)
 
     def _emit(self, kind: str, **data) -> None:
         if self.on_event:
@@ -381,7 +402,7 @@ class AgentSession:
 
     def _call(self, llm: Runnable) -> AIMessage:
         """有 on_event 就串流(邊想邊顯示),沒有就一次拿完整回應。"""
-        if not self.on_event:
+        if not (self.on_event and self.stream):
             return llm.invoke(self.messages)
         total = None
         for chunk in llm.stream(self.messages):
@@ -447,22 +468,23 @@ class AgentSession:
             self._notice("整理摘要失敗,先照常繼續:%s", f"{type(e).__name__}: {e}")
 
     def ask(self, task: str, attachments: list[str] = (), mode: str = "normal", role: str | None = None,
-            images: list[tuple[str, str]] = ()) -> AgentResult:
+            images: list[tuple[str, str]] = (), split: bool = False) -> AgentResult:
         """問一輪。中途出錯(額度、伺服器全掛)就把這一輪的訊息退掉,對話停在上一輪結束的狀態。
 
         mode="plan":只給唯讀工具,請模型調查後交出編號計畫(像 Claude Code 的 plan mode),不准改東西;
         mode="execute":照上一輪的計畫做,多給 update_plan 讓它回報進度。
         role:只有這一輪換模型 —— 上一輪做到步數上限,使用者選擇換 escalation() 提議的模型接著做。
         images:網頁上傳的圖片 [(名稱, data URL)];附檔裡的圖片檔也算(先轉成文字,見 _describe_images)。
+        split:「分工」開關,請模型用 delegate 把這一題分給子 agent(有綁 delegate 才有用)。
         """
         billing = _billing.set(self)  # 這一輪讀掃描檔(page_reader)用掉的 tokens 算給這段對話
         try:
-            return self._turn(task, list(attachments), mode, role, list(images))
+            return self._turn(task, list(attachments), mode, role, list(images), split)
         finally:
             _billing.reset(billing)
 
     def _turn(self, task: str, attachments: list[str], mode: str, role: str | None,
-              images: list[tuple[str, str]]) -> AgentResult:
+              images: list[tuple[str, str]], split: bool = False) -> AgentResult:
         self._maybe_compact()  # 要在記下 start 之前:摘要會把訊息變短
         start, began = len(self.messages), time.monotonic()
         pictures = list(images) + [image_from_file(a) for a in attachments if is_image(a)]
@@ -479,7 +501,7 @@ class AgentSession:
         predicted = {"tree": tree and tree[0], "est_tokens": est and round(est[0]), "est_s": est and round(est[1], 1)}
         judging = self.judging = self._route(task, list(attachments), mode, role, feats)
         try:  # on 已經等到判斷結果;影子模式還在背景判斷就不等它(反正不換模型)
-            r = self._ask(task, list(attachments), mode, judging.result() if judging.done() else None, seen)
+            r = self._ask(task, list(attachments), mode, judging.result() if judging.done() else None, seen, split)
             r.tokens_used += looked
         except BaseException as e:
             del self.messages[start:]
@@ -570,7 +592,7 @@ class AgentSession:
         return self.tools
 
     def _ask(self, task: str, attachments: list[str], mode: str = "normal",
-             judged: difficulty.Decision | None = None, images: list[str] = ()) -> AgentResult:
+             judged: difficulty.Decision | None = None, images: list[str] = (), split: bool = False) -> AgentResult:
         """judged:這一輪的難度判斷(None = 還在背景判斷,照預設);使用者用 --role 指定的角色優先。"""
         reg, limits = self.registry, self.registry.limits
         tools = self._tools_for(mode)
@@ -578,6 +600,8 @@ class AgentSession:
         self.overhead = tool_tokens(tools)  # 這一輪實際綁的工具;規劃 / 執行模式的工具不一樣
         effort = EFFORTS.get(self.effort, {})
         task += effort.get("note", "")
+        if split and "delegate" in tool_map:
+            task += SPLIT_NOTE
         if mode == "plan":
             task += PLAN_MODE_NOTE
         self.messages.append(HumanMessage(
@@ -589,11 +613,13 @@ class AgentSession:
             self._notice("%s,改用 %s(%s)", judged.why, role, reg.spec(role).model.split("/")[-1])
         thinking = effort.get("thinking", self.thinking)
         llm = reg.agent_model(role, tools, thinking=thinking)
-        used = 0
+        used, self.sub_tokens = 0, 0
         max_steps = limits.get("max_execute_steps", 25) if mode == "execute" else limits["max_agent_steps"]
         max_steps = max(3, round(max_steps * effort.get("steps", 1)))
+        if self.sub:
+            max_steps = limits.get("max_subagent_steps", 8)
 
-        with self.quota.slot(self.user):
+        with nullcontext() if self.sub else self.quota.slot(self.user):
             for step in range(1, max_steps + 1):
                 # 每一步送出前的三道檢查:清掉舊思考 → 瘦身 → 還放不下就升級模型
                 self.messages = strip_stale_reasoning(self.messages)
@@ -624,7 +650,7 @@ class AgentSession:
                 self._emit("step", step=step, role=role, tokens=step_tokens)
 
                 if not ai.tool_calls and not ai.invalid_tool_calls:
-                    return AgentResult(strip_think_text(str(ai.content)), role, step, used)
+                    return AgentResult(strip_think_text(str(ai.content)), role, step, used + self.sub_tokens)
                 for call in ai.tool_calls:
                     tool = tool_map.get(call["name"])
                     if call["name"] == "update_plan" and tool:  # 進度清單直接畫給使用者看,不當一般工具列
@@ -645,7 +671,61 @@ class AgentSession:
                     out = f"錯誤:{bad.get('name')} 的參數不是合法 JSON,請修正後重送。\n{bad.get('error') or ''}"
                     self.messages.append(ToolMessage(truncate_middle(out, limits["tool_output_max_tokens"]),
                                                      tool_call_id=bad.get("id") or ""))
-        return AgentResult(f"[已達 {max_steps} 步上限,停止。請把問題拆小再問]", role, max_steps, used, hit_limit=True)
+        return AgentResult(f"[已達 {max_steps} 步上限,停止。請把問題拆小再問]", role, max_steps, used + self.sub_tokens,
+                           hit_limit=True)
+
+    def delegate(self, tasks: list[str]) -> str:
+        """delegate 工具的本體:每個 task 開一個子 agent(唯讀工具、短的系統提示、自己的步數上限),同時跑,
+        回傳每個的報告。子 agent 看草稿版本(同一個 Workbench)、用同一份額度;用量算進這一輪。
+        一個失敗(忙線、放不下)不影響其他的,報告裡寫原因。"""
+        tasks = [str(t).strip() for t in tasks if str(t).strip()]
+        if not tasks:
+            return "錯誤:tasks 是空的,請給要調查的問題"
+        if len(tasks) > MAX_SUBAGENTS:
+            return f"錯誤:一次最多分給 {MAX_SUBAGENTS} 個子助理,請把相近的問題合併"
+        tools = [t for t in self.tools if t.name in SUBAGENT_TOOLS]
+        if not tools:
+            return "錯誤:這裡沒有可以讀檔的工具,不能分給子助理"
+        wb, limits, lock = toolbox.bench(), self.registry.limits, threading.Lock()
+        share =max(200, limits["tool_output_max_tokens"] // len(tasks) - 60)  # 每份報告的上限:合起來不會被截掉一半
+
+        def run(i: int, task: str) -> str:
+            relay = (lambda kind, data: self._emit("sub", agent=i, what=kind, **data)
+                     if kind in ("tool", "notice") else None)
+            sub = AgentSession(self.registry, self.quota, user=self.user, tools=tools,
+                               on_event=relay if self.on_event else None)
+            sub.sub, sub.stream = True, False
+            sub.messages[0] = SystemMessage(SUBAGENT_PROMPT + today_line())
+            began, billing = time.monotonic(), _billing.set(sub)
+            try:
+                with toolbox.using(wb):  # 新執行緒不會繼承 ContextVar:讀的是同一份草稿、同一個工作區
+                    r = sub._ask(task, [])
+                report = ("(做到步數上限還沒查完;這一題請拆小,或自己接著查)" if r.hit_limit
+                          else truncate_middle(r.answer.strip() or "(沒有回報內容)", share))
+                status = f"{r.steps} 步、{sub.tokens_used:,} tokens、{time.monotonic() - began:.0f} 秒"
+            except Exception as e:  # 模型全掛、額度用完:這一個沒查到,其他照常
+                report, status = f"沒有完成:{type(e).__name__}: {str(e).splitlines()[0][:200] if str(e) else ''}", "失敗"
+            finally:
+                _billing.reset(billing)
+                with lock:  # 已經扣過額度(同一個使用者),這裡只算進這段對話和這一輪
+                    self.tokens_used += sub.tokens_used
+                    self.sub_tokens += sub.tokens_used
+            self._emit("sub_done", agent=i, status=status)
+            return f"## 子助理 {i}:{task}\n{report}\n({status})"
+
+        with ThreadPoolExecutor(max_workers=min(SUBAGENT_PARALLEL, len(tasks))) as pool:
+            reports = list(pool.map(run, range(1, len(tasks) + 1), tasks))
+        return "\n\n".join(reports)
+
+
+@tool
+def delegate(tasks: list[str]) -> str:
+    """把彼此獨立的調查分給子助理同時做(最多 3 個),各回一段結論,讀過的檔案不進這段對話。
+    用在要讀很多檔案的大問題;簡單查詢、改程式不要用。子助理只能讀、看不到這段對話,task 要寫清楚查什麼。"""
+    session = _billing.get()
+    if session is None:
+        return "錯誤:現在沒有對話在進行"
+    return session.delegate(tasks)
 
 
 def run_agent(task: str, *, registry: ModelRegistry, quota: TokenQuota, user: str = "cli",
@@ -661,6 +741,7 @@ HELP = """直接輸入問題,Enter 送出。用 @路徑 附上工作區的檔案
   工作區的 ASSISTANT.md 是這個專案給 HSUAN 的規則,每段對話開始時自動讀取。
   /remember 規則  把一條規則寫進 ASSISTANT.md,馬上生效(例如:/remember 回答都要附檔案路徑)
   /plan 任務  先規劃再動手:HSUAN 只讀不改、交出計畫,你同意後才照計畫做(會顯示進度清單)
+  /split 任務  分工:把彼此獨立的部分分給最多 3 個子助理同時查,只交回結論(適合要讀很多檔案的大問題)
   對話太長時會自動把前面的內容整理成摘要;/compact 可以手動整理。
   /apply  把草稿套用到工作區(一樣會先問你)
   /discard  捨棄草稿裡還沒套用的修改
@@ -713,6 +794,11 @@ class ConsoleView:
             self._line(f"  ▸ {data['name']} {args[:100] + '…' if len(args) > 100 else args}")
         elif kind == "notice":
             self._line(f"  ({data['text']})")
+        elif kind == "sub" and data.get("what") == "tool":  # 子 agent 在做什麼(delegate)
+            args = json.dumps(data["args"], ensure_ascii=False)
+            self._line(f"    ↳ 子助理 {data['agent']} ▸ {data['name']} {args[:80] + '…' if len(args) > 80 else args}")
+        elif kind == "sub_done":
+            self._line(f"    ↳ 子助理 {data['agent']} 完成({data['status']})")
         elif kind == "plan":
             marks = {"done": "☑", "in_progress": "◐"}
             self._line("  計畫進度:\n" + "\n".join(f"    {marks.get(s.get('status'), '☐')} {s.get('step')}"
@@ -809,17 +895,24 @@ def chat(session_factory, first_files: list[str], banner: str = "") -> None:
             else:
                 print("草稿是空的,沒有要套用的修改。")
             continue
-        mode = "normal"
+        mode, split = "normal", False
         if text.startswith("/plan"):
             text, mode = text.removeprefix("/plan").strip(), "plan"
             if not text:
                 print("用法:/plan 任務,例如 /plan 幫 calc.py 加上除法並補測試")
                 continue
+        elif text.startswith("/split"):
+            text, split = text.removeprefix("/split").strip(), True
+            if not text:
+                print("用法:/split 任務,例如 /split 分別說明 a.py、b.py、c.py 在做什麼")
+                continue
         role = None
         while True:  # 規劃模式:交出計畫、使用者同意後,接著再跑一輪「照計畫執行」;做到步數上限可以換模型接著做
             before = len(toolbox.PATCHES)
             try:
-                r = session.ask(note + text, pending + [f for f in file_mentions(text) if f not in pending], mode, role)
+                r = session.ask(note + text, pending + [f for f in file_mentions(text) if f not in pending], mode, role,
+                                split=split)
+                split = False  # 只有這一題;換模型接著做、照計畫執行不再分工
             except KeyboardInterrupt:
                 print("\n(已中斷這一輪,對話保留在上一輪結束的狀態)")
                 break
@@ -863,7 +956,7 @@ def prepare() -> tuple[ModelRegistry, TokenQuota, list, bool]:
                        os.getenv("REDIS_URL"),  # 多台伺服器時用 Redis 共用額度
                        store=toolbox.OUTPUT_DIR / "state" / "usage.json")  # 今天的用量存檔:重開不歸零、畫面上顯示
     allow_web = os.getenv("ALLOW_WEB", "").strip().lower() in ("1", "true", "yes")
-    tools = ALL_TOOLS + (web.web_tools() if allow_web else [])  # 上網預設關閉
+    tools = ALL_TOOLS + [delegate] + (web.web_tools() if allow_web else [])  # 上網預設關閉;delegate 對話模式會拿掉
     guard.CHECK = registry.safety_checker()  # 網頁內容、訪客的問題先過安全模型(models.yaml 的 safety)
     guard.configure_company(registry.company_data_ok)  # 公司資料保護:試用平台擋公司資料夾(.env 的 COMPANY_PATHS)
     documents.OCR = page_reader(registry)    # 掃描的 PDF 頁交給看圖模型讀

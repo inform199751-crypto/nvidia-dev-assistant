@@ -261,6 +261,13 @@
   .tool summary code { font: 13px ui-monospace, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .tool pre { max-height: 280px; overflow: auto; background: var(--code); border: 1px solid var(--line); border-radius: 12px;
               padding: 10px 12px; margin: 6px 0 0; font: 12.5px/1.55 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
+  /* 多 agent 分工(delegate):每個子助理一列 */
+  .tool .subs { margin: 6px 0 2px; padding-left: 24px; }
+  .tool .subs li { margin: 4px 0; color: var(--text); }
+  .tool .subs small { display: block; color: var(--faint); font: 12.5px/1.5 ui-monospace, Consolas, monospace;
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool .subs li.done small { color: var(--accent-text, var(--accent)); }
+  .tool .subs li.failed small { color: var(--error); }
   .thinking { color: var(--faint); font-size: 15px; display: flex; align-items: center; gap: 8px; }
   .thinking::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--text); animation: pulse 1.2s infinite; }
   @keyframes pulse { 0%, 100% { transform: scale(.6); opacity: .4; } 50% { transform: scale(1); opacity: 1; } }
@@ -472,6 +479,10 @@
         <button type="button" class="mode-btn" id="plan-mode" aria-pressed="false" title="開啟後,HSUAN 先只讀不改、交出計畫,你同意才照計畫做">
           <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5h10M7 10h10M7 15h10M3 5h.01M3 10h.01M3 15h.01"/></svg>
           先規劃
+        </button>
+        <button type="button" class="mode-btn" id="split-mode" aria-pressed="false" title="開啟後,HSUAN 把這一題彼此獨立的部分分給最多 3 個子助理同時查,只交回結論(適合要讀很多檔案的大問題)">
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h5M8 10l4-5h5M8 10h9M8 10l4 5h5"/></svg>
+          分工
         </button>
         <span class="spacer"></span>
         <button type="button" class="model-pick" id="model-pick" aria-label="選擇模型和努力程度" title="這段對話用的模型和努力程度">
@@ -750,7 +761,8 @@ const handlers = {
   user(e) {
     bot = null; tools.length = 0;
     const m = el("div", "msg user");
-    if (e.mode === "plan") m.appendChild(el("span", "mode-tag", "先規劃"));
+    const tags = [e.mode === "plan" && "先規劃", e.split && "分工"].filter(Boolean);
+    if (tags.length) m.appendChild(el("span", "mode-tag", tags.join(" · ")));
     if (e.images?.length) {  // 附上的圖片(伺服器只留縮圖)
       const row = m.appendChild(el("div", "msg-images"));
       for (const src of e.images) Object.assign(row.appendChild(el("img")), { src, alt: "附上的圖片" });
@@ -769,11 +781,30 @@ const handlers = {
     const d = b.appendChild(el("details", "tool"));
     const summary = d.appendChild(el("summary"));
     const args = JSON.stringify(e.args);
-    summary.append(el("span", "", e.name), el("code", "", args.length > 100 ? args.slice(0, 100) + "…" : args));
+    if (e.name === "delegate") {  // 多 agent 分工:每個子助理一列,顯示它現在在做什麼
+      const tasks = Array.isArray(e.args?.tasks) ? e.args.tasks : [];
+      summary.append(el("span", "", `分給 ${tasks.length} 個子助理同時調查`));
+      d.open = true;
+      const list = d.appendChild(el("ol", "subs"));
+      b.subs = tasks.map((t) => {
+        const li = list.appendChild(el("li"));
+        li.append(el("div", "", String(t)));
+        li.now = li.appendChild(el("small", "", "準備中…"));
+        return li;
+      });
+    } else summary.append(el("span", "", e.name), el("code", "", args.length > 100 ? args.slice(0, 100) + "…" : args));
     d.out = d.appendChild(el("pre", "", "執行中…"));
     tools.push(d);
   },
   tool_done(e) { const d = tools.shift(); if (d) d.out.textContent = e.output; },
+  sub(e) {
+    const li = ensureBot().subs?.[e.agent - 1];
+    if (li && e.what === "tool") { const a = JSON.stringify(e.args); li.now.textContent = `▸ ${e.name} ${a.length > 80 ? a.slice(0, 80) + "…" : a}`; }
+  },
+  sub_done(e) {
+    const li = ensureBot().subs?.[e.agent - 1];
+    if (li) { li.now.textContent = e.status === "失敗" ? "✗ 沒有完成" : `✓ 完成(${e.status})`; li.classList.add(e.status === "失敗" ? "failed" : "done"); }
+  },
   step() { stopThinking(); },
   notice(e) { ensureBot().appendChild(el("div", "notice", e.text)); },
   plan(e) {  // 照計畫執行時的進度清單:同一輪只有一份,每次更新就重畫
@@ -915,11 +946,12 @@ async function newConv(projectId, kind = sideMode) {
   if (!r.ok) return alert(r.data.error || "開新對話失敗");
   await loadDesk(); openConv(r.data.id);
 }
-// 對話模式沒有 @檔案和「先規劃」(不綁專案,沒有讀檔、改檔的工具)
+// 對話模式沒有 @檔案、「先規劃」和「分工」(不綁專案,沒有讀檔、改檔的工具);訪客沒有子助理
 function applyMode() {
   const chat = sideMode === "chat";
   document.querySelectorAll(".mode-switch button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === sideMode)));
   $("plan-mode").hidden = chat;
+  $("split-mode").hidden = chat || !!state.guest;
   $("hint").textContent = (chat ? "可以貼上或拖進圖片" : "用 @檔名 附上專案裡的檔案,也可以貼上圖片")
     + " · Enter 送出、Shift+Enter 換行 · HSUAN 也會出錯,重要的結果請自己確認";
 }
@@ -1063,6 +1095,7 @@ async function loadState() {
   if (!r.ok) return;
   state = r.data;
   $("trial-badge").hidden = state.company_ok !== false;
+  $("split-mode").hidden = sideMode === "chat" || !!state.guest;
   renderUsage();
   renderModel();
   setBusy(state.busy);
@@ -1153,6 +1186,7 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
+  ["10/15", ["多 agent 分工:輸入框多了「分工」開關,打開後 HSUAN 把這一題彼此獨立的部分分給最多 3 個子助理同時查,每個只交回結論(對話不會被一大堆檔案塞滿);畫面上看得到每個子助理正在做什麼"]],
   ["10/10", ["公司資料保護:用的是 NVIDIA 試用平台時,右上角一直顯示「試用平台 · 不放公司資料」;.env 的 COMPANY_PATHS 寫的公司資料夾一律擋下(加專案、知識庫、拖進來、以前加過的都一樣),其他資料夾第一次加入要先確認不是公司資料",
              "可以把資料夾直接拖進視窗:放在桌面、文件、下載裡的會自動找到原本的位置(HSUAN 改的東西按「套用」才寫進去);找不到才問路徑,留空就上傳一份副本給它分析",
              "設定 → 外觀多了 7 種參考車廠官網的配色:黑金、賽道紅、深海藍、碳纖黑、純黑白、黃黑、電光藍;拿掉淺色、跟著系統",
@@ -1563,6 +1597,11 @@ function setPlanMode(on) {
   $("plan-mode").setAttribute("aria-pressed", String(on));
   input.placeholder = on ? "要規劃什麼任務?" : "請輸入訊息…";
 }
+let splitMode = false;  // 「分工」:這一題請 HSUAN 分給子助理(agent.SPLIT_NOTE),送出後自動關掉
+function setSplitMode(on) {
+  splitMode = on;
+  $("split-mode").setAttribute("aria-pressed", String(on));
+}
 // 輸入框的「+」:上傳圖片;程式模式另外可以插入 @,接著打專案裡的檔名(問題裡的 @檔名 會自動附上那個檔案)
 function insertAt() {
   const at = input.selectionStart ?? input.value.length;
@@ -1772,15 +1811,17 @@ $("model-pick").onclick = () => popup($("model-pick"), [{ node: effortPanel() },
     state.role = x.data.role; renderModel();
   }])]);
 $("plan-mode").onclick = () => { setPlanMode(!planMode); input.focus(); };
+$("split-mode").onclick = () => { setSplitMode(!splitMode); input.focus(); };
 async function submit() {
   const text = input.value.trim(), images = pendingImages;
   if ((!text && !images.length) || busy || !conv) return;
-  const mode = planMode ? "plan" : "normal";
-  input.value = ""; pendingImages = []; renderThumbs(); autosize(); updateSend(); setPlanMode(false);
-  const r = await api("/api/ask", { text, mode, images });
+  const mode = planMode ? "plan" : "normal", split = splitMode && !$("split-mode").hidden;
+  input.value = ""; pendingImages = []; renderThumbs(); autosize(); updateSend(); setPlanMode(false); setSplitMode(false);
+  const r = await api("/api/ask", { text, mode, images, split });
   if (!r.ok) {  // 沒送出去:文字和圖片都放回去
     alert(r.data.error || "送出失敗");
     input.value = text; pendingImages = images; renderThumbs(); autosize(); updateSend(); setPlanMode(mode === "plan");
+    setSplitMode(split);
   }
 }
 $("form").onsubmit = (ev) => { ev.preventDefault(); submit(); };

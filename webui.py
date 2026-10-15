@@ -551,10 +551,11 @@ class Hub:
     # ---------- 對話 ----------
 
     def ask(self, text: str, mode: str = "normal", shown: str | None = None, role: str | None = None,
-            images: list[dict] | None = None) -> bool:
+            images: list[dict] | None = None, split: bool = False) -> bool:
         """shown:畫面上顯示的問題(照計畫執行時,送給模型的是 EXECUTE_TASK,畫面只顯示「照計畫執行」)。
         role:只有這一輪換模型(做到步數上限後的「換模型接著做」)。
-        images:上傳的圖片 [{"name","data","thumb"}](parse_images 檢查過);畫面和存檔只留縮圖,原圖只送給看圖模型。"""
+        images:上傳的圖片 [{"name","data","thumb"}](parse_images 檢查過);畫面和存檔只留縮圖,原圖只送給看圖模型。
+        split:輸入框的「分工」開關(agent.SPLIT_NOTE)。"""
         with self.cond:
             if self.busy:
                 return False
@@ -566,9 +567,11 @@ class Hub:
         event = {"text": shown or text, "mode": mode}
         if images:
             event["images"] = [im["thumb"] for im in images]
+        if split:
+            event["split"] = True
         self.publish("user", event)
         pictures = [(im["name"], im["data"]) for im in images or []]
-        threading.Thread(target=self._run, args=(text, mode, role, pictures), daemon=True).start()
+        threading.Thread(target=self._run, args=(text, mode, role, pictures, split), daemon=True).start()
         return True
 
     def execute_plan(self, go: bool) -> bool:
@@ -589,7 +592,8 @@ class Hub:
             return "上一個問題還在回答中"
         return ""
 
-    def _run(self, text: str, mode: str = "normal", role: str | None = None, images: list | None = None) -> None:
+    def _run(self, text: str, mode: str = "normal", role: str | None = None, images: list | None = None,
+             split: bool = False) -> None:
         patches = self.bench.patches
         before, planned, offer = len(patches), False, None
         try:
@@ -602,7 +606,7 @@ class Hub:
                     raise guard.Blocked(str(e)) from None
             with self.gate.turn(self.publish) if self.gate else nullcontext(), toolbox.using(self.bench):
                 files = [] if self.chat else agent.file_mentions(text)  # 對話模式讀不到電腦上的檔案
-                r = self.session.ask(self.note + text, files, mode, role, images or [])
+                r = self.session.ask(self.note + text, files, mode, role, images or [], split)
             self.note = ""
             self.publish("done", {"role": r.role, "steps": r.steps, "tokens": r.tokens_used,
                                   "total": self.session.tokens_used, "answer": r.answer})
@@ -1734,7 +1738,8 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 if not text and not images:
                     return self._json(400, {"error": "問題是空的"})
                 text = text or "請說明這張圖。"
-                ok = hub.ask(text, "plan" if body.get("mode") == "plan" and not hub.chat else "normal", images=images)
+                ok = hub.ask(text, "plan" if body.get("mode") == "plan" and not hub.chat else "normal", images=images,
+                             split=bool(body.get("split")) and not hub.chat)
                 self._json(202 if ok else 409, {} if ok else {"error": "上一個問題還在回答中"})
             elif path == "/api/execute":  # 規劃模式交出計畫後:照計畫執行 / 先不要
                 ok = hub.execute_plan(bool(body.get("go")))
@@ -1807,8 +1812,9 @@ def local_desk(registry, quota, tools: list, status: str, model: str, role: str 
 
 
 GUEST_DAILY_TOKENS = 200_000  # 每支訪客手機每天的額度(用的是主人的 API 金鑰)
-# 訪客用不到的工具:空資料夾沒有程式可以測、可以改、可以看 git;也不讓訪客在主人電腦上跑沙箱
-GUEST_BLOCKED_TOOLS = {"run_tests", "run_command", "propose_patch", "git_log", "git_blame"}
+# 訪客用不到的工具:空資料夾沒有程式可以測、可以改、可以看 git;也不讓訪客在主人電腦上跑沙箱;
+# 子 agent 會同時打好幾個請求,用的是主人的金鑰和速率限制
+GUEST_BLOCKED_TOOLS = {"run_tests", "run_command", "propose_patch", "git_log", "git_blame", "delegate"}
 
 
 def guest_desks(registry, tools: list, status: str, model: str, base: Path | None = None) -> Callable[[str], Desk]:

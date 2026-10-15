@@ -3115,3 +3115,99 @@ def test_old_projects_and_knowledge_in_company_folders_stop_working(workspace, t
     finally:
         server.shutdown()
         server.server_close()
+
+
+# ---------- 多 agent 分工(delegate) ----------
+
+_SPLIT_BARRIER: list = []  # 測試時放一個 threading.Barrier
+
+
+class SplitChat(ScriptedChat):
+    """主 agent 照劇本;子 agent(系統提示是 SUBAGENT_PROMPT)看自己的問題回答,平行跑順序不固定也對得上:
+    第一步讀問題裡的檔案(兩個子 agent 都到了才一起往下 = 證明是同時跑),第二步回報。"""
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs: Any) -> ChatResult:
+        import re
+        import agent
+        if not str(messages[0].content).startswith(agent.SUBAGENT_PROMPT[:40]):
+            return super()._generate(messages, stop, run_manager, **kwargs)
+        self.seen.append(("sub", list(messages), self.bound))
+        name = re.search(r"(\w+\.py)", str(messages[1].content)).group(1)
+        if isinstance(messages[-1], HumanMessage):
+            if _SPLIT_BARRIER:
+                _SPLIT_BARRIER[0].wait()
+            reply = ai(tool_calls=[{"name": "read_file", "args": {"path": name}, "id": f"r-{name}"}], tokens=30)
+        else:
+            reply = ai(f"{name} 只有一個函式(見 {name}:1)", tokens=20)
+        return ChatResult(generations=[ChatGeneration(message=reply)])
+
+
+def test_delegate_splits_work_between_parallel_subagents(workspace, monkeypatch):
+    """10/15 多 agent 分工:主 agent 呼叫 delegate,兩個子 agent 同時調查(只綁唯讀工具、不佔同時請求數),
+    各回一段報告;子 agent 讀到的檔案內容不會進主對話,用量算進這一輪、這段對話和額度;畫面收到每個子 agent 的進度。"""
+    import sys
+    import threading
+    import agent
+    (workspace / "a.py").write_text("def a():\n    return 'MARKER_ONLY_IN_A'\n", encoding="utf-8")
+    (workspace / "b.py").write_text("def b():\n    return 'MARKER_ONLY_IN_B'\n", encoding="utf-8")
+    call = {"name": "delegate", "args": {"tasks": ["a.py 在做什麼?", "b.py 在做什麼?"]}, "id": "d1"}
+    reg, seen = scripted_registry([ai(tool_calls=[call]), ai("兩個檔案各有一個函式")], chat_cls=SplitChat)
+    monkeypatch.setattr(sys.modules[__name__], "_SPLIT_BARRIER", [threading.Barrier(2, timeout=5)])
+    events, quota = [], TokenQuota(10**6, 1)  # 同時請求數只有 1:主 agent 佔了,子 agent 不能再佔
+    session = AgentSession(reg, quota, tools=tools.ALL_TOOLS + [agent.delegate],
+                           on_event=lambda kind, data: events.append((kind, data)))
+    r = session.ask("比較 a.py 和 b.py", split=True)
+    assert r.answer == "兩個檔案各有一個函式"
+    assert "<split>" in seen[0][1][-1].content  # 「分工」開關:這一題後面接了請它分工的說明
+    report = next(m.content for m in session.messages if isinstance(m, ToolMessage) and m.tool_call_id == "d1")
+    assert "## 子助理 1:a.py 在做什麼?\na.py 只有一個函式" in report and "## 子助理 2:b.py" in report
+    assert "沒有完成" not in report  # 兩個都過了 barrier = 真的同時在跑
+    assert not any("MARKER_ONLY_IN" in str(m.content) for m in session.messages)  # 讀過的檔案沒進主對話
+    subs = [s for s in seen if s[0] == "sub"]
+    assert len(subs) == 4 and all(set(bound) <= agent.SUBAGENT_TOOLS for _, _, bound in subs)
+    assert r.tokens_used == 100 + 100 + 2 * (30 + 20) == session.tokens_used == quota.used("cli")
+    assert sorted((d["agent"], d["name"]) for k, d in events if k == "sub" and d["what"] == "tool") == \
+        [(1, "read_file"), (2, "read_file")]
+    assert sorted(d["agent"] for k, d in events if k == "sub_done") == [1, 2]
+
+
+def test_delegate_limits_and_failures(workspace, monkeypatch):
+    """一次最多 3 個、空的不行;一個子 agent 失敗(模型和備援都掛)只寫在它的報告裡,另一個照常;
+    對話模式、訪客都沒有 delegate;不在對話裡呼叫回錯誤。"""
+    import agent
+    import webui
+    monkeypatch.setattr(agent, "SUBAGENT_PARALLEL", 1)  # 照順序跑,劇本才對得上
+    (workspace / "b.py").write_text("def b():\n    pass\n", encoding="utf-8")
+    calls = [{"name": "delegate", "args": {"tasks": ["1", "2", "3", "4"]}, "id": "d1"},
+             {"name": "delegate", "args": {"tasks": ["查 a", "查 b.py"]}, "id": "d2"}]
+    reg, _ = scripted_registry([ai(tool_calls=[calls[0]]), ai(tool_calls=[calls[1]]),
+                                RuntimeError("503 a"), RuntimeError("503 backup"),  # 子 agent 1:主模型和備援都掛
+                                ai("b.py 是空的函式", tokens=10),                  # 子 agent 2
+                                ai("查好了")])
+    session = AgentSession(reg, TokenQuota(10**6, 2), tools=tools.ALL_TOOLS + [agent.delegate])
+    assert session.ask("分工查").answer == "查好了"
+    outs = {m.tool_call_id: m.content for m in session.messages if isinstance(m, ToolMessage)}
+    assert "一次最多分給 3 個" in outs["d1"]
+    assert "## 子助理 1:查 a\n沒有完成:RuntimeError: 503" in outs["d2"]
+    assert "## 子助理 2:查 b.py\nb.py 是空的函式" in outs["d2"]
+    assert session.delegate([" ", ""]).startswith("錯誤")
+    assert agent.delegate.invoke({"tasks": ["x"]}) == "錯誤:現在沒有對話在進行"
+    # 「分工」開關:沒綁 delegate(例如訪客)就不接 SPLIT_NOTE,不然模型會去找不存在的工具
+    reg2, seen2 = scripted_registry([ai("好")])
+    AgentSession(reg2, TokenQuota(10**6, 2)).ask("分別查", split=True)
+    assert "<split>" not in seen2[0][1][-1].content
+    session.to_chat()
+    assert "delegate" not in {t.name for t in session.tools}
+    assert "delegate" in webui.GUEST_BLOCKED_TOOLS
+
+
+def test_web_split_switch_reaches_the_model(webui_app):
+    """網頁輸入框的「分工」開關:/api/ask 帶 split → 問題後面接 SPLIT_NOTE、畫面的問題標「分工」(顯示的還是原本的問題)。"""
+    import agent
+    app = webui_app([ai("好")])
+    app.hub.session.tools.append(agent.delegate)
+    assert app.post("/api/ask", {"text": "分別查 a.py、b.py、c.py", "split": True}).status_code == 202
+    events = app.events_until("done")
+    user = next(e for e in events if e["kind"] == "user")
+    assert user["split"] is True and user["text"] == "分別查 a.py、b.py、c.py"
+    assert "<split>" in app.seen[0][1][-1].content
