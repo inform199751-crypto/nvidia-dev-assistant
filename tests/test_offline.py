@@ -3415,3 +3415,60 @@ def test_share_html_pages_with_people_on_the_same_wifi(workspace, tmp_path_facto
     guest_desk = webui.Desk(lambda ws: None, workspace, can_add_projects=False)
     with pytest.raises(ValueError):
         guest_desk.share("沒有這個.html")
+
+
+# ---------- 在外面也能連(Tailscale) ----------
+
+def test_tailscale_status_is_read_from_its_cli(monkeypatch):
+    """tailscale status --json → 這台電腦在 Tailscale 上的位址(100.64.0.0/10)和名稱;沒裝、沒連線都是空的。"""
+    import types
+    import webui
+    assert webui.is_tailnet("100.101.102.103") and not webui.is_tailnet("192.168.0.12") and not webui.is_tailnet("x")
+    out = json.dumps({"Self": {"Online": True, "TailscaleIPs": ["100.101.102.103", "fd7a:115c:a1e0::1"],
+                               "DNSName": "Desktop-HSUAN.tail1234.ts.net."}})
+    monkeypatch.setattr(webui.shutil, "which", lambda name: "tailscale" if name == "tailscale" else None)
+    monkeypatch.setattr(webui.subprocess, "run", lambda *a, **k: types.SimpleNamespace(stdout=out))
+    monkeypatch.setitem(webui._TAILSCALE, "at", -1e9)
+    assert webui.tailscale_info() == {"ips": ["100.101.102.103"],
+                                      "names": ["desktop-hsuan", "desktop-hsuan.tail1234.ts.net"]}
+    monkeypatch.setattr(webui.shutil, "which", lambda name: None)
+    monkeypatch.setitem(webui._TAILSCALE, "at", -1e9)
+    monkeypatch.setattr(webui.Path, "is_file", lambda self: False)
+    assert webui.tailscale_info() == {"ips": [], "names": []}
+
+
+def test_phone_link_also_works_over_tailscale(workspace, tmp_path_factory, monkeypatch):
+    """10/15 使用者問「一定要連同一個 Wi-Fi 嗎」:電腦和手機都裝 Tailscale(私人 VPN)就能在外面連,HSUAN 不對網際網路開 port。
+    手機連線打開之後才連上的 Tailscale 位址、這台電腦在 Tailscale 上的名稱都收(Host 檢查),別的網域名稱照樣擋;
+    設定頁把 Wi-Fi 和 Tailscale 的網址分開、各有 QR code。"""
+    import httpx
+    import webui
+    ips = ["127.0.0.1"]
+    monkeypatch.setattr(webui, "lan_ips", lambda: list(ips))
+    monkeypatch.setattr(webui, "tailscale_info", lambda: {"ips": [], "names": []})
+    store = tmp_path_factory.mktemp("state")
+    reg, _ = scripted_registry([])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=store)
+    phone = webui.PhoneLink(desk, "t0k", 0, store=store, host="127.0.0.1")
+    assert phone.start() == ""
+    try:
+        st = phone.status()
+        assert st["outside"] == [] and not st["tailscale"] and st["urls"] == [f"http://127.0.0.1:{phone.port}"]
+        ips.append("100.101.102.103")  # 打開手機連線之後才連上 Tailscale
+        monkeypatch.setattr(webui, "tailscale_info",
+                            lambda: {"ips": ["100.101.102.103"], "names": ["desktop-hsuan", "desktop-hsuan.tail1234.ts.net"]})
+        st = phone.status()
+        assert st["outside"] == [f"http://100.101.102.103:{phone.port}"] and st["qr_outside"].startswith("<svg")
+        assert st["tailscale"] and st["urls"] == [f"http://127.0.0.1:{phone.port}"]
+        base = f"http://127.0.0.1:{phone.port}"
+        status = lambda host: httpx.get(base + "/manifest.webmanifest", headers={"Host": host}).status_code  # noqa: E731
+        assert status(f"100.101.102.103:{phone.port}") == 200
+        assert status(f"desktop-hsuan.tail1234.ts.net:{phone.port}") == 200
+        assert status(f"evil.example:{phone.port}") == 403  # 別的網域名稱(DNS rebinding)照樣擋
+        assert status("100.101.102.103:1") == 403
+        monkeypatch.setattr(webui, "LOCAL_ADDRS", set())  # 從 Tailscale 上的手機連進來(不是這台電腦)
+        page = httpx.get(base + "/", headers={"Host": f"100.101.102.103:{phone.port}"})
+        assert page.status_code == 200 and "t0k" not in page.text  # 一樣要先輸入 PIN
+    finally:
+        phone.close()

@@ -62,7 +62,7 @@ flowchart LR
 | 多 agent 分工(10/15) | HSUAN 自己的程式碼,同一題「knowledge.py、guard.py、difficulty.py 各負責什麼,整合成比較表」 | 不分工 4 次:4.5–15.5 萬 tokens、66–88 秒,主對話最後 1.9–3 萬 tokens。打開「分工」2 次:3 個子助理同時查,4.5–5.4 萬 tokens、108–155 秒,主對話只剩 1.2–1.3 萬 tokens(之後追問每一步都比較便宜)。**比較慢**:要等最慢的子助理 |
 | MCP 連接器(10/15) | 網頁加入示範連接器(虛構工單系統),問「還沒結案、優先度高的有哪些?挑後端組那張說明原因和修法」 | 連接器啟動 0.2 秒、2 個工具每步多 285 tokens;Super 自己選對工具(列工單 → 讀 T-1004),每次都先跳確認卡片;3 步、13,142 tokens,原因(created_at 沒索引、全表掃描)和修法都對 |
 | 網頁分享(10/15) | 對話模式請 HSUAN「做一個網頁介紹三個新功能,每個一張卡片、可以展開說明」 | Super 自己用 save_document 存成 .html(2 步、6,663 tokens);沙箱預覽:網頁裡的 CSS、JS 正常(按鈕可以展開),連網和 HSUAN 的 token / cookie 都拿不到。區域網路分享只在測試裡模擬,還沒用真的手機掃 |
-| 離線測試 | 假模型,不需金鑰 | 143 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 145 個全過 |
 
 ## 實測與審查抓到的 48 個問題
 
@@ -127,6 +127,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python desktop_app.py --install     # 桌面版:在桌面建立「HSUAN」捷徑,雙擊就開獨立視窗(像 Claude 桌面版)
                                                   # 手機:「設定 → 手機」打開手機連線,手機掃 QR code、輸入 PIN,再「加到主畫面」就像 app
                                                   # (配對過的手機會記住;電腦上的小助理要開著,手機和電腦要同一個 Wi-Fi)
+                                                  # 在外面也要用:電腦和手機都裝 Tailscale(免費的私人 VPN),會多一個網址和 QR code(不對網際網路公開)
                                                   # 給別人用就給「訪客 PIN」:訪客有自己的空間,看不到你的對話和專案,每天 20 萬 tokens
                                                   # (額度跟你分開,但用你的 NVIDIA 金鑰;設定頁列出每支訪客手機今天用了多少,可以只取消其中一支)
                                                   # 左下角顯示今天用了多少 tokens(存在 output/state/usage.json,重開不歸零)
@@ -185,6 +186,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 - `requirements.txt` 鎖在實測過的版本:程式依賴 langchain-nvidia-ai-endpoints 的內部行為,升版前先跑離線測試和 `smoke_test.py`。
 - 地端的 `nim_context_window`(Ultra / Super 備援 256K)是規劃值,部署時 `NIM_MAX_MODEL_LEN` 要設成一樣。
 - 上網工具擋內網是「連線前解析一次 DNS」,擋不住 DNS rebinding;正式環境要走有白名單的出口 proxy。搜尋關鍵字和網址會送到外部網站,公司環境要先確認規定。
+- 在外面連(Tailscale)目前只在離線測試裡模擬,還沒實際裝起來用手機測。
 - 分享網頁只到同一個 Wi-Fi(走手機連線,要先打開),不對外公開;網頁要自己包好(外部的 CSS、JS、圖片會被擋)。
 - MCP 連接器只支援在本機執行的(stdio),還不支援網址型(HTTP);只用自己寫的示範連接器實測過,還沒接過第三方的 MCP server(官方範例多半要 Node / uvx)。
 - **PoC 不要送公司真實程式碼到 build.nvidia.com**:API Trial 條款 §1.2 禁止正式使用,§3.3 允許 NVIDIA 收集輸入輸出改進模型。

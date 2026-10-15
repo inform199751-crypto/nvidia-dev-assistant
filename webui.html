@@ -1222,7 +1222,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/15", ["網頁分享:請 HSUAN 做一個網頁(存成 .html),對話裡就能「預覽」;在「成品」按「分享」,同一個 Wi-Fi 的人用連結或 QR code 就能看(不用登入,隨時可以停止分享)",
+  ["10/15", ["在外面也能用:電腦和手機都裝 Tailscale(免費的私人 VPN)、登入同一個帳號,「手機與訪客」就會多一個在外面也能連的網址和 QR code;HSUAN 還是不對網際網路公開",
+             "網頁分享:請 HSUAN 做一個網頁(存成 .html),對話裡就能「預覽」;在「成品」按「分享」,同一個 Wi-Fi 的人用連結或 QR code 就能看(不用登入,隨時可以停止分享)",
              "連接器(MCP):側邊欄多了「連接器」,貼上 MCP server 的設定就能讓 HSUAN 用外部工具(工單系統、資料庫…);每次使用都會先問你,有示範連接器(虛構的工單系統)可以試",
              "多 agent 分工:輸入框多了「分工」開關,打開後 HSUAN 把這一題彼此獨立的部分分給最多 3 個子助理同時查,每個只交回結論(對話不會被一大堆檔案塞滿);畫面上看得到每個子助理正在做什麼"]],
   ["10/10", ["公司資料保護:用的是 NVIDIA 試用平台時,右上角一直顯示「試用平台 · 不放公司資料」;.env 的 COMPANY_PATHS 寫的公司資料夾一律擋下(加專案、知識庫、拖進來、以前加過的都一樣),其他資料夾第一次加入要先確認不是公司資料",
@@ -1264,7 +1265,8 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
     renderPage();
   };
   if (!st.on) {
-    box.appendChild(el("p", "lead", "手機也能用 HSUAN:你的手機和電腦看到的是同一份對話,也可以給別人訪客 PIN。手機要和電腦連同一個 Wi-Fi。"));
+    box.appendChild(el("p", "lead", "手機也能用 HSUAN:你的手機和電腦看到的是同一份對話,也可以給別人訪客 PIN。"
+      + "手機要和電腦連同一個 Wi-Fi;電腦和手機都裝 Tailscale 的話,在外面也能連。"));
     box.appendChild(el("div", "actions")).appendChild(button("打開手機連線", "pill dark", act({ on: true })));
     box.appendChild(el("p", "lead", "第一次打開時 Windows 會問要不要讓 HSUAN 使用網路:請勾「私人網路」並按「允許」。"
       + (st.phones ? `已配對 ${st.phones} 支手機。` : "")));
@@ -1272,8 +1274,9 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
     renderGuestUsage(box, st, act);
     return;
   }
+  const main = st.urls.length ? st.urls : st.outside;  // 沒有 Wi-Fi 只有 Tailscale 時,主要的就是 Tailscale 那個
   const card = box.appendChild(el("div", "phone"));
-  card.appendChild(el("div", "qr")).innerHTML = st.qr;  // 伺服器產生的 SVG(只有格子,沒有外來內容)
+  card.appendChild(el("div", "qr")).innerHTML = st.urls.length ? st.qr : st.qr_outside;  // 伺服器產生的 SVG(只有格子)
   const info = card.appendChild(el("div", "grow"));
   const pins = info.appendChild(el("div", "pins"));
   for (const [label, pin] of [["你的手機 PIN", st.pin], ["訪客 PIN", st.guest_pin]]) {
@@ -1282,9 +1285,22 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
     p.appendChild(el("div", "pin-label", label));
     p.appendChild(el("div", "pin", pin));
   }
-  info.appendChild(el("div", "url", st.urls[0]));
-  if (st.urls.length > 1) info.appendChild(el("small", "", `連不上再試:${st.urls.slice(1).join("、")}`));
+  info.appendChild(el("div", "url", main[0] || ""));
+  if (main.length > 1) info.appendChild(el("small", "", `連不上再試:${main.slice(1).join("、")}`));
   info.appendChild(el("small", "", `已配對:你的手機 ${st.phones || 0} 支、訪客 ${st.guests || 0} 支(電腦重開也不用再輸入 PIN)`));
+  // 在外面也能連:Tailscale(私人 VPN)。HSUAN 不對網際網路公開,Tailscale 之外的人連不到
+  if (st.urls.length && st.outside?.length) {
+    box.appendChild(el("h3", "", "在外面也能連(Tailscale)"));
+    const out = box.appendChild(el("div", "phone"));
+    out.appendChild(el("div", "qr")).innerHTML = st.qr_outside;
+    const oi = out.appendChild(el("div", "grow"));
+    oi.appendChild(el("div", "url", st.outside[0]));
+    oi.appendChild(el("small", "", "手機也裝 Tailscale、登入跟這台電腦同一個帳號,不在同一個 Wi-Fi 也連得到;PIN 一樣。"
+      + "給訪客用:在 Tailscale 的管理頁把這台電腦「分享」給他(他也要裝 Tailscale),再給他訪客 PIN。"));
+  } else if (!st.outside?.length) {
+    box.appendChild(el("p", "lead", "想在外面(不在同一個 Wi-Fi)也能用:電腦和手機都裝 Tailscale(免費的私人 VPN)、登入同一個帳號,"
+      + "這裡就會多一個「在外面也能連」的網址和 QR code。HSUAN 不對網際網路公開,只有你的 Tailscale 裡的裝置連得到。"));
+  }
   if (st.guest_pin) box.appendChild(el("p", "lead",
     "給別人用就給「訪客 PIN」:訪客有自己的空間,看不到你的對話,也碰不到你電腦上的專案;每支訪客手機每天 20 萬 tokens。"
     + "訪客的對話會存在這台電腦上(output/guests)。「你的手機 PIN」只給自己的手機:它看得到你全部的對話。"));

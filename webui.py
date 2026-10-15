@@ -13,6 +13,7 @@ import argparse
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import os
@@ -71,8 +72,55 @@ def lan_ips() -> list[str]:
         others.update(socket.gethostbyname_ex(socket.gethostname())[2])
     except OSError:
         pass
+    others.update(tailscale_info()["ips"])  # Tailscale 的網卡有時不在主機名稱的位址清單裡
     usable = lambda ip: not ip.startswith(("127.", "169.254.", "0."))  # noqa: E731
     return [ip for ip in primary if usable(ip)] + sorted(ip for ip in others - set(primary) if usable(ip))
+
+
+# ---------- 在外面也能連(10/15):Tailscale 是免費的私人 VPN,電腦和手機都裝、登入同一個帳號,就像在同一個 Wi-Fi ----------
+# 不對網際網路開 port(公開網址只靠 6 位數 PIN 擋不住整個網路的掃描);Tailscale 之外的人連不到
+TAILNET = ipaddress.ip_network("100.64.0.0/10")  # Tailscale 給每台裝置的位址都在這一段
+_TAILSCALE: dict = {"at": -1e9, "info": {"ips": [], "names": []}}
+
+
+def is_tailnet(ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip) in TAILNET
+    except ValueError:
+        return False
+
+
+def tailscale_info() -> dict:
+    """這台電腦在 Tailscale 上的位址和名稱(MagicDNS,例如 desktop-abc.tail1234.ts.net);沒裝、沒登入都是空的。快取 30 秒。"""
+    if time.monotonic() - _TAILSCALE["at"] < 30:
+        return _TAILSCALE["info"]
+    info = {"ips": [], "names": []}
+    exe = shutil.which("tailscale") or next(
+        (p for p in (r"C:\Program Files\Tailscale\tailscale.exe", r"C:\Program Files (x86)\Tailscale\tailscale.exe")
+         if Path(p).is_file()), None)
+    if exe:
+        try:
+            r = subprocess.run([exe, "status", "--json"], capture_output=True, text=True, encoding="utf-8", timeout=5,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            me = json.loads(r.stdout or "{}").get("Self") or {}
+            if me.get("Online", True):
+                info["ips"] = [ip for ip in me.get("TailscaleIPs") or [] if is_tailnet(ip)]
+                dns = (me.get("DNSName") or "").rstrip(".").lower()
+                info["names"] = sorted({dns, dns.split(".")[0]} - {""})
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    _TAILSCALE.update(at=time.monotonic(), info=info)
+    return info
+
+
+def lan_host_ok(host: str, port: int) -> bool:
+    """手機連線開著之後才連上的網路(例如 Tailscale)也要認得:Host 是這台電腦現在的位址、或它在 Tailscale 上的名稱。
+    只收位址和自己的名稱,別的網域名稱一律不收(擋 DNS rebinding)。"""
+    name, _, p = host.rpartition(":")
+    name = name.strip("[]").lower()
+    if p != str(port) or not name:
+        return False
+    return name in lan_ips() or name in tailscale_info()["names"]
 
 
 class LanAccess:
@@ -277,7 +325,7 @@ class PhoneLink:
                 return ""
             ips = lan_ips()
             if not ips:
-                return "找不到這台電腦的區域網路位址,請確認有連上 Wi-Fi"
+                return "找不到這台電腦的區域網路位址,請確認有連上 Wi-Fi(或 Tailscale)"
             self.lan.ips = ips
             try:
                 server = serve(self.desk, self.port, token=self.token, lan=self.lan, host=self.host, guests=self.guests)
@@ -304,9 +352,16 @@ class PhoneLink:
         self._remember(False)
 
     def status(self) -> dict:
-        urls = [f"http://{ip}:{self.port}" for ip in self.lan.ips] if self.server else []
         on = bool(self.server)
+        if on and (ips := lan_ips()):  # 重新看一次:打開之後才連上的網路(Tailscale、換 Wi-Fi)也列出來
+            self.lan.ips = ips
+        ips = self.lan.ips if on else []
+        urls = [f"http://{ip}:{self.port}" for ip in ips if not is_tailnet(ip)]  # 同一個 Wi-Fi
+        # 在外面也能連(Tailscale):手機也裝 Tailscale、登入同一個帳號;訪客要你在 Tailscale 把這台電腦分享給他
+        outside = [f"http://{ip}:{self.port}" for ip in ips if is_tailnet(ip)]
         return {"on": on, "urls": urls, "pin": self.lan.pin if on else "",
+                "outside": outside, "qr_outside": qr.svg(outside[0]) if outside else "",
+                "tailscale": bool(tailscale_info()["ips"]) or bool(outside),
                 "guest_pin": (self.lan.guest_pin or "") if on else "",
                 "phones": self.lan.count("owner"), "guests": self.lan.count("guest"),
                 "qr": qr.svg(urls[0]) if urls else "", "guest_usage": self.guest_usage(),
@@ -1520,7 +1575,10 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             self._send(code, json.dumps(obj, ensure_ascii=False).encode(), "application/json; charset=utf-8", headers)
 
         def _host_ok(self) -> bool:
-            if (team and not team.allowed_hosts) or self.headers.get("Host") in allowed_hosts:
+            host = self.headers.get("Host") or ""
+            if (team and not team.allowed_hosts) or host in allowed_hosts:
+                return True
+            if lan and lan.open and lan_host_ok(host, port):  # 例如開著手機連線之後才連上的 Tailscale
                 return True
             self._json(403, {"error": "只接受本機連線"})
             return False
