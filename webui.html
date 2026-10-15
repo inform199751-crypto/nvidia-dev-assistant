@@ -387,8 +387,7 @@
   .send { width: 36px; height: 36px; border-radius: 50%; border: 0; flex-shrink: 0; background: var(--btn); color: var(--btn-ink);
           display: grid; place-items: center; }
   .send:disabled { background: var(--btn-off); }
-  .send.busy svg { animation: spin 1s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  .send.stop { display: grid; place-items: center; }
   .hint { max-width: 768px; margin: 8px auto 0; text-align: center; color: var(--faint); font-size: 12px; }
 
   /* ---------- 手機:側邊欄改成抽屜 ---------- */
@@ -523,7 +522,7 @@ let state = {};           // /api/state(這段對話的狀態)
 let es = null;            // 事件串流
 let page = null;          // 打開中的側邊欄頁面
 const SEND_ICON = send.innerHTML;
-const BUSY_ICON = '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10 3a7 7 0 107 7"/></svg>';
+const STOP_ICON = '<svg width="14" height="14" viewBox="0 0 20 20"><rect x="3" y="3" width="14" height="14" rx="2.5" fill="currentColor"/></svg>';
 const store = {
   get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* 無痕視窗等不能存,沒關係 */ } },
@@ -721,12 +720,17 @@ function dock() {  // 開始對話:輸入框回到最下面
 }
 
 // ---------- 送出 / 狀態 ----------
-function updateSend() { send.disabled = busy || (!input.value.trim() && !pendingImages.length); }
+// 回答中(10/16 使用者要的,像 Claude):輸入框空的 → 按鈕是「停止」;打了字 → 一樣是「送出」,HSUAN 下一步就看到
+function updateSend() {
+  const has = !!input.value.trim() || pendingImages.length > 0, stop = busy && !has;
+  send.classList.toggle("stop", stop);
+  send.innerHTML = stop ? STOP_ICON : SEND_ICON;
+  send.setAttribute("aria-label", stop ? "停止回答" : busy ? "送出(HSUAN 下一步就會看到)" : "送出");
+  send.title = stop ? "停止回答" : busy ? "回答到一半也可以送出:HSUAN 下一步就會看到" : "";
+  send.disabled = !busy && !has;
+}
 function setBusy(b) {
   busy = b;
-  send.classList.toggle("busy", b);
-  send.innerHTML = b ? BUSY_ICON : SEND_ICON;
-  send.setAttribute("aria-label", b ? "回答中" : "送出");
   updateSend();
 }
 function ensureBot() {
@@ -779,12 +783,19 @@ function renderPlan(box, steps) {
 const refreshSoon = () => { later("desk", loadDesk); later("pending", loadPending); later("state", loadState); };
 
 // ---------- 事件 ----------
+const heardWaiting = [];  // 回答到一半送出、HSUAN 還沒看到的訊息泡泡
+function markHeard() {
+  for (const m of heardWaiting.splice(0)) { const t = m.querySelector(".mode-tag"); if (t) t.textContent = "回答中送出 · 已收到"; }
+}
 const handlers = {
   user(e) {
-    bot = null; tools.length = 0;
+    // 回答到一半送的:正在寫的回答繼續寫在原本的泡泡(不要被切成兩半),HSUAN 看到這則訊息之後(heard / next)才另起一個;
+    // 前面還在跑的工具結果也要接得上
+    if (!e.queued) { bot = null; tools.length = 0; }
     const m = el("div", "msg user");
-    const tags = [e.mode === "plan" && "先規劃", e.split && "分工"].filter(Boolean);
+    const tags = [e.mode === "plan" && "先規劃", e.split && "分工", e.queued && "回答中送出"].filter(Boolean);
     if (tags.length) m.appendChild(el("span", "mode-tag", tags.join(" · ")));
+    if (e.queued) heardWaiting.push(m);
     if (e.images?.length) {  // 附上的圖片(伺服器只留縮圖)
       const row = m.appendChild(el("div", "msg-images"));
       for (const src of e.images) Object.assign(row.appendChild(el("img")), { src, alt: "附上的圖片" });
@@ -822,15 +833,18 @@ const handlers = {
   tool_done(e) {
     const d = tools.shift(); if (!d) return;
     d.out.textContent = e.output;
-    const saved = d.toolName === "save_document" && /已存成 (.+\.html)\s*$/i.exec(e.output || "");
-    if (saved) {  // 存好一個網頁:直接給「預覽」和「分享」(預覽連結的鑰匙跟「成品」要)
-      const name = saved[1].split(/[\\/]/).pop();
+    const saved = d.toolName === "save_document" && /^已存成 (.+)$/m.exec(e.output || "");
+    if (saved) {  // 存好的文件:直接給「下載」;網頁另外有「預覽」和「分享」(預覽連結的鑰匙跟「成品」要)
+      const name = saved[1].trim().split(/[\\/]/).pop();
       const bar = d.parentElement.insertBefore(el("div", "page-actions"), d.nextSibling);
-      api("/api/outputs").then((x) => {
-        const doc = (x.data.docs || []).find((o) => o.name === name);
-        if (doc?.preview) bar.prepend(previewLink(doc.preview, "預覽網頁"));
-      });
-      bar.append(button("分享…", "pill", () => openPage("outputs")));
+      bar.append(button("下載", "pill", () => download(`/api/file?token=${encodeURIComponent(TOKEN)}&name=${encodeURIComponent(name)}`)));
+      if (isPage(name)) {
+        api("/api/outputs").then((x) => {
+          const doc = (x.data.docs || []).find((o) => o.name === name);
+          if (doc?.preview) bar.prepend(previewLink(doc.preview, "預覽網頁"));
+        });
+        bar.append(button("分享…", "pill", () => openPage("outputs")));
+      }
     }
   },
   sub(e) {
@@ -842,6 +856,8 @@ const handlers = {
     if (li) { li.now.textContent = e.status === "失敗" ? "✗ 沒有完成" : `✓ 完成(${e.status})`; li.classList.add(e.status === "失敗" ? "failed" : "done"); }
   },
   step() { stopThinking(); },
+  heard() { markHeard(); stopThinking(); bot = null; },  // 回答到一半送的訊息:HSUAN 這一步看到了,之後的回答寫在它下面
+  next() { markHeard(); stopThinking(); bot = null; setBusy(true); },  // 上一輪答完才送到的:接著當下一題回答
   notice(e) { ensureBot().appendChild(el("div", "notice", e.text)); },
   plan(e) {  // 照計畫執行時的進度清單:同一輪只有一份,每次更新就重畫
     const b = ensureBot(); stopThinking(); b.textEl = null;
@@ -852,7 +868,7 @@ const handlers = {
     stopThinking(); flush();
     const b = ensureBot();
     if (!b.querySelector(".md")) { const t = b.appendChild(el("div", "md")); t.innerHTML = md(e.answer || ""); }
-    b.appendChild(el("div", "foot", `${e.role} · ${e.steps} 步 · ${e.tokens.toLocaleString()} tokens(這段對話累計 ${e.total.toLocaleString()})`));
+    b.appendChild(el("div", "foot", `${e.stopped ? "已停止 · " : ""}${e.role} · ${e.steps} 步 · ${e.tokens.toLocaleString()} tokens(這段對話累計 ${e.total.toLocaleString()})`));
     bot = null; setBusy(false); refreshSoon();
   },
   error(e) { stopThinking(); flush(); ensureBot().appendChild(el("div", "error", `錯誤:${e.text}`)); bot = null; setBusy(false); refreshSoon(); },
@@ -1222,6 +1238,10 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
+  ["10/16", ["回答中可以按「停止」(輸入框空的時候,送出鍵會變成方塊);也可以直接再傳訊息,HSUAN 下一步就會看到,來不及就接著當下一題回答",
+             "回答更精簡:長度配合問題、不再結尾客套和表情符號、資訊不夠會先問你;你指定長度或格式就照做",
+             "做不到的事(例如幫你在電腦上打開檔案)會直接說,不再一直硬試;存好的文件在對話裡就有「下載」按鈕",
+             "模型偶爾回空白、或做到步數上限還沒回答時,HSUAN 會請它把目前查到的先寫出來"]],
   ["10/15", ["操作瀏覽器:在「設定」打開後,可以請 HSUAN 測試你正在開發的網站(localhost):打開網頁、點按鈕、填表單、看主控台錯誤、截圖看排版;每次打開網址前會先問你",
              "在外面也能用:電腦和手機都裝 Tailscale(免費的私人 VPN)、登入同一個帳號,「手機與訪客」就會多一個在外面也能連的網址和 QR code;HSUAN 還是不對網際網路公開",
              "網頁分享:請 HSUAN 做一個網頁(存成 .html),對話裡就能「預覽」;在「成品」按「分享」,同一個 Wi-Fi 的人用連結或 QR code 就能看(不用登入,隨時可以停止分享)",
@@ -1959,9 +1979,14 @@ $("model-pick").onclick = () => popup($("model-pick"), [{ node: effortPanel() },
   }])]);
 $("plan-mode").onclick = () => { setPlanMode(!planMode); input.focus(); };
 $("split-mode").onclick = () => { setSplitMode(!splitMode); input.focus(); };
-async function submit() {
+async function submit(clicked = false) {
   const text = input.value.trim(), images = pendingImages;
-  if ((!text && !images.length) || busy || !conv) return;
+  if (!conv) return;
+  if (busy && !text && !images.length) {  // 回答中、輸入框空的:按鈕是「停止」(按 Enter 不會誤停)
+    if (clicked) { send.disabled = true; await api("/api/stop", {}); }
+    return;
+  }
+  if (!text && !images.length) return;
   const mode = planMode ? "plan" : "normal", split = splitMode && !$("split-mode").hidden;
   input.value = ""; pendingImages = []; renderThumbs(); autosize(); updateSend(); setPlanMode(false); setSplitMode(false);
   const r = await api("/api/ask", { text, mode, images, split });
@@ -1971,7 +1996,7 @@ async function submit() {
     setSplitMode(split);
   }
 }
-$("form").onsubmit = (ev) => { ev.preventDefault(); submit(); };
+$("form").onsubmit = (ev) => { ev.preventDefault(); submit(ev.submitter === send); };
 input.addEventListener("keydown", (ev) => {
   if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); submit(); }
 });

@@ -599,8 +599,8 @@ class Hub:
         # 上次關掉時沒收尾的:答到一半的這一輪、等回答的確認(那個執行緒已經不在了),補上結尾,畫面才不會卡在「回答中」
         asked = {ev["id"] for ev in events if ev["kind"] == "confirm"} - {ev["id"] for ev in events if ev["kind"] == "confirm_done"}
         events += [{"kind": "confirm_done", "id": cid, "answer": "n"} for cid in sorted(asked)]
-        last = next((ev["kind"] for ev in reversed(events) if ev["kind"] in ("user", "done", "error")), None)
-        if last == "user":
+        last = next((ev["kind"] for ev in reversed(events) if ev["kind"] in ("user", "next", "done", "error")), None)
+        if last in ("user", "next"):
             events.append({"kind": "error", "text": "上次關掉程式時這一輪還沒答完,請再問一次"})
         turn = next((ev["kind"] for ev in reversed(events) if ev["kind"] in ("user", "offer_plan", "plan_answered")), None)
         self.plan_waiting = turn == "offer_plan"
@@ -635,13 +635,23 @@ class Hub:
         """shown:畫面上顯示的問題(照計畫執行時,送給模型的是 EXECUTE_TASK,畫面只顯示「照計畫執行」)。
         role:只有這一輪換模型(做到步數上限後的「換模型接著做」)。
         images:上傳的圖片 [{"name","data","thumb"}](parse_images 檢查過);畫面和存檔只留縮圖,原圖只送給看圖模型。
-        split:輸入框的「分工」開關(agent.SPLIT_NOTE)。"""
+        split:輸入框的「分工」開關(agent.SPLIT_NOTE)。
+        回答到一半又送來的一般文字訊息(10/16):不擋,交給這一輪(下一步就看到,像 Claude);規劃、圖片、換模型還是要等。"""
         with self.cond:
             if self.busy:
-                return False
-            self.busy = True
-            self.plan_waiting = False  # 問了別的,或已經照計畫執行:之前的計畫不再等
-            stale, self.escalation = self.escalation, None
+                if mode != "normal" or images or role or shown or split:
+                    return False
+                self.session.tell(text)
+                queued = True
+            else:
+                queued = False
+                self.busy = True
+                self.session.cancel.clear()  # 上一輪按的「停止」不能帶到這一輪
+                self.plan_waiting = False  # 問了別的,或已經照計畫執行:之前的計畫不再等
+                stale, self.escalation = self.escalation, None
+        if queued:
+            self.publish("user", {"text": text, "mode": mode, "queued": True})
+            return True
         if stale:  # 沒按「換模型接著做」就問了別的:那張卡片收起來
             self.publish("escalate_answered", {"go": False})
         event = {"text": shown or text, "mode": mode}
@@ -652,6 +662,18 @@ class Hub:
         self.publish("user", event)
         pictures = [(im["name"], im["data"]) for im in images or []]
         threading.Thread(target=self._run, args=(text, mode, role, pictures, split), daemon=True).start()
+        return True
+
+    def stop(self) -> bool:
+        """輸入框的「停止」:串流中的回答馬上停,正在跑的工具做完就停;正在等使用者按確認的就當「不要」。
+        沒在回答回 False。中途送來、還沒交給模型的訊息留著,停下來之後接著回答(停止 + 改問別的)。"""
+        with self.cond:
+            if not self.busy:
+                return False
+            waiting = list(self.pending)
+        self.session.stop()
+        for cid in waiting:
+            self.answer(cid, "n")
         return True
 
     def execute_plan(self, go: bool) -> bool:
@@ -690,7 +712,7 @@ class Hub:
                 r = self.session.ask(self.note + text, files, mode, role, images or [], split)
             self.note = ""
             self.publish("done", {"role": r.role, "steps": r.steps, "tokens": r.tokens_used,
-                                  "total": self.session.tokens_used, "answer": r.answer})
+                                  "total": self.session.tokens_used, "answer": r.answer, "stopped": r.stopped})
             planned = mode == "plan" and not r.hit_limit  # 做到上限 = 沒交出計畫
             if hard := self.session.escalation(r):
                 offer = {"role": hard, "model": self.session.registry.spec(hard).model.split("/")[-1],
@@ -706,8 +728,17 @@ class Hub:
             self.publish("error", {"text": f"{type(e).__name__}: {e}"})
         finally:
             with self.cond:
-                self.busy = False
+                # 這一輪答完了才送到的訊息(跟 ask 的 tell 在同一把鎖裡,不會漏):不放開 busy,直接接著答,
+                # 中間不會插進別的一輪
+                follow = self.session.take_inbox()
+                self.busy = bool(follow)
+                if follow:
+                    self.session.cancel.clear()
                 self.cond.notify_all()
+        if follow:  # 接著當下一題回答(畫面上已經有使用者的訊息了,只通知「開始下一輪」);這時不提議計畫 / 換模型
+            self.publish("next", {})
+            threading.Thread(target=self._run, args=("\n\n".join(follow),), daemon=True).start()
+            return
         if planned:  # 等不忙了才問,按下「照計畫執行」才不會被當成上一題還沒結束
             self.plan_waiting = True
             self.publish("offer_plan")
@@ -1986,7 +2017,11 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 text = text or "請說明這張圖。"
                 ok = hub.ask(text, "plan" if body.get("mode") == "plan" and not hub.chat else "normal", images=images,
                              split=bool(body.get("split")) and not hub.chat)
-                self._json(202 if ok else 409, {} if ok else {"error": "上一個問題還在回答中"})
+                self._json(202 if ok else 409, {} if ok else
+                           {"error": "回答中只能再傳文字訊息;先規劃、分工、附圖片要等這一輪結束(或先按停止)"})
+            elif path == "/api/stop":  # 輸入框的「停止」
+                ok = hub.stop()
+                self._json(200 if ok else 409, {} if ok else {"error": "現在沒有在回答"})
             elif path == "/api/execute":  # 規劃模式交出計畫後:照計畫執行 / 先不要
                 ok = hub.execute_plan(bool(body.get("go")))
                 self._json(202 if ok else 409, {} if ok else {"error": "上一個問題還在回答中"})

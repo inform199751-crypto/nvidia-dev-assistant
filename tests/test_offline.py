@@ -496,8 +496,10 @@ def test_save_document_stays_in_output_dir(workspace, tmp_path_factory, monkeypa
     out = tmp_path_factory.mktemp("output")
     monkeypatch.setattr(tools, "OUTPUT_DIR", out)
     save = lambda name, content="內容": tools.save_document.invoke({"filename": name, "content": content})  # noqa: E731
-    assert save("../../報告.md").endswith(str(out / "報告.md"))
-    assert save("報告.md").endswith(str(out / "報告_2.md"))
+    first = save("../../報告.md")
+    assert first.splitlines()[0].endswith(str(out / "報告.md"))
+    assert "沒辦法幫使用者在電腦上打開" in first  # 10/16:告訴模型使用者自己打得開,不要硬試
+    assert save("報告.md").splitlines()[0].endswith(str(out / "報告_2.md"))
     save("清單.csv", "名稱,數量\n蘋果,3\n")
     assert (out / "清單.csv").read_bytes().startswith("﻿名稱".encode())
     assert "錯誤" in save("run.sh") and "錯誤" in save(".bashrc.md") and "錯誤" in save("")
@@ -1175,10 +1177,13 @@ def test_escalation_after_step_limit_continues_with_hard_model(workspace, routin
     assert r.hit_limit and r.role == "code" and s.escalation(r) == "code_deep"
     done = s.ask(CONTINUE_TASK, role="code_deep")
     assert (done.answer, done.role) == ("接著做完了", "code_deep") and s.escalation(done) is None
-    assert "找出偶發失敗的原因" in seen[7][1][1].content and "沒有 nope 這個工具" in seen[7][1][-2].content
+    assert "找出偶發失敗的原因" in seen[7][1][1].content
+    assert any("沒有 nope 這個工具" in str(m.content) for m in seen[7][1])  # 前面查過的都還在
+    assert "做到 6 步上限" in seen[7][1][-2].content  # 最後一步不給工具、收尾(10/16)
     assert s.ask("下一題").role == "code"
     assert [role for role, _, _ in seen] == ["code"] * 7 + ["code_deep", "code", "code"]
-    assert [d["text"] for k, d in events if k == "notice"] == ["上一輪做到步數上限,改用 code_deep(deepseek-v4.1-flash)"]
+    assert [d["text"] for k, d in events if k == "notice"] == ["做到 6 步上限,上面是根據目前查到的內容先回答",
+                                                               "上一輪做到步數上限,改用 code_deep(deepseek-v4.1-flash)"]
     assert [(e["by"], e["used"], e["outcome"]) for e in log_entries(routing_log)] == [
         ("classifier", "code", "max_steps"), ("escalate", "code_deep", "done"), ("classifier", "code", "done")]
 
@@ -1274,8 +1279,10 @@ def test_webui_chat_and_security(webui_app):
     events = app.events_until("done")
     assert events[0] == {"seq": 1, "kind": "user", "text": "你好", "mode": "normal"}
     assert "text" in [e["kind"] for e in events] and events[-1]["answer"] == "你好,我是小助理"
-    app.hub.busy = True
-    assert app.post("/api/ask", {"text": "又一題"}).status_code == 409
+    app.hub.busy = True  # 回答中:一般文字訊息收下來(下一步交給模型),規劃、圖片、分工要等
+    assert app.post("/api/ask", {"text": "又一題"}).status_code == 202 and app.hub.session.inbox == ["又一題"]
+    assert app.post("/api/ask", {"text": "規劃", "mode": "plan"}).status_code == 409
+    assert app.post("/api/ask", {"text": "分工", "split": True}).status_code == 409
 
 
 def test_webui_confirm_and_apply(webui_app, workspace, fake_sandbox):
@@ -3598,3 +3605,122 @@ def test_browser_setting_binds_the_tool_only_where_allowed(workspace, tmp_path_f
         server.server_close()
     with pytest.raises(PermissionError):
         webui.Desk(lambda ws: None, workspace, can_add_projects=False).set_browser(True)
+
+
+# ---------- 停止、回答到一半再傳訊息、空白回答(10/16) ----------
+
+def test_stop_mid_stream_keeps_what_was_shown(workspace):
+    """10/16 使用者要的「停止」:串流到一半按停止,畫面上已經顯示的文字還在(answer),這一輪就結束;
+    中途斷掉的串流沒有用量回報,用估算的扣額度。停下來的那一輪從對話拿掉、下一題前面告訴模型 ——
+    10/16 實測:留一則「已停止」在對話裡,再問同一題模型就照抄那句。"""
+    import agent
+    chunks = [AIMessageChunk(content="第一段"), AIMessageChunk(content="第二段"), AIMessageChunk(content="第三段")]
+    reg, seen = scripted_registry([chunks, [AIMessageChunk(content="好")]], chat_cls=StreamingChat)
+    quota = TokenQuota(10**6, 2)
+    seen_text = []
+
+    def on_event(kind, data):
+        if kind == "text":
+            seen_text.append(data["text"])
+            if len(seen_text) == 2:
+                session.stop()
+
+    session = AgentSession(reg, quota, on_event=on_event)
+    r = session.ask("寫一篇長文")
+    assert r.stopped and r.answer == "第一段第二段" and seen_text == ["第一段", "第二段"]
+    assert len(session.messages) == 1  # 只剩系統提示:停下來的那一輪拿掉了
+    assert r.tokens_used > 0 and quota.used("cli") == r.tokens_used
+    session.cancel.clear()  # 開始下一輪前清掉(網頁的 Hub.ask 會做)
+    session.ask("寫一篇長文")  # 同一題再問一次
+    assert "<note>使用者停止了上一題「寫一篇長文」" in seen[1][1][-1].content
+    assert not any(agent.STOPPED in str(m.content) for m in seen[1][1])  # 沒有可以照抄的「已停止」
+
+
+def test_stop_between_steps_and_messages_sent_mid_answer(workspace):
+    """執行工具時按停止:工具做完就停(下一步不送出),這一輪從對話拿掉。
+    回答到一半又傳來的訊息:下一步送出前交給模型(HEARD_NOTE),畫面收到 heard。"""
+    import agent
+    (workspace / "a.py").write_text("x = 1\n", encoding="utf-8")
+    call = lambda i: {"name": "read_file", "args": {"path": "a.py"}, "id": f"r{i}"}  # noqa: E731
+    reg, seen = scripted_registry([ai(tool_calls=[call(1)]), ai(tool_calls=[call(2)]), ai("好")])
+    events = []
+
+    def on_event(kind, data):
+        events.append(kind)
+        if kind == "tool" and data["args"] == {"path": "a.py"} and events.count("tool") == 1:
+            session.tell("順便看一下 b.py")  # 第一個工具在跑的時候,使用者又傳了訊息
+        if kind == "tool" and events.count("tool") == 2:
+            session.stop()  # 第二個工具在跑的時候按停止
+
+    session = AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event)
+    r = session.ask("看 a.py")
+    assert r.stopped and r.answer == agent.STOPPED and r.steps == 2
+    assert agent.HEARD_NOTE + "順便看一下 b.py" == seen[1][1][-1].content and "heard" in events
+    assert len(session.messages) == 1 and "看 a.py" in session.carry  # 這一輪拿掉、下一題前面告訴模型
+    assert len(seen) == 2  # 停了就不再送第三步
+
+
+def test_empty_answer_gets_one_reminder(workspace):
+    """10/16 使用者的對話:Super 回了空白(答案只寫在思考裡),使用者什麼都沒看到。提醒一次請它寫出來;還是空白就不再提醒(不會無限重試)。"""
+    import agent
+    reg, seen = scripted_registry([ai(""), ai("程式要先裝 Python 3.10 以上")])
+    r = AgentSession(reg, TokenQuota(10**6, 2)).ask("為什麼打不開")
+    assert r.answer == "程式要先裝 Python 3.10 以上" and r.steps == 2 and seen[1][1][-1].content == agent.EMPTY_NOTE
+    reg2, seen2 = scripted_registry([ai(""), ai("")])
+    assert AgentSession(reg2, TokenQuota(10**6, 2)).ask("嗨").answer == "" and len(seen2) == 2
+
+
+def test_delegate_accepts_a_task_list_written_as_a_string():
+    """10/16 使用者的對話:Super 把 tasks 包成 JSON 字串送來,參數檢查擋了兩次。字串也收。"""
+    import agent
+    assert agent.task_list('["查 a", " 查 b "]') == ["查 a", "查 b"]
+    assert agent.task_list("查 a\n\n查 b") == ["查 a", "查 b"] and agent.task_list(["x", ""]) == ["x"]
+    schema = agent.delegate.tool_call_schema.model_json_schema() if hasattr(agent.delegate.tool_call_schema, "model_json_schema") \
+        else agent.delegate.tool_call_schema
+    assert "string" in json.dumps(schema)
+
+
+_HOOK: list = []  # 測試時放「模型回答前要做的事」
+
+
+class HookChat(ScriptedChat):
+    """照劇本回答;回答前先做 _HOOK 裡的事(模擬使用者在模型回答時又傳了訊息)。"""
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs: Any) -> ChatResult:
+        while _HOOK:
+            _HOOK.pop(0)()
+        return super()._generate(messages, stop, run_manager, **kwargs)
+
+
+def test_web_message_sent_after_the_last_step_becomes_the_next_question(webui_app, monkeypatch):
+    """網頁:最後一步(寫回答)時才送到的訊息,模型這一輪來不及看 —— 答完就接著當下一題回答(事件 next),不用使用者再送一次;
+    沒在回答時按停止回 409。"""
+    import sys
+    import time as _time
+    app = webui_app([])
+    script, seen = [ai("鳥璇點餐是串燒店的點餐系統"), ai("用 build.bat 打包")], []
+    app.hub.session.registry._chat_factory = lambda spec, **_: HookChat(role=spec.role, script=script, seen=seen)
+    # 模型寫第一題的回答時,使用者又送了一題(那時還在回答中 → 收進 inbox)
+    monkeypatch.setattr(sys.modules[__name__], "_HOOK", [lambda: app.hub.ask("那要怎麼打包成 exe?")])
+    assert app.post("/api/ask", {"text": "這個專案在做什麼?"}).status_code == 202
+    for _ in range(200):
+        if sum(e["kind"] == "done" for e in app.hub.events) == 2 and not app.hub.busy:
+            break
+        _time.sleep(0.05)
+    kinds = [e["kind"] for e in app.hub.events]
+    users = [e for e in app.hub.events if e["kind"] == "user"]
+    assert len(users) == 2 and users[1]["queued"] is True and "next" in kinds
+    assert kinds.index("next") > kinds.index("done")  # 第一題答完才接著答第二題
+    assert [e["answer"] for e in app.hub.events if e["kind"] == "done"] == ["鳥璇點餐是串燒店的點餐系統", "用 build.bat 打包"]
+    assert "那要怎麼打包成 exe?" in seen[1][1][-1].content  # 第二輪的問題就是中途送來的訊息
+    assert app.post("/api/stop", {}).status_code == 409
+
+
+def test_last_step_answers_without_tools(workspace):
+    """10/16 實測:同一題有一次讀了 15 步檔案還沒回答,做到上限只剩「已達上限」。最後一步不給工具、請它根據查到的先回答;
+    還是算做到上限(會提議換模型接著做)。"""
+    import agent
+    reg, seen = scripted_registry(stuck(5) + [ai("目前看到 a.py 是入口,b.py 還沒看")])
+    r = AgentSession(reg, TokenQuota(10**6, 2)).ask("這個專案在做什麼")
+    assert r.hit_limit and r.answer.startswith("目前看到 a.py 是入口,b.py 還沒看") and "做到 6 步上限" in r.answer
+    assert seen[-1][2] is None and seen[-1][1][-1].content == agent.WRAP_UP_NOTE  # 最後一步沒綁工具

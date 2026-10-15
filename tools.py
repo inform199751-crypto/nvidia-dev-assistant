@@ -430,7 +430,9 @@ def save_document(filename: str, content: str) -> str:
         target, n = out_dir / f"{Path(name).stem}_{n}{suffix}", n + 1
     # CSV 加 BOM:Excel 開沒有 BOM 的 UTF-8 CSV,中文會變亂碼
     target.write_text(content, encoding="utf-8-sig" if suffix == ".csv" else "utf-8", newline="\n")
-    return f"已存成 {target}"
+    # 10/16 使用者的對話:請它「打開」存好的檔案,它讀不到輸出資料夾、又不知道使用者自己就能開,硬試了 10 步(25.5 萬 tokens)
+    return (f"已存成 {target}\n使用者可以用對話裡這個工具下面的按鈕,或側邊欄「成品」打開、下載這個檔案;"
+            "你沒辦法幫使用者在電腦上打開它,使用者要開的話就這樣告訴他。")
 
 
 class PlanStep(TypedDict):
