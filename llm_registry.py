@@ -77,6 +77,7 @@ class ModelRegistry:
         self.limits: dict = config["limits"]
         self.embedding: dict | None = config.get("embedding")  # 知識庫用的 embedding 模型(knowledge.py)
         self.safety: dict | None = config.get("safety")  # 安全把關的模型(guard.py)
+        self.company_data_ok = bool(self._backend_cfg.get("company_data"))  # 這個後端能不能放公司資料(models.yaml)
         self.specs = {}
         for role, cfg in config["roles"].items():
             cfg = dict(cfg)

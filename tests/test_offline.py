@@ -3014,3 +3014,104 @@ def test_dropped_folder_is_found_on_this_computer(workspace, tmp_path_factory, m
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytest.fixture
+def trial_platform(monkeypatch):
+    """模擬用 NVIDIA 試用平台(不能放公司資料);測完 guard 回到預設(能放、沒有公司資料夾)。"""
+    import guard
+    monkeypatch.setattr(guard, "COMPANY_OK", True)
+    monkeypatch.setattr(guard, "COMPANY_PATHS", [])
+    return lambda paths="": guard.configure_company(False, paths)
+
+
+def test_shipped_backends_say_where_company_data_may_go():
+    """models.yaml:試用平台(catalog)不能放公司資料(條款允許 NVIDIA 收集輸入輸出),公司自己的 NIM 可以。"""
+    assert ModelRegistry.from_yaml(backend="catalog").company_data_ok is False
+    assert ModelRegistry.from_yaml(backend="nim").company_data_ok is True
+
+
+def test_company_folders_are_blocked_on_the_trial_platform(workspace, tmp_path_factory, trial_platform):
+    """10/10 公司資料保護:不是靠人記得「不要放」,是讓系統擋住。試用平台上 .env 的 COMPANY_PATHS 底下的資料夾
+    加專案、知識庫、拖進來(找位置 / 上傳)都擋;其他資料夾第一次加入回 409,畫面問過「不是公司資料」再送 public 才放行,
+    記下聲明;加過的不用再問。換成公司的 NIM 就都不擋。"""
+    import httpx
+    import guard
+    import webui
+    company, store, uploads = (tmp_path_factory.mktemp(n) for n in ("work", "state", "uploads"))
+    (company / "billing").mkdir()
+    (company / "billing" / "app.py").write_text("print('secret')\n", encoding="utf-8")
+    personal = tmp_path_factory.mktemp("side-project")
+    (personal / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    trial_platform(f'"{company}" ; ')
+    assert guard.company_root(company / "billing") == company.resolve() and guard.company_root(personal) is None
+    reg, _ = scripted_registry([])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=store, uploads_dir=uploads, embed=fake_embedder())
+    desk.locate_roots = [company]
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    post = lambda path, body: httpx.post(base + path, json=body, headers=h)  # noqa: E731
+    try:
+        assert httpx.get(base + "/api/state", headers=h).json()["company_ok"] is False
+        for public in (False, True):  # 公司資料夾:聲明了也不行
+            r = post("/api/project/add", {"path": str(company / "billing"), "public": public})
+            assert r.status_code == 400 and "公司資料夾" in r.json()["error"]
+            assert post("/api/knowledge/add", {"path": str(company), "public": public}).status_code == 400
+        size = (company / "billing" / "app.py").stat().st_size
+        r = post("/api/project/locate", {"name": "billing", "expect": [{"path": "app.py", "size": size}], "public": True})
+        assert r.status_code == 400 and "公司資料夾" in r.json()["error"]
+        r = post("/api/project/add", {"path": str(personal)})
+        assert r.status_code == 409 and r.json()["need"] == "declare"
+        proj = post("/api/project/add", {"path": str(personal), "public": True}).json()
+        assert proj["declared"] == "not-company"
+        assert post("/api/project/add", {"path": str(personal)}).json()["id"] == proj["id"]  # 加過的不再問
+        assert post("/api/knowledge/add", {"path": str(personal)}).status_code == 409
+        files = [{"path": "a.py", "data": _b64(b"x = 1\n")}]
+        assert post("/api/project/upload", {"name": "copy", "files": files}).status_code == 409
+        copy = post("/api/project/upload", {"name": "copy", "files": files, "done": True, "public": True}).json()
+        assert copy["source"] == "upload" and copy["declared"] == "not-company"
+        assert not any(Path(p["path"]) == (company / "billing").resolve() for p in desk.projects)
+    finally:
+        server.shutdown()
+        server.server_close()
+    guard.configure_company(True, str(company))  # 公司自己的 NIM:資料不出公司,都不擋
+    assert desk.add_project(str(company / "billing"))["path"] == str((company / "billing").resolve())
+
+
+def test_old_projects_and_knowledge_in_company_folders_stop_working(workspace, tmp_path_factory, trial_platform):
+    """以前加過的專案、知識庫,之後才把它的位置寫進 COMPANY_PATHS:試用平台上那個專案的對話不送給模型(回錯誤),
+    知識庫不給搜(段落會送給模型)、不能更新(要重送文件算向量),知識庫頁面標出來。對話模式不受影響。"""
+    import time as _time
+    import httpx
+    import webui
+    company, store = tmp_path_factory.mktemp("work"), tmp_path_factory.mktemp("state")
+    (company / "手冊.md").write_text("# 手冊\n## 請假\n三天以上要經理核准。", encoding="utf-8")
+    reg, seen = scripted_registry([ai("對話模式照常回答")])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=store, embed=fake_embedder())
+    proj = desk.add_project(str(company))  # 還沒設定公司資料夾時加的
+    kid = desk.add_knowledge(str(company))["id"]
+    for _ in range(200):
+        if desk.ready_knowledge():
+            break
+        _time.sleep(0.05)
+    trial_platform(str(company))
+    assert desk.ready_knowledge() == []
+    assert desk.knowledge_listing()[0]["company"] is True
+    with pytest.raises(PermissionError, match="公司資料夾"):
+        desk.update_knowledge(kid)
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    try:
+        code = httpx.post(base + "/api/conv/new", json={"project": proj["id"]}, headers=h).json()["id"]
+        assert "search_knowledge" not in {t.name for t in desk.hubs[code].session.tools}
+        httpx.post(base + "/api/ask", json={"text": "這個專案在做什麼?"}, headers={**h, "X-Conv": code})
+        err = _events_until(base, code, "error")[-1]
+        assert "公司資料夾" in err["text"] and seen == []  # 模型沒有收到
+        chat_id = httpx.post(base + "/api/conv/new", json={"kind": "chat"}, headers=h).json()["id"]
+        httpx.post(base + "/api/ask", json={"text": "幫我想三個午餐選項"}, headers={**h, "X-Conv": chat_id})
+        assert _events_until(base, chat_id, "done")[-1]["answer"] == "對話模式照常回答"
+    finally:
+        server.shutdown()
+        server.server_close()

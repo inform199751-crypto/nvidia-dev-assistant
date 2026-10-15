@@ -206,6 +206,11 @@
   .topbar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; min-height: 52px; }
   .model { font-size: 17px; font-weight: 600; display: flex; align-items: baseline; gap: 6px; min-width: 0; }
   .model span { color: var(--faint); font-weight: 400; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 公司資料保護:用的是試用平台時一直掛在右上角 */
+  .trial-badge { margin-left: auto; flex-shrink: 0; border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+                 background: color-mix(in srgb, var(--warn) 12%, transparent); border-radius: 999px;
+                 color: color-mix(in srgb, var(--warn) 75%, var(--text));  /* 摻一點內文色:淺底的黃黑、電光藍才到 4.5 */
+                 padding: 2px 10px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
   main { flex: 1; overflow-y: auto; }
   .log { max-width: 768px; margin: 0 auto; padding: 8px 24px 24px; display: flex; flex-direction: column; gap: 22px; }
 
@@ -448,6 +453,8 @@
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l-6 6 6 6"/></svg>
     </button>
     <div class="model"><span style="color:var(--text);font-size:17px;font-weight:600" id="top-title">HSUAN</span></div>
+    <button type="button" class="trial-badge" id="trial-badge" hidden
+            title="現在用的是 NVIDIA 試用平台:送出的內容 NVIDIA 可以收集,也不能用在正式工作。公司資料夾會被擋下,其他資料夾第一次加入要先確認不是公司資料。">試用平台 · 不放公司資料</button>
   </div>
   <main id="scroller">
     <div class="log" id="log" aria-live="polite"></div>
@@ -522,6 +529,18 @@ function api(path, body, convId) {
     headers: { "X-Token": TOKEN, "Content-Type": "application/json", "X-Conv": convId || conv || "" },
     body: body === undefined ? undefined : JSON.stringify(body),
   }).then(async (r) => ({ ok: r.ok, status: r.status, data: await r.json().catch(() => ({})) }));
+}
+// 加資料夾(專案、知識庫、拖進來的):試用平台上伺服器回 409 need=declare,先問一次「這不是公司資料」,確認了才帶 public 再送。
+// decl 讓同一次動作的幾個請求只問一次(拖資料夾:找位置 → 貼路徑 / 上傳)
+async function apiDeclared(path, body, decl = {}) {
+  let r = await api(path, decl.yes ? { ...body, public: true } : body);
+  if (r.status === 409 && r.data.need === "declare") {
+    if (!confirm(`${r.data.error}。\n\n按「確定」= 我確認這不是公司資料(公司的程式碼、客戶資料、內部文件都不能放)。`))
+      return { ok: false, cancelled: true, status: 409, data: {} };
+    decl.yes = true;
+    r = await api(path, { ...body, public: true });
+  }
+  return r;
 }
 const download = (url) => { location.href = url; };
 
@@ -1021,6 +1040,7 @@ function renderSide() {
   }
 }
 $("new-chat").onclick = () => newConv();
+$("trial-badge").onclick = () => openPage("about");  // 「了解更多」的資料與隱私寫著擋了哪些資料夾
 $("add-project").onclick = async () => {
   const path = prompt("專案資料夾的完整路徑(例如 C:\\Users\\User\\Desktop\\my-project),\n或公開的 GitHub 網址(例如 https://github.com/作者/專案):");
   if (!path || !path.trim()) return;
@@ -1028,7 +1048,8 @@ $("add-project").onclick = async () => {
   btn.disabled = true;
   if (github) btn.lastChild.textContent = "下載中…(大專案要等一下)";
   try {
-    const r = await api("/api/project/add", { path });
+    const r = await apiDeclared("/api/project/add", { path });
+    if (r.cancelled) return;
     if (!r.ok) return alert(r.data.error || "新增失敗");
     await loadDesk(); newConv(r.data.id);
   } finally {
@@ -1041,6 +1062,7 @@ async function loadState() {
   const r = await api("/api/state");
   if (!r.ok) return;
   state = r.data;
+  $("trial-badge").hidden = state.company_ok !== false;
   renderUsage();
   renderModel();
   setBusy(state.busy);
@@ -1131,7 +1153,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/10", ["可以把資料夾直接拖進視窗:放在桌面、文件、下載裡的會自動找到原本的位置(HSUAN 改的東西按「套用」才寫進去);找不到才問路徑,留空就上傳一份副本給它分析",
+  ["10/10", ["公司資料保護:用的是 NVIDIA 試用平台時,右上角一直顯示「試用平台 · 不放公司資料」;.env 的 COMPANY_PATHS 寫的公司資料夾一律擋下(加專案、知識庫、拖進來、以前加過的都一樣),其他資料夾第一次加入要先確認不是公司資料",
+             "可以把資料夾直接拖進視窗:放在桌面、文件、下載裡的會自動找到原本的位置(HSUAN 改的東西按「套用」才寫進去);找不到才問路徑,留空就上傳一份副本給它分析",
              "設定 → 外觀多了 7 種參考車廠官網的配色:黑金、賽道紅、深海藍、碳纖黑、純黑白、黃黑、電光藍;拿掉淺色、跟著系統",
              "回答語言拿掉簡體中文(以前選它的會回到繁體中文)",
              "上網讀到的網頁和訪客的問題先經過安全檢查(Nemotron 3.5 Content Safety),藏著要 AI 照做的指令會被擋下",
@@ -1260,6 +1283,7 @@ function renderKnowledge(box, data) {
     const list = rows(box);
     for (const it of data.items) {
       const sub = [];
+      if (it.company) sub.push("在公司資料夾裡:試用平台上不會搜尋、也不能更新");
       if (it.missing) sub.push("找不到這個資料夾了");
       else if (it.state === "indexing") sub.push(it.progress[1] ? `建索引中… ${it.progress[0]} / ${it.progress[1]}` : "建索引中…");
       else {
@@ -1287,7 +1311,8 @@ function renderKnowledge(box, data) {
     box.appendChild(el("div", "actions")).appendChild(button("加入資料夾", "pill dark", async () => {
       const path = prompt("文件資料夾的完整路徑(例如 C:\\Users\\User\\Desktop\\nvidia-dev-assistant-main\\demo_knowledge):");
       if (!path || !path.trim()) return;
-      const x = await api("/api/knowledge/add", { path });
+      const x = await apiDeclared("/api/knowledge/add", { path });
+      if (x.cancelled) return;
       if (!x.ok) return alert(x.data.error || "加入失敗");
       renderPage();
     })).parentElement.style.marginTop = "12px";
@@ -1519,6 +1544,9 @@ async function renderPage() {
       state.backend === "nim"
         ? "模型在公司內部的伺服器上,問題和檔案內容不會離開公司網路。"
         : "現在的模型在 build.nvidia.com:試用條款允許 NVIDIA 收集輸入和輸出,而且不能用在正式工作。不要貼公司的程式碼、客戶資料或密碼。",
+      ...(state.company_ok === false ? [(state.company_paths || []).length
+        ? `公司資料保護:這些公司資料夾一律不能用(專案、知識庫、拖進來的都擋):${state.company_paths.join("、")}。其他資料夾第一次加入要先確認不是公司資料。`
+        : "公司資料保護:加專案、知識庫、拖資料夾進來之前,要先確認不是公司資料。在 .env 的 COMPANY_PATHS 寫上公司資料夾,HSUAN 就會直接擋下。"] : []),
       state.guest ? "你是訪客:你的對話只有你看得到,但會存在主人的電腦上。"
                   : "對話、草稿、文件都存在這台電腦的 output 資料夾,只有問題和需要的檔案內容會送給模型。",
       "HSUAN 不會自己改你的檔案:修改都先放在草稿,你按「套用到專案」才會改。程式只在沒有網路的沙箱裡跑。",
@@ -1658,7 +1686,10 @@ async function dropFolder(root) {
   if (!files.length) return alert(`「${root.name}」裡沒有可以讀的檔案`);
   // 抽樣幾個檔案的大小:HSUAN 用它在這台電腦上找原本的資料夾、或檢查使用者貼的路徑對不對
   const expect = files.filter((_, i) => i % Math.ceil(files.length / 20) === 0).map((x) => ({ path: x.path, size: x.file.size }));
-  const found = await api("/api/project/locate", { name: root.name, expect });
+  const decl = {};  // 試用平台上「這不是公司資料」只問一次
+  const found = await apiDeclared("/api/project/locate", { name: root.name, expect }, decl);
+  if (found.cancelled) return;
+  if (found.status === 400) return alert(found.data.error);  // 例如找到了,但在公司資料夾裡
   if (found.ok && found.data.project) {  // 自己找到了:直接用原本的資料夾,不用問(10/10 使用者嫌每次都要貼路徑)
     return openDropped(found.data.project, `已找到「${root.name}」:${found.data.project.path}(HSUAN 改的東西,你按「套用到專案」才會寫進去)`);
   }
@@ -1670,13 +1701,15 @@ async function dropFolder(root) {
   let proj;
   try {
     if (path.trim()) {  // 用原本的資料夾:伺服器會比對幾個檔案的大小,貼錯資料夾就擋下來
-      const r = await api("/api/project/add", { path, expect });
+      const r = await apiDeclared("/api/project/add", { path, expect }, decl);
+      if (r.cancelled) return;
       if (!r.ok) return alert(r.data.error || "加入失敗");
       proj = r.data;
     } else {
       let upload = null, batch = [], size = 0, sent = 0;
       const flush = async (done) => {
-        const r = await api("/api/project/upload", { name: root.name, upload, done, files: batch });
+        const r = await apiDeclared("/api/project/upload", { name: root.name, upload, done, files: batch }, decl);
+        if (r.cancelled) throw new Error("");  // 沒確認不是公司資料:不上傳,也不用跳錯誤
         if (!r.ok) throw new Error(r.data.error || "上傳失敗");
         upload = r.data.upload || upload; sent += batch.length; batch = []; size = 0;
         $("hint").textContent = `上傳「${root.name}」中… ${sent} / ${files.length}`;
@@ -1688,7 +1721,7 @@ async function dropFolder(root) {
       }
       proj = await flush(true);
     }
-  } catch (e) { applyMode(); return alert(e.message); }
+  } catch (e) { applyMode(); if (e.message) alert(e.message); return; }
   openDropped(proj, proj.source === "upload" ? `已上傳「${root.name}」的副本(${proj.files} 個檔案),原本的資料夾不會被改`
                                               : `已加入「${root.name}」:${proj.path}`);
 }

@@ -100,6 +100,8 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 
 **安全把關**(`guard.py`,models.yaml 的 `safety`,Nemotron 3.5 Content Safety):`guard.CHECK` 由 `agent.prepare` 設成 `registry.safety_checker()`(直接打 chat completions,`guard.parse` 認兩種回答格式)。`web.fetch_url` / `web_search` 回傳前過 `guard.web_content`:不安全就換成說明、內容不交給模型;檢查失敗(逾時、忙線)不擋,只在前面提醒。訪客的 Hub(`screen=True`)問題先過 `guard.screen`,不安全丟 `guard.Blocked`、模型不會收到;主人自己的問題不檢查。測試用 `fake_safety`。
 
+**公司資料保護**(10/10,`guard.py` 後半):models.yaml 每個 backend 的 `company_data`(catalog false、nim true)→ `registry.company_data_ok` → `agent.prepare` 呼叫 `guard.configure_company`(連同 `.env` 的 `COMPANY_PATHS`,分號分隔)。`guard.COMPANY_OK` 預設 True,所以沒呼叫 prepare 的程式庫用法和測試都不擋。`check_folder(folder, public)`:能放公司資料就不擋;在公司資料夾底下丟 `PermissionError`(聲明了也不行);其他資料夾沒有 `public` 丟 `NeedsDeclaration`。用到它的地方:`Desk.add_project` / `locate_project` / `upload_project`(第一批)/ `add_knowledge` 收 `public`,handler 的 `_guarded` 把 `NeedsDeclaration` 轉成 409 + `need: "declare"`,`webui.html` 的 `apiDeclared` 問一次 confirm 再帶 `public: true` 重送(拖資料夾的幾個請求共用一個 `decl` 只問一次);聲明記在專案的 `declared`。加過的專案不再要聲明;以前加過、後來才寫進 COMPANY_PATHS 的:`Hub._run` 擋程式模式的對話(`guard.Blocked`)、`ready_knowledge` 濾掉(`guard.blocked`)、`update_knowledge` 擋。GitHub 下載的是公開 repo,不用聲明。CLI 啟動時檢查 `WORKSPACE` 和 `--kb`。`/api/state` 的 `company_ok` 控制右上角的「試用平台 · 不放公司資料」,公司資料夾的位置只給本機。測試用 `trial_platform` fixture。
+
 **掃描的 PDF**:`documents.OCR`(`agent.page_reader(registry)`,跟看圖同一顆模型、`OCR_PROMPT` 要求保留繁體)讀沒有文字層的頁:pypdf 取頁面上最大的圖、Pillow 縮到 `OCR_SIDE` 存 JPEG;`_ocr_cache` 依檔案大小 / 時間快取;讀不出來的頁寫「這次讀不出來」,知識庫遇到就記成錯誤、下次更新再試(`knowledge._update` 的 keep 排除有 error 的檔案)。tokens 透過 `agent._billing`(ContextVar,`ask` 設成目前的 session)算進對話和額度;知識庫的背景執行緒沒有 session,不算。
 
 **`--whole` 模式**:附檔全部內嵌、不綁工具、一次回答,交給路由決定要不要升級到 Ultra。給工具的話模型會分段重讀,每步重送全部內容。
@@ -109,7 +111,7 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 - tool call 和 ToolMessage 必須成對:`compact_history` 只換內容不刪訊息;`invalid_tool_calls`(參數不是合法 JSON)也要回一則 ToolMessage —— 套件送回伺服器的是 `additional_kwargs["tool_calls"]` 原始內容,少回一則 API 會報錯。
 - `requirements.txt` 鎖版本,因為程式依賴 langchain-nvidia-ai-endpoints / langchain-core 的內部行為(`_get_payload`、`_reasoning_api_fields`、推理內容回送)。升版後要跑離線測試和 `smoke_test.py`。
 - catalog 上的模型 ID 汰換很快,改 `models.yaml` 前後都用 `smoke_test.py` 確認。
-- **不要把公司真實程式碼送到 build.nvidia.com**:API Trial 條款 §1.2 禁止正式使用、§3.3 允許 NVIDIA 收集輸入輸出。只用 `demo_workspace/` 或可公開的程式碼做實測。
+- **不要把公司真實程式碼送到 build.nvidia.com**:API Trial 條款 §1.2 禁止正式使用、§3.3 允許 NVIDIA 收集輸入輸出。只用 `demo_workspace/` 或可公開的程式碼做實測。新增任何「把資料夾交給模型」的入口,都要先過 `guard.check_folder`。
 
 ## 測試慣例
 

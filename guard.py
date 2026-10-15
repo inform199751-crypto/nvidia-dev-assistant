@@ -9,8 +9,10 @@ NemoGuard 8B、Llama Guard 4 在免費層全部逾時,Safety Guard 8B v3 對了 
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 import documents
@@ -56,6 +58,51 @@ def screen(text: str) -> Verdict:
     except Exception as e:  # 逾時、忙線:不擋,讓呼叫的人決定怎麼提醒
         return Verdict(None, error=str(e).splitlines()[0][:120] if str(e) else type(e).__name__)
     return Verdict(True)
+
+
+# ---------- 公司資料保護(10/10):不是靠人記得「不要放」,是讓系統擋住 ----------
+# 現在的後端能不能放公司資料:models.yaml 每個 backend 的 company_data,agent.prepare 設定。
+# 預設 True(程式庫用法、測試);試用平台(catalog)是 False:條款允許 NVIDIA 收集輸入輸出、禁止正式使用
+COMPANY_OK = True
+COMPANY_PATHS: list[Path] = []  # .env 的 COMPANY_PATHS(分號分隔):這些資料夾底下都是公司資料
+
+
+class NeedsDeclaration(PermissionError):
+    """在不能放公司資料的後端加資料夾,要使用者先聲明「這不是公司資料」(網頁收到就問,同意了再送一次 public=true)。"""
+
+
+def configure_company(ok: bool, paths: str | None = None) -> None:
+    global COMPANY_OK, COMPANY_PATHS
+    COMPANY_OK = ok
+    raw = os.getenv("COMPANY_PATHS", "") if paths is None else paths
+    COMPANY_PATHS = [Path(p.strip().strip('"')).expanduser().resolve() for p in raw.split(";") if p.strip()]
+
+
+def company_root(folder: Path) -> Path | None:
+    """folder 在哪個公司資料夾底下;都不是回 None。"""
+    try:
+        real = Path(folder).resolve()
+    except OSError:
+        return None
+    return next((root for root in COMPANY_PATHS if real == root or real.is_relative_to(root)), None)
+
+
+def blocked(folder: Path) -> bool:
+    """這個資料夾現在不能交給模型(試用平台 + 在公司資料夾裡):以前加過的知識庫、專案也要跟著擋。"""
+    return not COMPANY_OK and company_root(folder) is not None
+
+
+def check_folder(folder: Path, public: bool = False) -> None:
+    """要把 folder 交給模型看之前(加專案、知識庫、拖進來、開始對話):
+    後端不能放公司資料時,公司資料夾一律擋;其他資料夾要 public(使用者聲明過不是公司資料)才放行。"""
+    if COMPANY_OK:
+        return
+    if root := company_root(folder):
+        raise PermissionError(f"「{Path(folder).name}」在公司資料夾({root})裡。現在用的是 NVIDIA 試用平台,"
+                              "不能放公司資料;要改用公司內部的模型伺服器才能用")
+    if not public:
+        raise NeedsDeclaration("現在用的是 NVIDIA 試用平台:條款允許 NVIDIA 收集送出的內容,也不能用在正式工作。"
+                               "請先確認這不是公司資料")
 
 
 def web_content(text: str, source: str) -> str:

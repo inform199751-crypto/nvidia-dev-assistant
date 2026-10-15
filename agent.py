@@ -865,6 +865,7 @@ def prepare() -> tuple[ModelRegistry, TokenQuota, list, bool]:
     allow_web = os.getenv("ALLOW_WEB", "").strip().lower() in ("1", "true", "yes")
     tools = ALL_TOOLS + (web.web_tools() if allow_web else [])  # 上網預設關閉
     guard.CHECK = registry.safety_checker()  # 網頁內容、訪客的問題先過安全模型(models.yaml 的 safety)
+    guard.configure_company(registry.company_data_ok)  # 公司資料保護:試用平台擋公司資料夾(.env 的 COMPANY_PATHS)
     documents.OCR = page_reader(registry)    # 掃描的 PDF 頁交給看圖模型讀
     return registry, quota, tools, allow_web
 
@@ -910,6 +911,11 @@ def main() -> None:
 
     view = ConsoleView()
     log.setLevel(logging.WARNING)  # 進度改由 ConsoleView 顯示,不再印 step 紀錄
+    try:  # CLI 沒有畫面可以問「這不是公司資料嗎」:公司資料夾直接擋,其他照舊
+        for folder in [toolbox.WORKSPACE, *map(Path, args.kb)]:
+            guard.check_folder(folder, public=True)
+    except PermissionError as e:
+        raise SystemExit(str(e))
     if args.kb and (kbs := open_knowledge(args.kb, registry)):
         toolbox.bench().knowledge = kbs
         tools = tools + [knowledge.search_knowledge]

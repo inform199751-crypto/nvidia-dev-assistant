@@ -595,6 +595,11 @@ class Hub:
         try:
             if self.screen and (v := guard.screen(text)).safe is False:
                 raise guard.Blocked(f"這個問題沒有通過安全檢查({v.categories or '不當內容'}),HSUAN 不會回答。")
+            if not self.chat:  # 公司資料夾(.env 的 COMPANY_PATHS)在試用平台上不能用,以前加過的專案也一樣
+                try:
+                    guard.check_folder(self.workspace, public=True)
+                except PermissionError as e:
+                    raise guard.Blocked(str(e)) from None
             with self.gate.turn(self.publish) if self.gate else nullcontext(), toolbox.using(self.bench):
                 files = [] if self.chat else agent.file_mentions(text)  # 對話模式讀不到電腦上的檔案
                 r = self.session.ask(self.note + text, files, mode, role, images or [])
@@ -610,7 +615,7 @@ class Hub:
                 self.publish("offer_apply", {"patch": len(patches) - 1, "passed": passed, "team": self.team, "copy": self.copy,
                                              "name": toolbox.patch_label(patch),
                                              "diff": patch.read_text(encoding="utf-8")[:MAX_DIFF_CHARS]})
-        except guard.Blocked as e:  # 訪客的問題沒通過安全檢查:模型沒有收到,對話照常
+        except guard.Blocked as e:  # 訪客的問題沒通過安全檢查、專案在公司資料夾裡:模型沒有收到,對話照常
             self.publish("error", {"text": str(e)})
         except Exception as e:  # 額度用完、模型全掛:這輪已經退掉,對話還能繼續
             self.publish("error", {"text": f"{type(e).__name__}: {e}"})
@@ -1062,7 +1067,7 @@ class Desk:
     def project(self, pid: str) -> dict | None:
         return next((p for p in self.projects if p["id"] == pid), None)
 
-    def add_project(self, path: str, name: str = "", expect: list | None = None) -> dict:
+    def add_project(self, path: str, name: str = "", expect: list | None = None, public: bool = False) -> dict:
         """加一個專案:電腦上的資料夾,或公開的 GitHub 網址(下載到 repos_dir)。
         expect:拖資料夾進來時,瀏覽器量到的幾個檔案 [{path, size}]。使用者貼的路徑裡要真的有這些檔案、大小一樣,
         不然就是貼錯資料夾 —— 之後「套用」會直接改這個資料夾,不能改到別的地方。"""
@@ -1077,9 +1082,15 @@ class Desk:
         if bad := mismatch(p, expect or []):
             raise ValueError(f"這個路徑裡的檔案跟拖進來的不一樣(例如 {bad}),請確認是同一個資料夾")
         with self.lock:
+            existing = next((x for x in self.projects if Path(x["path"]) == p), None)
+        # 試用平台:公司資料夾擋下,其他要先聲明不是公司資料(加過的不用再聲明一次,但公司資料夾照樣擋)
+        guard.check_folder(p, public or existing is not None)
+        with self.lock:
             if existing := next((x for x in self.projects if Path(x["path"]) == p), None):
                 return existing
-            proj = {"id": f"p{secrets.token_hex(3)}", "name": name.strip() or p.name, "path": str(p)}
+            proj ={"id": f"p{secrets.token_hex(3)}", "name": name.strip() or p.name, "path": str(p)}
+            if public and not guard.COMPANY_OK:
+                proj["declared"] = "not-company"  # 記下:使用者在試用平台上聲明過不是公司資料
             self.projects.append(proj)
             self._save_projects()
             return proj
@@ -1106,7 +1117,7 @@ class Desk:
             self._save_projects()
             return proj
 
-    def locate_project(self, name: str, expect: list) -> dict | None:
+    def locate_project(self, name: str, expect: list, public: bool = False) -> dict | None:
         """拖進來的資料夾在這台電腦的哪裡:瀏覽器不給路徑,但 HSUAN 就跑在同一台電腦上,可以自己找(10/10 使用者嫌
         每次都要貼路徑)。找到就直接當專案(之後「套用」改原本的檔案),找不到回 None,再問使用者。"""
         if not self.can_add_projects:
@@ -1114,9 +1125,10 @@ class Desk:
         roots = self.locate_roots if self.locate_roots is not None else \
             [Path.home() / r for r in LOCATE_ROOTS] + [Path(p["path"]).parent for p in self.projects if not p.get("source")]
         found = locate_folder(name, expect, roots)
-        return self.add_project(str(found), expect=expect) if found else None
+        return self.add_project(str(found), expect=expect, public=public) if found else None
 
-    def upload_project(self, name: str, files: list, upload: str | None = None, done: bool = False) -> dict:
+    def upload_project(self, name: str, files: list, upload: str | None = None, done: bool = False,
+                       public: bool = False) -> dict:
         """拖進來的資料夾:瀏覽器拿不到它原本的路徑,只能把檔案內容傳上來,所以存一份副本當專案(10/10 使用者要的,
         像 Claude 可以把資料夾拖進聊天)。分批上傳:第一批不給 upload、回傳上傳代號,之後每批帶著它,done=True 那批才建專案。
         路徑不對(..、絕對路徑)、隱藏檔、機密檔、大型目錄裡的、太大的檔案都略過。"""
@@ -1124,6 +1136,8 @@ class Desk:
             raise PermissionError("這裡不能上傳資料夾")
         if not isinstance(files, list):
             raise ValueError("格式錯誤")
+        if not upload:  # 第一批:試用平台上要先聲明不是公司資料(副本的原始位置看不到,只能靠聲明)
+            guard.check_folder(self.uploads_dir, public)
         with self.lock:
             if upload:
                 up = self.uploads.get(upload)
@@ -1137,7 +1151,8 @@ class Desk:
                 dest.mkdir(parents=True)
                 upload = secrets.token_hex(8)
                 up = self.uploads[upload] = {"dest": dest.resolve(), "name": name.strip() or safe,
-                                             "files": 0, "bytes": 0, "skipped": 0}
+                                             "files": 0, "bytes": 0, "skipped": 0,
+                                             "declared": public and not guard.COMPANY_OK}
         for f in files:
             rel = upload_path(f.get("path") if isinstance(f, dict) else None)
             try:
@@ -1161,6 +1176,8 @@ class Desk:
                 _rmtree(up["dest"])
                 raise ValueError("資料夾裡沒有可以讀的檔案")
             proj = {"id": f"p{secrets.token_hex(3)}", "name": up["name"], "path": str(up["dest"]), "source": "upload"}
+            if up["declared"]:
+                proj["declared"] = "not-company"  # 第一批時聲明的(跟 add_project 一樣記下來)
             self.projects.append(proj)
             self._save_projects()
         return {**proj, "files": up["files"], "skipped": up["skipped"]}
@@ -1202,8 +1219,8 @@ class Desk:
             return self.kbs[meta["id"]]
 
     def ready_knowledge(self) -> list[knowledge.KnowledgeBase]:
-        """建好索引、有內容的知識庫(給 search_knowledge 搜)。"""
-        return [kb for kb in map(self._kb, list(self.kb_meta)) if kb.chunks]
+        """建好索引、有內容的知識庫(給 search_knowledge 搜)。公司資料夾的在試用平台上不給搜(段落會送給模型)。"""
+        return [kb for kb in map(self._kb, list(self.kb_meta)) if kb.chunks and not guard.blocked(kb.folder)]
 
     def _share_knowledge(self) -> None:
         kbs = self.ready_knowledge()
@@ -1216,7 +1233,7 @@ class Desk:
         self.store.mkdir(parents=True, exist_ok=True)
         (self.store / "knowledge.json").write_text(json.dumps(self.kb_meta, ensure_ascii=False, indent=1), encoding="utf-8")
 
-    def add_knowledge(self, path: str, name: str = "") -> dict:
+    def add_knowledge(self, path: str, name: str = "", public: bool = False) -> dict:
         """加一個資料夾當知識庫,馬上在背景建索引。"""
         if not self.can_add_knowledge:
             raise PermissionError("這裡不能加知識庫")
@@ -1224,6 +1241,7 @@ class Desk:
         if not p.is_dir():
             raise ValueError(f"找不到資料夾:{path}")
         p = p.resolve()
+        guard.check_folder(p, public)  # 建索引會把文件送去算向量:試用平台一樣要擋公司資料夾、先聲明
         with self.lock:
             if existing := next((m for m in self.kb_meta if Path(m["path"]) == p), None):
                 return existing
@@ -1241,6 +1259,7 @@ class Desk:
         kb = self._kb(meta)
         if kb.state == "indexing":
             return False
+        guard.check_folder(kb.folder, public=True)  # 公司資料夾(.env 改過之後)在試用平台上不能再送出去
         kb.state = "indexing"  # 先標起來:畫面馬上看得到,也不會按兩次跑兩個
 
         def run() -> None:
@@ -1267,7 +1286,7 @@ class Desk:
         for meta in list(self.kb_meta):
             kb = self._kb(meta)
             item = {"id": meta["id"], **kb.summary(), "path": meta["path"] if paths else meta["name"],
-                    "missing": not Path(meta["path"]).is_dir()}
+                    "missing": not Path(meta["path"]).is_dir(), "company": guard.blocked(kb.folder)}
             if kb.state != "indexing" and not item["missing"]:
                 item["changes"] = kb.changes()  # 有幾個檔案改過、還沒更新
             out.append(item)
@@ -1513,7 +1532,10 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                              # 帳號選單:回答語言、有沒有「手機與訪客」(只有桌面版、電腦自己看)、「登出」(只有手機)
                              "lang": desk.lang, "phone": bool(phone and self._local()),
                              "can_logout": bool(lan and not self._local()),
-                             "backend": hub.session.registry.backend, "version": version()}
+                             "backend": hub.session.registry.backend, "version": version(),
+                             # 公司資料保護:畫面上方的提醒;公司資料夾的位置只給這台電腦看
+                             "company_ok": guard.COMPANY_OK,
+                             "company_paths": [str(x) for x in guard.COMPANY_PATHS] if self._local() and not guest else []}
                     if lan and self._local():  # 手機連線方式只給這台電腦看
                         state["lan"] = {"urls": [f"http://{ip}:{port}" for ip in lan.ips], "pin": lan.pin}
                     self._json(200, state)
@@ -1570,6 +1592,15 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                                {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(p.name)}"})
             else:
                 self._json(404, {"error": "沒有這個頁面"})
+
+        def _guarded(self, run: Callable[[], dict]) -> None:
+            """加資料夾的 API:試用平台上要先聲明不是公司資料 —— 回 409 + need=declare,畫面問過再送一次 public=true。"""
+            try:
+                return self._json(200, run())
+            except guard.NeedsDeclaration as e:
+                return self._json(409, {"error": str(e), "need": "declare"})
+            except (ValueError, PermissionError, OSError) as e:
+                return self._json(400, {"error": str(e)})
 
         def _login(self, raw: bytes) -> None:
             if lan is None:
@@ -1663,13 +1694,14 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             if path == "/api/conv/delete":
                 ok = desk.delete(str(body.get("id")))
                 return self._json(200 if ok else 409, {} if ok else {"error": "這段對話還在回答中,等結束再刪"})
+            public = bool(body.get("public"))  # 使用者聲明過「不是公司資料」(試用平台上加資料夾要有)
             if path == "/api/knowledge/add":
-                try:
-                    return self._json(200, desk.add_knowledge(str(body.get("path", "")), str(body.get("name", ""))))
-                except (ValueError, PermissionError) as e:
-                    return self._json(400, {"error": str(e)})
+                return self._guarded(lambda: desk.add_knowledge(str(body.get("path", "")), str(body.get("name", "")), public))
             if path == "/api/knowledge/update":
-                ok = desk.update_knowledge(str(body.get("id")))
+                try:
+                    ok = desk.update_knowledge(str(body.get("id")))
+                except PermissionError as e:
+                    return self._json(400, {"error": str(e)})
                 return self._json(202 if ok else 409, {} if ok else {"error": "找不到這個知識庫,或正在建索引"})
             if path == "/api/knowledge/remove":
                 ok = desk.remove_knowledge(str(body.get("id")))
@@ -1682,24 +1714,16 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 return self._json(200, {"how": how, "hits": [{**h, "where": knowledge.label(h)} for h in hits]})
             if path == "/api/project/add":  # expect:拖資料夾進來後貼的路徑,要跟拖進來的檔案對得上
                 expect = body.get("expect") if isinstance(body.get("expect"), list) else None
-                try:
-                    return self._json(200, desk.add_project(str(body.get("path", "")), str(body.get("name", "")), expect))
-                except (ValueError, PermissionError) as e:
-                    return self._json(400, {"error": str(e)})
+                return self._guarded(lambda: desk.add_project(str(body.get("path", "")), str(body.get("name", "")),
+                                                              expect, public))
             if path == "/api/project/locate":  # 拖進來的資料夾:HSUAN 自己在這台電腦上找原本的位置(只給這台電腦用)
                 if team or not self._local():
                     return self._json(403, {"error": "只有這台電腦可以找資料夾"})
                 expect = body.get("expect") if isinstance(body.get("expect"), list) else []
-                try:
-                    return self._json(200, {"project": desk.locate_project(str(body.get("name", "")), expect)})
-                except (ValueError, PermissionError) as e:
-                    return self._json(400, {"error": str(e)})
+                return self._guarded(lambda: {"project": desk.locate_project(str(body.get("name", "")), expect, public)})
             if path == "/api/project/upload":  # 拖進來的資料夾,分批傳上來存成副本
-                try:
-                    return self._json(200, desk.upload_project(str(body.get("name", "")), body.get("files"),
-                                                               body.get("upload") or None, bool(body.get("done"))))
-                except (ValueError, PermissionError, OSError) as e:
-                    return self._json(400, {"error": str(e)})
+                return self._guarded(lambda: desk.upload_project(str(body.get("name", "")), body.get("files"),
+                                                                 body.get("upload") or None, bool(body.get("done")), public))
             hub = self._hub()
             if path == "/api/ask":
                 text = str(body.get("text", "")).strip()

@@ -4,7 +4,7 @@
 改走 NVIDIA 生態系:開發期接 API Catalog(build.nvidia.com),正式環境換成地端 NIM 容器,**程式碼不用改**。
 
 重點不在「接上了模型」,而在:**依任務與 token 數動態切換模型、控制 token 與顯存、讓 agent 只能在沙箱裡動手**,
-而且每個設計都用真模型實測過。實測與審查抓到 42 個問題,見下方。
+而且每個設計都用真模型實測過。實測與審查抓到 43 個問題,見下方。
 
 ## 架構
 
@@ -58,9 +58,9 @@ flowchart LR
 | 知識庫(10/9) | `demo_knowledge/` 三份虛構公司文件、12 題換句話說的問題(「搭小黃的錢可以請款嗎」) | 照意思找(Nemotron 3 Embed)第 1 名 10/12、前 3 名 12/12;關鍵字只有 7/12;混在一起反而 7–8/12。實際問「連休三天找誰同意、加班費怎麼算」:Super 自己查兩次,答案和出處都對 |
 | 安全把關(10/10) | 正常網頁、藏在註解裡要 AI 讀 .env 傳出去的網頁、隱晦的提示注入、不當請求、正常請求 | Nemotron 3.5 Content Safety 5 題全對、每次 0.6–1 秒;其他三顆安全模型大多逾時 |
 | 掃描的 PDF(10/10) | 兩頁掃描檔(會議紀錄 + 預算表格) | Nano Omni 逐字讀出、表格保留成表格,兩頁約 19–26 秒 |
-| 離線測試 | 假模型,不需金鑰 | 132 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 135 個全過 |
 
-## 實測與審查抓到的 42 個問題
+## 實測與審查抓到的 43 個問題
 
 | # | 問題 | 怎麼發現 | 處理 |
 |---|---|---|---|
@@ -106,12 +106,14 @@ flowchart LR
 | 40 | 看圖模型讀掃描的表格時,把繁體字抄成簡體(預算表 → 预算表) | 實測(10/10) | 讀掃描頁的提示加上「保留原本的字,不要轉成簡體」,重跑兩次都正確 |
 | 41 | 想加語音輸入:Nano Omni 聽得懂聲音,但中文錯字太多(「請三天假要找誰核准」→「清三天家要找什麼」);手機用區域網路的 http 連線,瀏覽器也不給麥克風 | 實測(10/10) | 不加;說明頁改成建議用系統的語音輸入(Windows 按 Win+H、手機鍵盤的麥克風) |
 | 42 | 難題模型 DeepSeek 一次要 18–27 秒,想找更快的:GLM-5.3 Flash 冒煙 11–13 秒,但同一題修 bug 要 122 秒(DeepSeek 136 秒),第一次還 300 秒逾時;Kimi K3 逾時,其他幾顆 404 | 實測(10/10) | 不換;結果記在 models.yaml,下次不用重測 |
+| 43 | 「不要把公司程式碼送到 build.nvidia.com」只寫在文件裡,靠人記得;趕時間把一個資料夾拖進來就送出去了 | 審查(10/10) | 讓系統擋:`models.yaml` 每個後端標 `company_data`(試用平台 false、地端 NIM true);試用平台上 `.env` 的 `COMPANY_PATHS` 底下的資料夾一律擋(加專案、知識庫、拖進來、以前加過的專案不送出、知識庫不給搜),其他資料夾第一次加入要先在畫面上確認不是公司資料、記下聲明;右上角一直顯示「試用平台 · 不放公司資料」 |
 
 ## 執行
 
 ```bash
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
 cp .env.example .env                              # 填 NVIDIA_API_KEY,AGENT_WORKSPACE 指向要分析的 repo
+                                                  # COMPANY_PATHS 寫公司資料夾(分號分隔):用試用平台時 HSUAN 一律不讀
 docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python desktop_app.py --install     # 桌面版:在桌面建立「HSUAN」捷徑,雙擊就開獨立視窗(像 Claude 桌面版)
                                                   # 手機:「設定 → 手機」打開手機連線,手機掃 QR code、輸入 PIN,再「加到主畫面」就像 app
@@ -170,6 +172,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 - 地端的 `nim_context_window`(Ultra / Super 備援 256K)是規劃值,部署時 `NIM_MAX_MODEL_LEN` 要設成一樣。
 - 上網工具擋內網是「連線前解析一次 DNS」,擋不住 DNS rebinding;正式環境要走有白名單的出口 proxy。搜尋關鍵字和網址會送到外部網站,公司環境要先確認規定。
 - **PoC 不要送公司真實程式碼到 build.nvidia.com**:API Trial 條款 §1.2 禁止正式使用,§3.3 允許 NVIDIA 收集輸入輸出改進模型。
+  `COMPANY_PATHS` 裡的資料夾系統會擋;但拖進來「上傳副本」時看不到原本的位置,只能靠使用者聲明。對話裡直接貼上的文字、圖片也擋不了。
 
 ---
 

@@ -18,9 +18,11 @@ backends:
   catalog:
     base_url: https://integrate.api.nvidia.com/v1
     api_key_env: NVIDIA_API_KEY
+    company_data: false   # 試用平台:條款允許 NVIDIA 收集輸入輸出、禁止正式使用 → 不能放公司資料(guard.check_folder 會擋)
   nim:
     base_url: http://localhost:8000/v1   # 角色沒寫 nim_base_url 時用這個
     api_key_env: null                    # NIM 本身不驗 key,驗證交給前面的 API Gateway
+    company_data: true                   # 公司自己的伺服器,資料不出公司
 
 routing:
   default_role: code
