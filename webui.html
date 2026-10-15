@@ -1222,7 +1222,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/15", ["在外面也能用:電腦和手機都裝 Tailscale(免費的私人 VPN)、登入同一個帳號,「手機與訪客」就會多一個在外面也能連的網址和 QR code;HSUAN 還是不對網際網路公開",
+  ["10/15", ["操作瀏覽器:在「設定」打開後,可以請 HSUAN 測試你正在開發的網站(localhost):打開網頁、點按鈕、填表單、看主控台錯誤、截圖看排版;每次打開網址前會先問你",
+             "在外面也能用:電腦和手機都裝 Tailscale(免費的私人 VPN)、登入同一個帳號,「手機與訪客」就會多一個在外面也能連的網址和 QR code;HSUAN 還是不對網際網路公開",
              "網頁分享:請 HSUAN 做一個網頁(存成 .html),對話裡就能「預覽」;在「成品」按「分享」,同一個 Wi-Fi 的人用連結或 QR code 就能看(不用登入,隨時可以停止分享)",
              "連接器(MCP):側邊欄多了「連接器」,貼上 MCP server 的設定就能讓 HSUAN 用外部工具(工單系統、資料庫…);每次使用都會先問你,有示範連接器(虛構的工單系統)可以試",
              "多 agent 分工:輸入框多了「分工」開關,打開後 HSUAN 把這一題彼此獨立的部分分給最多 3 個子助理同時查,每個只交回結論(對話不會被一大堆檔案塞滿);畫面上看得到每個子助理正在做什麼"]],
@@ -1642,6 +1643,18 @@ async function renderPage() {
     box.appendChild(el("p", "lead", `預設 ${state.model || ""}。每段對話可以在輸入框右下角換模型;要改有哪些模型,改 models.yaml。`));
     section(box, "上網");
     box.appendChild(el("p", "lead", `${state.status || ""}。要開關請改專案資料夾 .env 的 ALLOW_WEB(true / false),改完重新打開 HSUAN。`));
+    if (state.browser?.can) {  // 操作瀏覽器:預設關(工具說明每一步都要送),只有自己的電腦能開
+      section(box, "操作瀏覽器");
+      box.appendChild(el("p", "lead", "打開後,在「程式」模式可以請 HSUAN 測試你正在開發的網站:它用一個看不見的 Edge 打開網址、點按鈕、填表單、"
+        + "看主控台錯誤,也能截圖給看圖模型看排版。只能開 localhost、127.0.0.1、*.localhost、*.test;用獨立的暫存設定檔,"
+        + "沒有你的登入和 cookie;每次打開網址前會先問你。打開後每一步多約 300 tokens。"));
+      box.appendChild(el("div", "actions")).appendChild(button(state.browser.on ? "關閉操作瀏覽器" : "打開操作瀏覽器",
+        "pill" + (state.browser.on ? "" : " dark"), async () => {
+          const x = await api("/api/settings", { browser: !state.browser.on });
+          if (!x.ok) return alert(x.data.error || "設定失敗");
+          await loadState();
+        }));
+    }
   } else if (name === "more") {
     section(box, "這段對話");
     const a = box.appendChild(el("div", "actions"));

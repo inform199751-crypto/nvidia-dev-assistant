@@ -44,6 +44,7 @@ class Workbench:
     rules: Path | None = None       # 專案規則檔;None = 工作區的 ASSISTANT.md(見 agent.rules_file)
     lang: str | None = None         # 回答語言(網頁帳號選單選的,見 agent.ANSWER_LANGS);None = 繁中
     knowledge: list = field(default_factory=list)  # 這個人的知識庫(knowledge.KnowledgeBase),search_knowledge 搜這些
+    browser: object | None = None   # 這段對話的瀏覽器分頁(browser.Tab,第一次用 browser 工具才開)
 
 
 _bench: ContextVar[Workbench] = ContextVar("workbench", default=Workbench())

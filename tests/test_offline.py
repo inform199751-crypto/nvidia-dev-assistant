@@ -2335,7 +2335,7 @@ def test_answer_language_from_account_menu(workspace, tmp_path_factory):
     h = {"X-Token": "t0k"}
     try:
         assert httpx.post(base + "/api/settings", json={"lang": "xx"}, headers=h).status_code == 400
-        assert httpx.post(base + "/api/settings", json={"lang": "en"}, headers=h).json() == {"lang": "en"}
+        assert httpx.post(base + "/api/settings", json={"lang": "en"}, headers=h).json()["lang"] == "en"
         assert httpx.get(base + "/api/state", headers={**h, "X-Conv": code_id}).json()["lang"] == "en"
     finally:
         server.shutdown()
@@ -3472,3 +3472,129 @@ def test_phone_link_also_works_over_tailscale(workspace, tmp_path_factory, monke
         assert page.status_code == 200 and "t0k" not in page.text  # 一樣要先輸入 PIN
     finally:
         phone.close()
+
+
+# ---------- 操作瀏覽器(browser.py) ----------
+
+DEV_SITE = {
+    "/": """<!doctype html><meta charset="utf-8"><title>測試商店</title>
+<h1>測試商店</h1>
+<input id="name" placeholder="名字"> <input id="pw" type="password" placeholder="密碼">
+<select id="plan"><option>基本</option><option>進階</option></select>
+<button onclick="go()">登入</button> <a href="/about">關於</a> <a href="OUTSIDE/">外部網站</a>
+<p id="out"></p>
+<script>function go() { document.getElementById('out').textContent = '歡迎 ' + document.getElementById('name').value
+  + ',方案 ' + document.getElementById('plan').value; console.error('demo error: 購物車是空的'); }</script>""",
+    "/about": '<!doctype html><meta charset="utf-8"><title>關於</title><p>關於我們</p>',
+}
+
+
+def _dev_site():
+    """測試用的「開發中網站」(127.0.0.1)和一個「外部網站」(127.0.0.2:不算開發用的位址,但不用連網);
+    開發中網站的連結和 /go-out 轉址都通往外部網站。回傳 ([兩個伺服器], 開發中網站的網址)。"""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    outside = {}
+
+    class Site(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            if self.path == "/go-out":
+                self.send_response(302)
+                self.send_header("Location", outside["url"] + "/")
+                self.end_headers()
+                return
+            pages = DEV_SITE if self.server.server_address[0] == "127.0.0.1" else {"/": "<p>外面的網站</p>"}
+            body = pages.get(self.path, "not found").replace("OUTSIDE", outside["url"]).encode("utf-8")
+            self.send_response(200 if self.path in pages else 404)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    class Quiet(ThreadingHTTPServer):
+        def handle_error(self, request, client_address):  # 瀏覽器關分頁時直接斷線(WinError 10054),不用印出來
+            pass
+
+    servers = [Quiet((host, 0), Site) for host in ("127.0.0.1", "127.0.0.2")]
+    outside["url"] = f"http://127.0.0.2:{servers[1].server_address[1]}"
+    for s in servers:
+        threading.Thread(target=s.serve_forever, daemon=True).start()
+    return servers, f"http://127.0.0.1:{servers[0].server_address[1]}"
+
+
+def _ref(snapshot: str, label: str) -> int:
+    import re
+    return int(re.search(r"\[(\d+)\][^\n]*" + re.escape(label), snapshot).group(1))
+
+
+def test_browser_tests_a_local_dev_site(workspace):
+    """10/15 操作瀏覽器:真的用無頭 Edge / Chrome 打開本機的開發中網站,填表單、選下拉、點按鈕,看到畫面變化和主控台錯誤;
+    密碼欄不回傳內容;只能開開發用的位址(公開網址、轉址或點連結跑到別的地方都會停下來);打開前先問使用者。"""
+    import browser
+    if not browser.find_browser():
+        pytest.skip("這台電腦沒有 Edge / Chrome")
+    asked = []
+    tools.bench().confirm = lambda action, detail: asked.append((action, detail)) or len(asked) > 1  # 第一次不允許
+    run = lambda **kw: browser.browser.invoke(kw)  # noqa: E731
+    servers, base = _dev_site()
+    try:
+        assert "不是開發用的位址" in run(action="open", url="https://example.com/") and asked == []
+        assert run(action="click", ref=1).startswith("錯誤:還沒打開網頁")
+        assert run(action="open", url=base + "/") == browser.DENIED and asked[0][1] == base + "/"
+        page = run(action="open", url=base + "/")
+        assert "標題:測試商店" in page and "input(text) 「名字」" in page
+        run(action="type", ref=_ref(page, "名字"), text="小明")
+        page = run(action="type", ref=_ref(page, "密碼"), text="test-only-pass")
+        assert "已填" in page and "test-only-pass" not in page  # 密碼欄不回傳內容
+        run(action="type", ref=_ref(page, "select"), text="進階")
+        page = run(action="click", ref=_ref(page, "登入"))
+        assert "歡迎 小明,方案 進階" in page and "主控台錯誤" in page and "demo error: 購物車是空的" in page
+        page = run(action="click", ref=_ref(page, "「關於」"))
+        assert page.startswith(f"網址:{base}/about") and "關於我們" in page
+        assert run(action="back").startswith(f"網址:{base}/")
+        page = run(action="open", url=base + "/")
+        assert "被導到 127.0.0.2" in run(action="click", ref=_ref(page, "外部網站"))  # 點連結跑到別的地方:停下來
+        assert "外面的網站" not in run(action="open", url=base + "/go-out")  # 轉址到別的地方也停,內容不回傳
+        assert "不支援的按鍵" in run(action="press", text="F13")
+        assert len(asked) == 4 and all(a[0].startswith("用瀏覽器打開") for a in asked)
+    finally:
+        assert run(action="close") == "已關掉瀏覽器分頁" and tools.bench().browser is None
+        for s in servers:
+            s.shutdown()
+            s.server_close()
+
+
+def test_browser_setting_binds_the_tool_only_where_allowed(workspace, tmp_path_factory, monkeypatch):
+    """設定頁的「操作瀏覽器」預設關(工具說明每一步都要送);打開後程式模式的對話下一輪就有 browser 工具,對話模式沒有;
+    存在 settings.json、重開還在;訪客、多人模式的桌面不能開。"""
+    import httpx
+    import browser
+    import webui
+    monkeypatch.setattr(browser, "find_browser", lambda: "msedge.exe")
+    store = tmp_path_factory.mktemp("state")
+    reg, seen = scripted_registry([ai("好"), ai("好"), ai("好")])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=store)
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    try:
+        code = httpx.post(base + "/api/conv/new", json={}, headers=h).json()["id"]
+        chat_id = httpx.post(base + "/api/conv/new", json={"kind": "chat"}, headers=h).json()["id"]
+        assert httpx.get(base + "/api/state", headers=h).json()["browser"] == {"on": False, "can": True}
+        httpx.post(base + "/api/ask", json={"text": "嗨"}, headers={**h, "X-Conv": code})
+        _events_until(base, code, "done")
+        assert "browser" not in seen[-1][2]  # 預設關
+        assert httpx.post(base + "/api/settings", json={"browser": True}, headers=h).json()["browser"] is True
+        for cid in (code, chat_id):
+            httpx.post(base + "/api/ask", json={"text": "測一下 localhost"}, headers={**h, "X-Conv": cid})
+            _events_until(base, cid, "done", 2 if cid == code else 1)
+            assert ("browser" in seen[-1][2]) is (cid == code)  # 只有程式模式
+        assert webui.Desk(lambda ws: None, workspace, store=store).browser_on  # 存起來了
+    finally:
+        server.shutdown()
+        server.server_close()
+    with pytest.raises(PermissionError):
+        webui.Desk(lambda ws: None, workspace, can_add_projects=False).set_browser(True)

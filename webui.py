@@ -39,6 +39,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 from langchain_core.messages import messages_from_dict, messages_to_dict
 
 import agent
+import browser
 import guard
 import knowledge
 import mcp_client
@@ -274,14 +275,14 @@ def device_label(ua: str, app: bool = False) -> str:
                                           ("Windows", "Windows"), ("Macintosh", "Mac"), ("Linux", "Linux")) if key in ua),
                   "其他裝置")
     if "Line/" in ua:  # LINE 裡點開的(iPhone 的也沒有 Safari/,要先判斷)
-        browser = "LINE 內建瀏覽器"
+        client = "LINE 內建瀏覽器"
     elif app or (system in ("iPhone", "iPad") and "Safari/" not in ua):
-        browser = "主畫面 App"
+        client = "主畫面 App"
     else:
-        browser = next((name for key, name in (("SamsungBrowser", "三星瀏覽器"), ("Edg", "Edge"), ("CriOS", "Chrome"),
-                                               ("Chrome/", "Chrome"), ("FxiOS", "Firefox"), ("Firefox/", "Firefox"),
-                                               ("Safari/", "Safari")) if key in ua), "瀏覽器")
-    return f"{system} · {browser}"
+        client = next((name for key, name in (("SamsungBrowser", "三星瀏覽器"), ("Edg", "Edge"), ("CriOS", "Chrome"),
+                                              ("Chrome/", "Chrome"), ("FxiOS", "Firefox"), ("Firefox/", "Firefox"),
+                                              ("Safari/", "Safari")) if key in ua), "瀏覽器")
+    return f"{system} · {client}"
 
 
 class PhoneLink:
@@ -463,6 +464,7 @@ class Hub:
         self.chat = False  # 「對話」模式(側邊欄切到「對話」開的):不綁專案,見 use_chat()
         self.copy = False  # 拖進來的資料夾的副本(Desk._make 設定):「套用」改的是副本,不是原本的資料夾
         self.connectors: mcp_client.Connectors | None = None  # 這個人的 MCP 連接器(Desk._attach 設定)
+        self.browser_on = False  # 「設定」裡打開了操作瀏覽器(Desk._attach / set_browser 設定)
         self.session = self._new_session()
 
     def _new_session(self) -> agent.AgentSession:
@@ -481,20 +483,25 @@ class Hub:
         session.tools = tools
         session.refresh_system_prompt()
 
-    def _sync_connectors(self) -> None:
-        """每一輪開始前把打開中的連接器的工具換上去:新加的、關掉的、掛掉重開的都在這裡生效(用到才啟動)。"""
-        if not self.connectors or self.session.whole:
+    def _sync_tools(self) -> None:
+        """每一輪開始前把會變的工具換成現在的:打開中的連接器(新加的、關掉的、掛掉重開的都在這裡生效,用到才啟動),
+        還有「設定」裡打開的操作瀏覽器(程式模式才有)。"""
+        if self.session.whole:
             return
-        try:
-            extra = self.connectors.tools()
-        except Exception as e:  # 設定壞掉之類的:這一輪不用連接器,照常回答
-            extra = []
-            self.publish("notice", {"text": f"連接器出錯,這一輪先不用:{type(e).__name__}: {e}"})
-        names = {it["id"]: it["name"] for it in self.connectors.items if it.get("enabled", True)}
-        for cid, err in list(self.connectors.errors.items()):
-            if cid in names:
-                self.publish("notice", {"text": f"連接器「{names[cid]}」沒有接上,這一輪先不用它:{err}"})
-        self.session.tools = [t for t in self.session.tools if not (t.metadata or {}).get("mcp")] + extra
+        extra = []
+        if self.connectors:
+            try:
+                extra = self.connectors.tools()
+            except Exception as e:  # 設定壞掉之類的:這一輪不用連接器,照常回答
+                self.publish("notice", {"text": f"連接器出錯,這一輪先不用:{type(e).__name__}: {e}"})
+            names = {it["id"]: it["name"] for it in self.connectors.items if it.get("enabled", True)}
+            for cid, err in list(self.connectors.errors.items()):
+                if cid in names:
+                    self.publish("notice", {"text": f"連接器「{names[cid]}」沒有接上,這一輪先不用它:{err}"})
+        if self.browser_on and not self.chat:
+            extra.append(browser.browser)
+        self.session.tools = [t for t in self.session.tools
+                              if not (t.metadata or {}).get("mcp") and t.name != browser.browser.name] + extra
 
     def use_knowledge(self, kbs: list) -> None:
         """Desk 的知識庫變了(加了、拿掉、更新完):工具和系統提示裡的知識庫清單跟著換,下一輪生效。"""
@@ -678,7 +685,7 @@ class Hub:
                 except PermissionError as e:
                     raise guard.Blocked(str(e)) from None
             with self.gate.turn(self.publish) if self.gate else nullcontext(), toolbox.using(self.bench):
-                self._sync_connectors()
+                self._sync_tools()
                 files = [] if self.chat else agent.file_mentions(text)  # 對話模式讀不到電腦上的檔案
                 r = self.session.ask(self.note + text, files, mode, role, images or [], split)
             self.note = ""
@@ -1121,11 +1128,33 @@ class Desk:
             raise ValueError("沒有這個語言")
         with self.lock:
             self.settings["lang"] = lang
-            if self.store:
-                self.store.mkdir(parents=True, exist_ok=True)
-                (self.store / "settings.json").write_text(json.dumps(self.settings, ensure_ascii=False), encoding="utf-8")
+            self._save_settings()
             for hub in self.hubs.values():
                 hub.use_lang(lang)
+
+    def _save_settings(self) -> None:
+        if self.store:
+            self.store.mkdir(parents=True, exist_ok=True)
+            (self.store / "settings.json").write_text(json.dumps(self.settings, ensure_ascii=False), encoding="utf-8")
+
+    @property
+    def can_browse(self) -> bool:
+        """能不能打開「操作瀏覽器」:自己的桌面(訪客、多人模式不行:瀏覽器跑在主人的電腦上)、電腦上有 Edge / Chrome。"""
+        return self.can_add_projects and browser.find_browser() is not None
+
+    @property
+    def browser_on(self) -> bool:
+        return bool(self.settings.get("browser")) and self.can_browse
+
+    def set_browser(self, on: bool) -> None:
+        """「設定」的操作瀏覽器:預設關(工具定義每一步多約 300 tokens),打開後程式模式的對話下一輪就有 browser 工具。"""
+        if on and not self.can_browse:
+            raise PermissionError("這裡不能操作瀏覽器(訪客、多人模式,或這台電腦沒有 Edge / Chrome)")
+        with self.lock:
+            self.settings["browser"] = bool(on)
+            self._save_settings()
+            for hub in self.hubs.values():
+                hub.browser_on = self.browser_on
 
     def _save_projects(self) -> None:
         if self.store:
@@ -1295,6 +1324,7 @@ class Desk:
         hub.connectors = self.connectors
         if self.store:
             self._read_settings()
+        hub.browser_on = self.browser_on
         if self.lang != "zh-TW":
             hub.use_lang(self.lang)
         if kbs := self.ready_knowledge():
@@ -1437,6 +1467,8 @@ class Desk:
             hub = self.hubs.get(cid)
             if hub and hub.busy:
                 return False
+            if hub and hub.bench.browser:  # 這段對話開過的瀏覽器分頁一起關掉
+                hub.bench.browser.close()
             self.hubs.pop(cid, None)
             self.meta.pop(cid, None)
             if self.store:
@@ -1680,6 +1712,8 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                              "backend": hub.session.registry.backend, "version": version(),
                              # 公司資料保護:畫面上方的提醒;公司資料夾的位置只給這台電腦看
                              "company_ok": guard.COMPANY_OK,
+                             # 設定頁的「操作瀏覽器」:開了沒、這裡能不能開(訪客、多人模式、沒有 Edge / Chrome 不行)
+                             "browser": {"on": desk.browser_on, "can": desk.can_browse and not team and not guest},
                              "company_paths": [str(x) for x in guard.COMPANY_PATHS] if self._local() and not guest else []}
                     if lan and self._local():  # 手機連線方式只給這台電腦看
                         state["lan"] = {"urls": [f"http://{ip}:{port}" for ip in lan.ips], "pin": lan.pin}
@@ -1858,12 +1892,17 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                     return self._json(404, {"error": "這台電腦不用登出"})
                 lan.logout(self._sid())
                 return self._json(200, {}, {"Set-Cookie": f"{COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"})
-            if path == "/api/settings":  # 帳號選單的「回答語言」
+            if path == "/api/settings":  # 帳號選單的「回答語言」、設定頁的「操作瀏覽器」
                 try:
-                    desk.set_lang(str(body.get("lang", "")))
-                except ValueError as e:
+                    if "lang" in body:
+                        desk.set_lang(str(body.get("lang", "")))
+                    if "browser" in body:
+                        if team or self._guest():
+                            raise PermissionError("訪客和多人模式不能讓 HSUAN 操作瀏覽器")
+                        desk.set_browser(bool(body["browser"]))
+                except (ValueError, PermissionError) as e:
                     return self._json(400, {"error": str(e)})
-                return self._json(200, {"lang": desk.lang})
+                return self._json(200, {"lang": desk.lang, "browser": desk.browser_on})
             if path == "/api/conv/new":  # 側邊欄的「新增」、專案旁邊的「+」;kind=chat 是「對話」模式
                 kind = "chat" if body.get("kind") == "chat" else "code"
                 return self._json(200, {"id": desk.new_conversation(body.get("project"), kind)})

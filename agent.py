@@ -1016,6 +1016,8 @@ def main() -> None:
                     help="知識庫:這個資料夾的文件建成索引(只重算改過的),回答時照意思找相關段落;可以給好幾個")
     ap.add_argument("--mcp", metavar="設定檔",
                     help="MCP 連接器的設定檔(JSON,Claude Desktop 的 mcpServers 格式也可以);每次用連接器都會先問你")
+    ap.add_argument("--browser", action="store_true",
+                    help="讓 HSUAN 操作瀏覽器測試你開發中的網站(只能開 localhost 等開發用位址;打開網址前會先問你)")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -1035,6 +1037,11 @@ def main() -> None:
         tools = tools + [knowledge.search_knowledge]
     if args.mcp:
         tools = tools + open_connectors(args.mcp)
+    if args.browser:
+        import browser
+        if not browser.find_browser():
+            raise SystemExit("這台電腦找不到 Edge 或 Chrome,不能操作瀏覽器")
+        tools = tools + [browser.browser]
 
     def new_session() -> AgentSession:
         return AgentSession(registry, quota, role=args.role, thinking=thinking, whole=args.whole, tools=tools,

@@ -4,7 +4,7 @@
 改走 NVIDIA 生態系:開發期接 API Catalog(build.nvidia.com),正式環境換成地端 NIM 容器,**程式碼不用改**。
 
 重點不在「接上了模型」,而在:**依任務與 token 數動態切換模型、控制 token 與顯存、讓 agent 只能在沙箱裡動手**,
-而且每個設計都用真模型實測過。實測與審查抓到 48 個問題,見下方。
+而且每個設計都用真模型實測過。實測與審查抓到 49 個問題,見下方。
 
 ## 架構
 
@@ -44,6 +44,7 @@ flowchart LR
 | `deploy/` | 多人部署:Dockerfile + docker-compose(小助理 `--team` + Redis + oauth2-proxy),說明見 `deploy/README.md` |
 | `vscode-extension/` | VS Code 外掛:編輯器旁邊打開小助理、右鍵「問選取的程式碼」;`build_vsix.py` 打包成 .vsix(不需要 Node) |
 | `web.py` | 上網搜尋(Tavily)與讀網頁;`.env` 設 `ALLOW_WEB=true` 才啟用,每次上網都先問使用者 |
+| `browser.py` | 操作瀏覽器:用電腦上的 Edge(無頭、暫存設定檔)透過 DevTools 協定測自己開發中的網站;只能開 localhost 等開發用位址,打開前先問,回傳可操作的元素、畫面文字和主控台錯誤 |
 | `mcp_client.py` | MCP 連接器:標準函式庫寫的 stdio JSON-RPC client,把外部 MCP server 的工具接給模型;每次使用先問、回傳先過安全檢查、啟動時不給 HSUAN 的金鑰;`demo_mcp/` 是示範用的虛構工單系統 |
 | `smoke_test.py` | 對 catalog 上每個模型做冒煙測試(回應、思考開關、tool calling) |
 
@@ -62,9 +63,10 @@ flowchart LR
 | 多 agent 分工(10/15) | HSUAN 自己的程式碼,同一題「knowledge.py、guard.py、difficulty.py 各負責什麼,整合成比較表」 | 不分工 4 次:4.5–15.5 萬 tokens、66–88 秒,主對話最後 1.9–3 萬 tokens。打開「分工」2 次:3 個子助理同時查,4.5–5.4 萬 tokens、108–155 秒,主對話只剩 1.2–1.3 萬 tokens(之後追問每一步都比較便宜)。**比較慢**:要等最慢的子助理 |
 | MCP 連接器(10/15) | 網頁加入示範連接器(虛構工單系統),問「還沒結案、優先度高的有哪些?挑後端組那張說明原因和修法」 | 連接器啟動 0.2 秒、2 個工具每步多 285 tokens;Super 自己選對工具(列工單 → 讀 T-1004),每次都先跳確認卡片;3 步、13,142 tokens,原因(created_at 沒索引、全表掃描)和修法都對 |
 | 網頁分享(10/15) | 對話模式請 HSUAN「做一個網頁介紹三個新功能,每個一張卡片、可以展開說明」 | Super 自己用 save_document 存成 .html(2 步、6,663 tokens);沙箱預覽:網頁裡的 CSS、JS 正常(按鈕可以展開),連網和 HSUAN 的 token / cookie 都拿不到。區域網路分享只在測試裡模擬,還沒用真的手機掃 |
-| 離線測試 | 假模型,不需金鑰 | 145 個全過 |
+| 操作瀏覽器(10/15) | 本機的「開發中網站」埋兩個 bug:登入後 `/api/cart` 回 500(前端解析 JSON 出錯)、歡迎訊息顯示方案代碼 basic 而不是「基本」;請 HSUAN「測登入流程,最後看一下排版」 | 打開前先問;自己填名字和密碼、按登入、截圖看排版;6 步、28,008 tokens、76 秒。**抓到 500 和主控台的兩則錯誤,漏掉顯示錯誤**(還說歡迎訊息正確):有報錯的問題很會抓,畫面文字對不對還是要人看 |
+| 離線測試 | 假模型,不需金鑰 | 147 個全過 |
 
-## 實測與審查抓到的 48 個問題
+## 實測與審查抓到的 49 個問題
 
 | # | 問題 | 怎麼發現 | 處理 |
 |---|---|---|---|
@@ -116,6 +118,7 @@ flowchart LR
 | 46 | MCP 連接器是第三方程式,照預設啟動會繼承 HSUAN 的環境變數:`.env` 讀進來的 NVIDIA、Tavily 金鑰會一起交給它 | 審查(10/15) | 啟動時拿掉 `.env` 的變數和名字像金鑰的(KEY、TOKEN、SECRET…),連接器要的金鑰寫在它自己的 env;離線測試用會印出環境變數的假連接器驗證 |
 | 47 | 連接器掛掉時,錯誤原因(它最後印的那行)有時比「連線結束」晚讀到,使用者只看到「結束了」不知道為什麼 | 離線測試(10/15) | 先等行程結束、錯誤訊息讀完,再回報(附最後一行),連跑 3 次都穩定 |
 | 48 | 網頁預覽的網址原本帶著 HSUAN 的 token:沙箱裡的程式雖然不能連網,但讀得到自己的網址,可以整頁導到外部網站把 token 帶走(模型寫的網頁可能受網頁內容、連接器回傳的指令影響) | 實測預覽時審查(10/15) | 預覽網址改用這個網頁專用的鑰匙(token 的 HMAC,反推不回 token、只能開那一頁);分享連結本來就只能看那一頁 |
+| 49 | 無頭 Edge 一直「沒有啟動」,其實有:Edge 的啟動行程把工作交給另一個行程後就結束,程式看到它結束就當成失敗、去關它,真正的瀏覽器卻留在背景(試了幾次就留下 14 個) | 離線測試(10/15) | 只等 DevToolsActivePort 出現、不看啟動行程;關閉改送 DevTools 的 Browser.close 讓瀏覽器自己關,再刪暫存設定檔;測試後檢查沒有殘留 |
 
 ## 執行
 
@@ -142,6 +145,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
                                                   # 側邊欄「知識庫」:加入文件資料夾(手冊、規章…),回答時照意思找相關段落並附出處
                                                   # 側邊欄「連接器」:貼上 MCP server 的設定,讓 HSUAN 用外部工具(每次使用先問你)
                                                   # 請 HSUAN 做網頁(.html):對話裡就能預覽;「成品」按「分享」,同一個 Wi-Fi 的人用連結 / QR code 看
+                                                  # 「設定」打開「操作瀏覽器」:請 HSUAN 測你開發中的網站(localhost),點按鈕、填表單、看主控台錯誤
                                                   # 資料夾可以直接拖進視窗:自動找到原本的位置(找不到才問路徑),也可以只上傳一份副本給它分析
                                                   # 「新增專案」可以貼公開的 GitHub 網址(下載到 output/repos/,只抓公開的);
                                                   # 開了上網的話,對話裡貼 PR / issue / 檔案網址,會讀成純文字(PR 附 diff)
@@ -156,6 +160,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python agent.py "這個 race condition 的根因" -f x.py --role code_deep --think on
 .venv/Scripts/python agent.py "連休三天要找誰同意?" --kb demo_knowledge   # 知識庫:資料夾建成索引(只重算改過的)再回答
 .venv/Scripts/python agent.py --mcp mcp.json     # MCP 連接器(Claude Desktop 的 mcpServers 格式)
+.venv/Scripts/python agent.py --browser          # 操作瀏覽器測 localhost 的網站(用電腦上的 Edge,不用另外下載)
 .venv/Scripts/python report_routing.py --days 7   # 依難度選模型的報表(影子模式累積的紀錄)
 .venv/Scripts/python train_models.py --label     # 自己的小模型:先請 Super 標註 ml/seed_questions.txt 的範例問題
 .venv/Scripts/python train_models.py             # 訓練 + 實驗(決策樹、邏輯回歸、線性回歸…),報告和圖在 output/models/report.md
@@ -186,6 +191,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 - `requirements.txt` 鎖在實測過的版本:程式依賴 langchain-nvidia-ai-endpoints 的內部行為,升版前先跑離線測試和 `smoke_test.py`。
 - 地端的 `nim_context_window`(Ultra / Super 備援 256K)是規劃值,部署時 `NIM_MAX_MODEL_LEN` 要設成一樣。
 - 上網工具擋內網是「連線前解析一次 DNS」,擋不住 DNS rebinding;正式環境要走有白名單的出口 proxy。搜尋關鍵字和網址會送到外部網站,公司環境要先確認規定。
+- 操作瀏覽器只開開發用的位址(localhost、*.test…),不能拿來上網或登入真的服務;畫面文字對不對、業務邏輯錯誤,模型常常看不出來(實測漏掉顯示錯誤)。
 - 在外面連(Tailscale)目前只在離線測試裡模擬,還沒實際裝起來用手機測。
 - 分享網頁只到同一個 Wi-Fi(走手機連線,要先打開),不對外公開;網頁要自己包好(外部的 CSS、JS、圖片會被擋)。
 - MCP 連接器只支援在本機執行的(stdio),還不支援網址型(HTTP);只用自己寫的示範連接器實測過,還沒接過第三方的 MCP server(官方範例多半要 Node / uvx)。
