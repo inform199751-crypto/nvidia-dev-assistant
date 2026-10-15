@@ -1892,7 +1892,7 @@ def test_phone_link_pairs_and_remembers_phones(workspace, tmp_path_factory, monk
         assert pc("GET", "/api/phone").json()["on"] is False and phone.server is None
         st = pc("POST", "/api/phone", json={"on": True}).json()
         assert st["on"] and st["urls"] == [f"http://127.0.0.1:{phone.port}"] and len(st["pin"]) == 6
-        assert st["qr"].startswith("<svg") and json.loads((store / "phone.json").read_text())["on"] is True
+        assert st["qr"].startswith("<svg") and json.loads((store / "phone.json").read_text(encoding="utf-8"))["on"] is True
 
         monkeypatch.setattr(webui, "LOCAL_ADDRS", set())  # 接下來的連線都當成手機
         mobile_url = st["urls"][0]
@@ -1907,7 +1907,7 @@ def test_phone_link_pairs_and_remembers_phones(workspace, tmp_path_factory, monk
         with httpx.Client(cookies=ok.cookies) as mobile:
             assert 'const TOKEN = "t0k"' in mobile.get(mobile_url + "/").text
             assert mobile.post(mobile_url + "/api/phone", json={"on": False}, headers={"X-Token": "t0k"}).status_code == 404
-        assert ok.cookies[webui.COOKIE] not in (store / "phones.json").read_text()  # 只存雜湊,檔案外流也不能拿來登入
+        assert ok.cookies[webui.COOKIE] not in (store / "phones.json").read_text(encoding="utf-8")  # 只存雜湊,檔案外流也不能拿來登入
 
         phone.close()  # 小助理結束(開關狀態不變)
         again = webui.PhoneLink(desk, "t0k", 0, store=store, host="127.0.0.1")
@@ -1923,7 +1923,7 @@ def test_phone_link_pairs_and_remembers_phones(workspace, tmp_path_factory, monk
         phone.close()
         main.shutdown()
         main.server_close()
-    assert json.loads((store / "phone.json").read_text())["on"] is False
+    assert json.loads((store / "phone.json").read_text(encoding="utf-8"))["on"] is False
 
 
 # ---------- 自己訓練的小模型(ml/) ----------
@@ -2160,7 +2160,7 @@ def test_token_usage_is_saved_and_shared(tmp_path, monkeypatch):
     monkeypatch.setattr(token_guard, "datetime", type("D", (), {"now": staticmethod(lambda tz=None: tomorrow)}))
     assert a.used("me") == 0
     a.charge("me", 10)
-    assert json.loads(store.read_text())["me"] == {tomorrow.date().isoformat(): 10}  # 只留今天
+    assert json.loads(store.read_text(encoding="utf-8"))["me"] == {tomorrow.date().isoformat(): 10}  # 只留今天
 
 
 def test_lan_access_guest_pin(tmp_path):
@@ -2365,12 +2365,12 @@ def test_phone_logout_forgets_only_that_phone(workspace, tmp_path_factory, monke
         monkeypatch.setattr(webui, "LOCAL_ADDRS", set())  # 接下來的連線都當成手機
         cookies = [httpx.post(base + "/api/login", json={"pin": "123456"}).cookies for _ in range(2)]
         first, second = (httpx.Client(base_url=base, headers=h, cookies=c) for c in cookies)
-        assert first.get("/api/state").json()["can_logout"] is True and len(json.loads(store.read_text())) == 2
+        assert first.get("/api/state").json()["can_logout"] is True and len(json.loads(store.read_text(encoding="utf-8"))) == 2
         r = first.post("/api/logout", json={})
         assert r.status_code == 200 and "Max-Age=0" in r.headers["set-cookie"]
         with httpx.Client(base_url=base, headers=h, cookies=cookies[0]) as kept:  # 留著舊 cookie 也沒用
             assert kept.get("/api/state").status_code == 403
-        assert second.get("/api/state").status_code == 200 and len(json.loads(store.read_text())) == 1
+        assert second.get("/api/state").status_code == 200 and len(json.loads(store.read_text(encoding="utf-8"))) == 1
     finally:
         server.shutdown()
         server.server_close()
