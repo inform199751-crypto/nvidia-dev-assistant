@@ -19,6 +19,7 @@
   --fail-soft: #F8E3E0;
   --warn: #8F5E00;
   --warn-soft: #F6EDD7;
+  --baseline: #9AA6AF;
   --display: "Noto Serif TC", "Songti TC", "PMingLiU", serif;
   --body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
@@ -28,14 +29,14 @@
     --paper: #0F151A; --sheet: #151D24; --ink: #E2E8ED; --muted: #94A2AD; --rule: #2A3540;
     --accent: #86ABEE; --accent-soft: #1C2A40; --code: #1B252E;
     --pass: #62C79E; --pass-soft: #15302A; --fail: #F08C80; --fail-soft: #3A1E1C;
-    --warn: #E0B456; --warn-soft: #33290F; color-scheme: dark;
+    --warn: #E0B456; --warn-soft: #33290F; --baseline: #5A6772; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --paper: #0F151A; --sheet: #151D24; --ink: #E2E8ED; --muted: #94A2AD; --rule: #2A3540;
   --accent: #86ABEE; --accent-soft: #1C2A40; --code: #1B252E;
   --pass: #62C79E; --pass-soft: #15302A; --fail: #F08C80; --fail-soft: #3A1E1C;
-  --warn: #E0B456; --warn-soft: #33290F; color-scheme: dark;
+  --warn: #E0B456; --warn-soft: #33290F; --baseline: #5A6772; color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -52,7 +53,7 @@ body {
 a { color: var(--accent); text-underline-offset: 3px; }
 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 code, .mono { font-family: var(--mono); font-size: 0.88em; }
-p code, li code, td code { background: var(--code); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+p code, li code, td code, dd code { background: var(--code); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
 
 /* ---------- 封面 ---------- */
 header.cover {
@@ -117,18 +118,31 @@ section {
 .figure .v { font-family: var(--mono); font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.3; }
 .figure .k { font-size: 13px; color: var(--muted); }
 
+/* ---------- 做出來的東西 ---------- */
+.caps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin: 0; }
+.cap-item { background: var(--sheet); padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cap-item dt { font-weight: 700; font-size: 15px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.cap-item dt .file { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--muted); }
+.cap-item dd { margin: 0; font-size: 14px; color: var(--muted); line-height: 1.65; }
+
 /* ---------- 表格 ---------- */
 .table-scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 15px; }
 th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--rule); }
 th { font-size: 12px; letter-spacing: 0.08em; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--ink); white-space: nowrap; }
-td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+td small { display: block; color: var(--muted); font-size: 12.5px; }
 .pill { display: inline-block; font-size: 12px; font-weight: 500; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
 .pill.pass { color: var(--pass); background: var(--pass-soft); }
 .pill.warn { color: var(--warn); background: var(--warn-soft); }
 .pill.fail { color: var(--fail); background: var(--fail-soft); }
 
 /* ---------- 問題清單 ---------- */
+.tally { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; padding: 0; list-style: none; font-size: 14px; color: var(--muted); }
+.tally b { font-family: var(--mono); color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; margin-left: 4px; }
+.group { display: flex; flex-direction: column; gap: 6px; }
+.group h3 { display: flex; align-items: baseline; gap: 10px; margin: 0; font-size: 16px; font-weight: 700; }
+.group h3 .count { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--muted); }
 ol.findings { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--ink); }
 ol.findings li {
   display: grid;
@@ -142,7 +156,7 @@ ol.findings li {
 .findings .how { display: block; margin-top: 4px; }
 .findings .fix { color: var(--muted); font-size: 15px; }
 .findings .fix::before { content: "處理 "; color: var(--pass); font-size: 12px; letter-spacing: 0.06em; }
-.tag { font-family: var(--mono); font-size: 11.5px; color: var(--accent); background: var(--accent-soft); padding: 1px 7px; border-radius: 3px; }
+.tag { font-family: var(--mono); font-size: 11.5px; color: var(--accent); background: var(--accent-soft); padding: 1px 7px; border-radius: 3px; white-space: nowrap; }
 
 /* ---------- 標本 ---------- */
 .specimens { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
@@ -164,13 +178,15 @@ ol.findings li {
 .specimen pre mark { background: none; color: var(--fail); font-weight: 600; text-decoration: underline wavy; text-underline-offset: 3px; }
 .specimen p { margin: 0; font-size: 14px; color: var(--muted); }
 
-/* ---------- KV cache 長條 ---------- */
+/* ---------- 長條 ---------- */
 .bars { display: flex; flex-direction: column; gap: 14px; }
 .bar-row { display: grid; grid-template-columns: 13em minmax(0, 1fr); gap: 4px 16px; align-items: center; }
 .bar-row .name { font-size: 14px; }
 .bar-row .name small { display: block; color: var(--muted); font-size: 12px; }
 .track { position: relative; height: 26px; }
 .fill { height: 100%; background: var(--accent); min-width: 3px; }
+.fill.base { background: var(--baseline); }
+.fill.bad { background: var(--fail); }
 .bar-row .val { font-family: var(--mono); font-size: 13px; color: var(--muted); grid-column: 2; font-variant-numeric: tabular-nums; }
 
 .mermaid-box { background: var(--sheet); border: 1px solid var(--rule); padding: 16px; overflow-x: auto; }
@@ -184,6 +200,7 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
   header.cover, section { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .cover .margin { padding-top: 0; }
   .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .caps { grid-template-columns: minmax(0, 1fr); }
   .specimens { grid-template-columns: minmax(0, 1fr); }
   ol.findings li { grid-template-columns: 2em minmax(0, 1fr); }
   .findings .fix { grid-column: 2; }
@@ -198,13 +215,13 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
 <div class="wrap">
 
 <header class="cover">
-  <div class="margin">作品集<br>2026-10-06</div>
+  <div class="margin">作品集<br>實測 10-06 – 10-10<br>更新 10-15</div>
   <div>
     <h1>對內研發助理<br>實測紀錄</h1>
-    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我怎麼用真模型把它測過一輪,以及測出來的 11 個問題。</p>
+    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/10 邊做邊用真模型測試的過程,實測與審查一共抓到 42 個問題。</p>
     <div class="byline">
       <span><strong>HSUAN</strong></span>
-      <span>Python · LangChain · NVIDIA NIM · Docker</span>
+      <span>Python · LangChain · NVIDIA NIM · Docker · Redis · scikit-learn</span>
       <span class="mono">github.com/inform199751-crypto/nvidia-dev-assistant(私人,面試時可開放)</span>
     </div>
   </div>
@@ -223,7 +240,7 @@ step 1  role=<span class="hl">long_context</span>  tokens=<span class="hl">19107
     <div class="figures">
       <div class="figure"><div class="v">191,076</div><div class="k">tokens 一次送進去</div></div>
       <div class="figure"><div class="v">1 步</div><div class="k">自動升級到 Ultra 550B</div></div>
-      <div class="figure"><div class="v">482 秒</div><div class="k">所以這類任務要走背景佇列</div></div>
+      <div class="figure"><div class="v">482 秒</div><div class="k">網頁版在背景跑,重新整理不會中斷</div></div>
       <div class="figure"><div class="v">14 / 14</div><div class="k">抽查的 path:line 引用全對</div></div>
     </div>
     <p>系統估算內容超過程式碼模型的上限(約 11 萬 tokens),自動改用 1M 上下文的 Nemotron 3 Ultra。修正前,同一個任務跑到第 3 步還在分段重讀 README,每步重送 18 萬 tokens。</p>
@@ -244,21 +261,46 @@ flowchart LR
     G --> R{路由}
     R -->|放得下| S[code: Nemotron 3 Super 120B]
     R -->|超過約 11 萬 tokens| L[long_context: Nemotron 3 Ultra 550B]
+    R -.->|難題, 影子模式只記錄| D
     S -.失敗備援.-> D[code_deep: DeepSeek v4.1-flash]
     L -.失敗備援.-> S2[Super 1M]
-    A --> T1[讀檔 / 搜尋: 擋 .env 與金鑰]
-    A --> T2[跑測試: Docker 沙箱, 無網路, 唯讀]
-    A --> T3[提修正: 複本套用並跑測試, 只產 .patch]
+    A --> T1[讀檔 / 搜尋 / git 紀錄: 擋 .env 與金鑰]
+    A --> T2[跑測試與指令: Docker 沙箱, 無網路, 唯讀複本]
+    A --> T3[提修正: 舊字串換新字串, 複本套用並跑測試]
+    A --> T4[讀文件 / 看圖 / 知識庫]
+    A --> T5[上網: 預設關閉, 每次先問, 先過安全模型]
 </pre>
     </div>
-    <p>agent 迴圈是自己寫的,沒有用現成的 create_agent,因為 token 檢查、歷史瘦身、模型升級都要插在「每一步送出之前」。工具只能讀、只能在沙箱裡跑測試、只能提 patch 等人審核,不會直接改任何檔案。</p>
+    <p>agent 迴圈是自己寫的,沒有用現成的 create_agent,因為 token 檢查、歷史瘦身、模型升級都要插在「每一步送出之前」。工具只能讀、只能在沙箱裡跑測試、只能提 patch 等人確認,不會直接改任何檔案。</p>
+    <p>長度路由只管放不放得下。另外有一個難度分類器判斷題目難不難,目前在影子模式:只記錄「本來會選哪個模型」,累積真實紀錄、抽查準確之後才會真的切換。</p>
   </div>
 </section>
 
 <section>
   <div class="label">
-    <h2>四條路徑的實測</h2>
-    <div class="note">NVIDIA API Catalog 免費層</div>
+    <h2>做出來的東西</h2>
+    <div class="note">同一個 agent,五種用法,加上五項能力</div>
+  </div>
+  <div class="body">
+    <dl class="caps">
+      <div class="cap-item"><dt>命令列 <span class="file">agent.py</span></dt><dd>多輪對話、<code>/plan</code> 先規劃再動手;修改先放草稿,沙箱測試通過才問要不要套用</dd></div>
+      <div class="cap-item"><dt>網頁 <span class="file">webui.py</span></dt><dd>回答邊產生邊顯示;側邊欄管專案和對話,資料夾可以直接拖進視窗</dd></div>
+      <div class="cap-item"><dt>桌面版 <span class="file">desktop_app.py</span></dt><dd>雙擊桌面圖示開獨立視窗,視窗都關了就結束</dd></div>
+      <div class="cap-item"><dt>手機</dt><dd>掃 QR code、輸入 PIN 配對;訪客 PIN 有自己的空間和每日額度</dd></div>
+      <div class="cap-item"><dt>VS Code 外掛</dt><dd>編輯器旁邊開小助理,右鍵「問選取的程式碼」;打包不需要 Node</dd></div>
+      <div class="cap-item"><dt>多人部署 <span class="file">deploy/</span></dt><dd>Docker Compose:小助理 + Redis 共用額度 + oauth2-proxy 登入,同時執行上限其他人排隊</dd></div>
+      <div class="cap-item"><dt>知識庫</dt><dd>公司文件依標題切段、算向量(Nemotron 3 Embed),照意思找並附出處</dd></div>
+      <div class="cap-item"><dt>看圖與掃描 PDF</dt><dd>Nemotron Nano Omni 先把圖片和掃描頁轉成文字,再交給主模型回答</dd></div>
+      <div class="cap-item"><dt>上網與安全把關</dt><dd>預設關閉、每次先問;網頁內容先過 Content Safety 模型,擋藏在頁面裡的提示注入</dd></div>
+      <div class="cap-item"><dt>自己訓練的難度模型 <span class="file">ml/</span></dt><dd>ID3 決策樹判斷難易、線性回歸預估 tokens 和秒數;執行時讀 JSON,純 Python</dd></div>
+    </dl>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>實測結果</h2>
+    <div class="note">NVIDIA API Catalog 免費層,10/6 – 10/10</div>
   </div>
   <div class="body">
     <div class="table-scroll">
@@ -266,9 +308,15 @@ flowchart LR
         <thead><tr><th>路徑</th><th>情境</th><th>結果</th><th>狀態</th></tr></thead>
         <tbody>
           <tr><td>模型冒煙測試</td><td>三顆模型 × 回應 / 開思考 / 關思考 / tool calling</td><td>Super 每次 0.4–2.6 秒;DeepSeek 18–27 秒;Ultra 偶爾回 503,已設備援</td><td><span class="pill pass">全過</span></td></tr>
-          <tr><td>改 bug</td><td>玩具專案:加號寫成減號</td><td class="num">12 步 → 7 步 · 47,559 → 16,234 tokens</td><td><span class="pill pass">2 passed</span></td></tr>
+          <tr><td>改 bug</td><td>玩具專案:加號寫成減號</td><td class="num">12 步 → 7 步 · 47,559 → 16,234 tokens<small>改成「舊字串換新字串」後 4 步、約 8 千 tokens</small></td><td><span class="pill pass">2 passed</span></td></tr>
           <tr><td>長文本</td><td>客服專案 57 檔寫技術文件</td><td class="num">1 步 · 191,076 tokens · 482 秒</td><td><span class="pill pass">引用 14/14</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">33 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>難度分類器</td><td>14 題示範問題,一般與難題各 7</td><td>Super 關思考每次 0.6–1.1 秒、約 300 tokens<small>題目是自己出的,真實準確度要看影子模式紀錄</small></td><td><span class="pill pass">14/14</span></td></tr>
+          <tr><td>看圖</td><td>錯誤截圖、長條圖、1 MB 的 JPEG</td><td>Nano Omni 每張 1.4–9 秒;檔名、行號、數字全對</td><td><span class="pill pass">全對</span></td></tr>
+          <tr><td>知識庫</td><td>12 題換句話說的問題</td><td class="num">照意思找:第 1 名 10/12、前 3 名 12/12<small>只用關鍵字 7/12</small></td><td><span class="pill pass">前 3 名 12/12</span></td></tr>
+          <tr><td>安全把關</td><td>正常網頁、註解裡藏指令的網頁、隱晦的提示注入、不當請求</td><td>Content Safety 每次 0.6–1 秒;另外三顆安全模型大多逾時</td><td><span class="pill pass">5/5</span></td></tr>
+          <tr><td>掃描的 PDF</td><td>兩頁:會議紀錄 + 預算表格</td><td>逐字讀出、表格保留成表格,兩頁約 19–26 秒</td><td><span class="pill pass">通過</span></td></tr>
+          <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">132 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端 NIM</td><td>需要 GPU 伺服器</td><td>只對照過官方文件</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
       </table>
@@ -278,23 +326,96 @@ flowchart LR
 
 <section>
   <div class="label">
-    <h2>測出來的 11 個問題</h2>
-    <div class="note">依發現順序。每一個都是跑過才知道,不是事先想到的</div>
+    <h2>抓到的 42 個問題</h2>
+    <div class="note">依類別分組,編號照發現順序,跟 README 一致。每一條都寫了怎麼發現的</div>
   </div>
   <div class="body">
-    <ol class="findings">
-      <li><span class="n">01</span><div><span class="what">指定的 deepseek-v3、qwen2.5-coder-32b 已經從 catalog 下架</span><span class="how"><span class="tag">探測 API</span></span></div><div class="fix">改用現役版本,Qwen 標為只能地端</div></li>
-      <li><span class="n">02</span><div><span class="what">套件預設輸出上限只有 1024 tokens,寫程式會被截斷</span><span class="how"><span class="tag">讀套件原始碼</span></span></div><div class="fix">每個模型角色明確設定上限</div></li>
-      <li><span class="n">03</span><div><span class="what">套件把推理內容原樣回送伺服器,多步 agent 每步重送全部思考</span><span class="how"><span class="tag">讀套件原始碼</span></span></div><div class="fix">每步清掉上一輪以前的推理</div></li>
-      <li><span class="n">04</span><div><span class="what">Ultra 收到 force_nonempty_content 會把推理混進回答</span><span class="how"><span class="tag">冒煙測試</span> <span class="tag">對照實驗</span></span></div><div class="fix">Ultra 不送這個參數,另外清除孤立的 &lt;/think&gt;</div></li>
-      <li><span class="n">05</span><div><span class="what">DeepSeek 連回一句「收到」都要 20 秒</span><span class="how"><span class="tag">冒煙測試</span></span></div><div class="fix">日常改用 Super,DeepSeek 留給難題</div></li>
-      <li><span class="n">06</span><div><span class="what">agent 沒辦法驗證自己的修正,最後自己編了測試結果</span><span class="how"><span class="tag">端到端實測</span></span></div><div class="fix">提修正時在複本上套用並真的跑測試,回傳實際結果</div></li>
-      <li><span class="n">07</span><div><span class="what">.env 裡設定的工作目錄被忽略</span><span class="how"><span class="tag">端到端實測</span></span></div><div class="fix">讀完 .env 之後再設定工具</div></li>
-      <li><span class="n">08</span><div><span class="what">讀檔工具擋不住 .env,金鑰可能被送出去</span><span class="how"><span class="tag">接真實專案前檢查</span></span></div><div class="fix">封鎖 .env、金鑰、憑證與 .git</div></li>
-      <li><span class="n">09</span><div><span class="what">檔案都附上了,模型還分段重讀,每步重送 18 萬 tokens</span><span class="how"><span class="tag">長文本實測</span></span></div><div class="fix">整檔模式不給工具,一次回答</div></li>
-      <li><span class="n">10</span><div><span class="what">token 估算低估約 20%(估 15.3 萬,實際 18.3 萬)</span><span class="how"><span class="tag">長文本實測</span></span></div><div class="fix">用實測重新校準,執行中再依實際用量修正</div></li>
-      <li><span class="n">11</span><div><span class="what">配額只在開始時檢查,跑到一半可以遠超額度</span><span class="how"><span class="tag">長文本實測</span></span></div><div class="fix">每一步送出前都檢查</div></li>
-    </ol>
+    <ul class="tally">
+      <li>模型與套件<b>10</b></li>
+      <li>token 與路由<b>7</b></li>
+      <li>agent 行為與工具<b>9</b></li>
+      <li>安全與隱私<b>6</b></li>
+      <li>多人、部署與介面<b>6</b></li>
+      <li>自己訓練的模型與知識庫<b>4</b></li>
+    </ul>
+
+    <div class="group">
+      <h3>模型與套件 <span class="count">10</span></h3>
+      <ol class="findings">
+        <li><span class="n">01</span><div><span class="what">指定的 deepseek-v3、qwen2.5-coder-32b 已經從 catalog 下架</span><span class="how"><span class="tag">探測 API</span></span></div><div class="fix">改用現役版本,Qwen 標為只能地端</div></li>
+        <li><span class="n">02</span><div><span class="what">套件預設輸出上限只有 1024 tokens,寫程式會被截斷</span><span class="how"><span class="tag">讀套件原始碼</span></span></div><div class="fix">每個模型角色明確設定上限</div></li>
+        <li><span class="n">03</span><div><span class="what">套件把推理內容原樣回送伺服器,多輪對話會滾雪球</span><span class="how"><span class="tag">讀套件原始碼</span></span></div><div class="fix">每步清掉上一輪以前的推理,同一輪內保留給工具呼叫用</div></li>
+        <li><span class="n">04</span><div><span class="what">Ultra 收到 force_nonempty_content 會把推理混進回答</span><span class="how"><span class="tag">冒煙測試</span> <span class="tag">對照實驗</span></span></div><div class="fix">Ultra 不送這個參數,另外清除孤立的 &lt;/think&gt;</div></li>
+        <li><span class="n">05</span><div><span class="what">DeepSeek 連回一句「收到」都要 20 秒</span><span class="how"><span class="tag">冒煙測試</span></span></div><div class="fix">日常改用 Super,DeepSeek 留給難題</div></li>
+        <li><span class="n">21</span><div><span class="what">串流時套件只把工具呼叫放在片段裡,送回伺服器時跟下一步的工具結果對不上</span><span class="how"><span class="tag">讀套件原始碼</span></span></div><div class="fix">串流結束後補回完整的工具呼叫;真模型連續 3 步工具呼叫正常</div></li>
+        <li><span class="n">32</span><div><span class="what">模型清單上的看圖模型,有的實際呼叫是 404,有的把檔名講錯或逾時</span><span class="how"><span class="tag">逐一實測</span></span></div><div class="fix">選實測全對的 Nemotron 3 Nano Omni,備援 Llama 3.2 11B Vision</div></li>
+        <li><span class="n">33</span><div><span class="what">免費層的 Nano Omni 約一半回 503,一次就放棄的話常常看不到圖</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">先重試 2 次再換備援;都失敗就告訴主模型有一張圖沒看到</div></li>
+        <li><span class="n">35</span><div><span class="what">清單上的 embedding 模型大多 404;Nemotron 3 Embed 經過套件呼叫回 502,直接打 API 正常</span><span class="how"><span class="tag">逐一實測</span></span></div><div class="fix">直接打 /v1/embeddings,忙線時重試</div></li>
+        <li><span class="n">42</span><div><span class="what">想找比 DeepSeek 快的難題模型:GLM-5.3 Flash 冒煙測試快,實際修 bug 卻要 122 秒,還會逾時</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">不換;結果記在 models.yaml,下次不用重測</div></li>
+      </ol>
+    </div>
+
+    <div class="group">
+      <h3>token 與路由 <span class="count">7</span></h3>
+      <ol class="findings">
+        <li><span class="n">09</span><div><span class="what">檔案都附上了,模型還分段重讀,每步重送 18 萬 tokens</span><span class="how"><span class="tag">長文本實測</span></span></div><div class="fix">整檔模式不給工具,一次回答</div></li>
+        <li><span class="n">10</span><div><span class="what">token 估算低估約 20%(估 15.3 萬,實際 18.3 萬)</span><span class="how"><span class="tag">長文本實測</span></span></div><div class="fix">用實測重新校準,執行中再依實際用量修正</div></li>
+        <li><span class="n">11</span><div><span class="what">配額只在開始時檢查,跑到一半可以遠超額度</span><span class="how"><span class="tag">長文本實測</span></span></div><div class="fix">每一步送出前都檢查</div></li>
+        <li><span class="n">12</span><div><span class="what">工具定義(約 700 tokens)沒算進估算,被誤判成估算偏低,中型任務會提早升級到 Ultra</span><span class="how"><span class="tag">實測紀錄</span></span></div><div class="fix">工具定義算進估算,不拿來放大倍率</div></li>
+        <li><span class="n">15</span><div><span class="what">上下文長度用的是 catalog 的值(Ultra 1M),地端預設只有 256K,切到地端要送出才被拒</span><span class="how"><span class="tag">程式碼審查</span></span></div><div class="fix">角色可以另寫地端的上下文長度,切到地端時自動套用</div></li>
+        <li><span class="n">26</span><div><span class="what">難度分類器把最常見的「單一測試失敗」判成難題,真的開啟會把一般請求丟給慢約 10 倍的 DeepSeek</span><span class="how"><span class="tag">分類器實測</span></span></div><div class="fix">改判斷標準:跨多個檔案又沒有頭緒才算難題;同 14 題重跑全部符合</div></li>
+        <li><span class="n">29</span><div><span class="what">影子模式也同步等分類器,每題多等約 1 秒,答案卻不會變</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">影子模式改在背景判斷,不擋這一輪的回答</div></li>
+      </ol>
+    </div>
+
+    <div class="group">
+      <h3>agent 行為與工具 <span class="count">9</span></h3>
+      <ol class="findings">
+        <li><span class="n">06</span><div><span class="what">agent 沒辦法驗證自己的修正,最後自己編了測試結果</span><span class="how"><span class="tag">端到端實測</span></span></div><div class="fix">提修正時在複本上套用並真的跑測試,回傳實際結果</div></li>
+        <li><span class="n">13</span><div><span class="what">模型回的工具參數不是合法 JSON 時,被當成最終答案、回傳空字串</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">讀套件原始碼</span></span></div><div class="fix">把錯誤回給模型,讓它修正重送</div></li>
+        <li><span class="n">14</span><div><span class="what">模型手寫 unified diff 常格式錯,每次被退回多花 2–3 步</span><span class="how"><span class="tag">改 bug 實測</span></span></div><div class="fix">改成給「舊字串 → 新字串」,diff 由工具產生;同一題 8 步變 4 步</div></li>
+        <li><span class="n">17</span><div><span class="what">「修 bug + 新增測試檔」時,模型以為 patch 會疊加,多繞好幾步</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">工具回傳時提醒每個 patch 單獨驗證;11 步變 7 步</div></li>
+        <li><span class="n">20</span><div><span class="what">模型不知道今天幾號,摘要會議紀錄時把「下週三」算錯</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">系統提示帶台北時間的日期與星期</div></li>
+        <li><span class="n">22</span><div><span class="what">照計畫一步步改時,每個 patch 各自對原檔驗證,模型一直讀到舊內容、原地打轉</span><span class="how"><span class="tag">計畫模式實測</span></span></div><div class="fix">改成累積的草稿,讀檔、搜尋、沙箱都看草稿版本</div></li>
+        <li><span class="n">23</span><div><span class="what">執行計畫時 15 步裡約 6 步只在更新進度,做到一半就停</span><span class="how"><span class="tag">計畫模式實測</span></span></div><div class="fix">進度更新要跟下一個動作一起送,計畫限 3–6 步;重跑 12 步全部完成</div></li>
+        <li><span class="n">34</span><div><span class="what">看圖說明偶爾把同一段重複好幾次,一張圖 22 秒、3,800 tokens</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">提示改成三段、寫完就停,重複段落只留一次;每張變 3–9 秒、約 700 tokens</div></li>
+        <li><span class="n">40</span><div><span class="what">讀掃描的表格時把繁體字抄成簡體(預算表 → 预算表)</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">提示加上「保留原本的字」,重跑兩次都正確</div></li>
+      </ol>
+    </div>
+
+    <div class="group">
+      <h3>安全與隱私 <span class="count">6</span></h3>
+      <ol class="findings">
+        <li><span class="n">08</span><div><span class="what">讀檔工具擋不住 .env,金鑰可能被送出去</span><span class="how"><span class="tag">接真實專案前檢查</span></span></div><div class="fix">封鎖 .env、金鑰、憑證與 .git</div></li>
+        <li><span class="n">16</span><div><span class="what">搜尋工具會跟著捷徑連結(symlink / junction)讀到工作區外的檔案</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">本機重現</span></span></div><div class="fix">依實際位置檢查,工作區外與機密檔一律略過</div></li>
+        <li><span class="n">18</span><div><span class="what">沙箱直接掛載整個工作區,.env 在沙箱裡讀得到</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">沙箱一律掛排除機密檔的複本,判斷跟讀檔工具同一套</div></li>
+        <li><span class="n">27</span><div><span class="what">從 GitHub 加專案時,git clone 會自動用電腦上存的登入,私人 repo 會被抓下來送到外部 API</span><span class="how"><span class="tag">假伺服器 + 假 helper 實測</span></span></div><div class="fix">clone 時清掉登入輔助程式、關掉提示;同一個實驗兩個 helper 都沒被叫到</div></li>
+        <li><span class="n">28</span><div><span class="what">下載的 repo 自帶的規則檔會直接進系統提示,別人寫的內容被當成團隊規則</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">下載專案的規則改存在 repo 外面,repo 裡那份只當一般檔案</div></li>
+        <li><span class="n">38</span><div><span class="what">網頁可以藏給 AI 的指令(例如要它把 .env 傳出去),只靠系統提示不夠保險</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">網頁和搜尋結果先過安全模型,不安全就整段不交給模型</div></li>
+      </ol>
+    </div>
+
+    <div class="group">
+      <h3>多人、部署與介面 <span class="count">6</span></h3>
+      <ol class="findings">
+        <li><span class="n">07</span><div><span class="what">.env 裡設定的工作目錄被忽略</span><span class="how"><span class="tag">端到端實測</span></span></div><div class="fix">讀完 .env 之後再設定工具</div></li>
+        <li><span class="n">19</span><div><span class="what">沙箱逾時只停掉 docker 指令,容器在背景繼續跑;Windows 上中文輸出變亂碼</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">本機實測</span></span></div><div class="fix">容器加名字、逾時就強制停止;輸出一律用 UTF-8 解碼</div></li>
+        <li><span class="n">24</span><div><span class="what">草稿和 patch 紀錄是整個程式共用的,多人同時用會看到別人的草稿</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">改成每人一個工作台;測試確認兩人互相看不到</div></li>
+        <li><span class="n">25</span><div><span class="what">容器時區是 UTC,patch 檔名的時間差 8 小時;唯讀掛載的 repo 被 git 拒絕</span><span class="how"><span class="tag">Docker 實測</span></span></div><div class="fix">映像設台北時區,git 加上 safe.directory</div></li>
+        <li><span class="n">37</span><div><span class="what">只有一支手機,設定頁卻寫「已配對 2 支」</span><span class="how"><span class="tag">使用時發現</span></span></div><div class="fix">配對紀錄多記裝置類型和時間,設定頁逐支列出、可以個別取消</div></li>
+        <li><span class="n">41</span><div><span class="what">想加語音輸入,但中文錯字太多;手機用區網 http 連線,瀏覽器也不給麥克風</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">不加;說明頁改成建議用系統內建的語音輸入</div></li>
+      </ol>
+    </div>
+
+    <div class="group">
+      <h3>自己訓練的模型與知識庫 <span class="count">4</span></h3>
+      <ol class="findings">
+        <li><span class="n">30</span><div><span class="what">課程範例的線性回歸用「要預測的那批資料」自己標準化,一次只預測一筆時結果是錯的</span><span class="how"><span class="tag">讀程式碼</span></span></div><div class="fix">改用訓練時記下的平均和標準差;測試確認一筆和整批結果一樣</div></li>
+        <li><span class="n">31</span><div><span class="what">手寫 ID3 決策樹的準確率 0.66,比全部猜「一般」的 0.68 還差</span><span class="how"><span class="tag">決策樹實驗</span></span></div><div class="fix">補上兩個特徵、用交叉驗證挑深度;深度 5 準確率 0.89</div></li>
+        <li><span class="n">36</span><div><span class="what">以為向量加關鍵字的混合排名會更好,實測第 1 名命中從 10/12 掉到 7–8/12</span><span class="how"><span class="tag">知識庫實驗</span></span></div><div class="fix">平常只用向量,算不了向量才退回關鍵字</div></li>
+        <li><span class="n">39</span><div><span class="what">掃描的 PDF 沒有文字層讀不到;Nemotron Parse 在 catalog 的 API 格式又不相容</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">沒有文字的頁交給看圖模型讀,一頁約 4 秒,讀過的快取</div></li>
+      </ol>
+    </div>
   </div>
 </section>
 
@@ -358,21 +479,50 @@ flowchart LR
 
 <section>
   <div class="label">
+    <h2>自己訓練的難度模型</h2>
+    <div class="note">交叉驗證準確率,73 題由 Super 標註的範例問題</div>
+  </div>
+  <div class="body">
+    <div class="bars" role="img" aria-label="交叉驗證準確率:全部猜一般 0.68,手寫 ID3 初版 0.66,補特徵並把深度定為 5 之後 0.89">
+      <div class="bar-row">
+        <div class="name">全部猜「一般」<small>對照組</small></div>
+        <div class="track"><div class="fill base" style="width:68%"></div></div>
+        <div class="val">0.68</div>
+      </div>
+      <div class="bar-row">
+        <div class="name">手寫 ID3 初版<small>比對照組還差</small></div>
+        <div class="track"><div class="fill bad" style="width:66%"></div></div>
+        <div class="val">0.66</div>
+      </div>
+      <div class="bar-row">
+        <div class="name">補特徵 + 深度 5<small>深度 1–6 用交叉驗證挑</small></div>
+        <div class="track"><div class="fill" style="width:89%"></div></div>
+        <div class="val">0.89 · F1 0.81</div>
+      </div>
+    </div>
+    <p>照課程教材手寫 ID3 決策樹,第一版連「全部猜一般」都贏不了。照分類器自己的判斷標準補上「間歇發生」「沒有頭緒或上次修正沒用」兩個特徵,再加深度限制,準確率到 0.89。另外用線性回歸預估每一輪的 tokens 和秒數,也跟 scikit-learn 的決策樹、邏輯回歸、隨機森林、神經網路比較過。執行時只讀訓練好的 JSON,用純 Python 算,不載入 scikit-learn。範例題是 Super 標的,真實準確度一樣要看影子模式累積的紀錄。</p>
+  </div>
+</section>
+
+<section>
+  <div class="label">
     <h2>還沒做的</h2>
     <div class="note">知道邊界在哪</div>
   </div>
   <div class="body">
     <ul class="plain">
       <li><strong>地端 NIM 沒有實際部署。</strong>需要 GPU 伺服器;Ultra 550B 要 8 張 B200 / H200 等級,建議第一階段先用 Super 120B(FP8 約 2 張 H100)。</li>
-      <li>配額目前是記憶體版,多台伺服器要改 Redis;整份文件這種 8 分鐘的任務要改走背景佇列。</li>
-      <li>PoC 期間不能送公司真實程式碼到 build.nvidia.com:試用條款允許 NVIDIA 收集輸入輸出改進模型。這次測試用的是我自己的專案。</li>
+      <li>多人部署只在本機 Docker 測過,還沒在公司 SSO 和 GPU 主機上跑;多台伺服器要設 sticky session。</li>
+      <li>沒有獨立的工作佇列:整份文件這種 8 分鐘的任務會佔住一個執行名額,同時執行上限要依 GPU 數量調整。</li>
+      <li>依難度選模型還在影子模式,要累積真實紀錄、抽查準確後才開啟。</li>
+      <li>PoC 期間不能送公司真實程式碼到 build.nvidia.com:試用條款允許 NVIDIA 收集輸入輸出改進模型。這次測試用的是我自己的專案和虛構的示範文件。</li>
     </ul>
   </div>
 </section>
 
 <footer>
   <span><strong>HSUAN</strong></span>
-  <span>2026-10-06</span>
+  <span>2026-10-06 初版 · 2026-10-15 更新</span>
   <span>實測環境:NVIDIA API Catalog 免費層、Windows 10、Docker 29.7</span>
 </footer>
 
