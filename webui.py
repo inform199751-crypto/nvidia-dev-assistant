@@ -39,6 +39,7 @@ from langchain_core.messages import messages_from_dict, messages_to_dict
 import agent
 import guard
 import knowledge
+import mcp_client
 import qr
 import tools as toolbox
 import web
@@ -405,6 +406,7 @@ class Hub:
         self.on_event: Callable[[str], None] | None = None  # Desk 用來在重要事件後存檔
         self.chat = False  # 「對話」模式(側邊欄切到「對話」開的):不綁專案,見 use_chat()
         self.copy = False  # 拖進來的資料夾的副本(Desk._make 設定):「套用」改的是副本,不是原本的資料夾
+        self.connectors: mcp_client.Connectors | None = None  # 這個人的 MCP 連接器(Desk._attach 設定)
         self.session = self._new_session()
 
     def _new_session(self) -> agent.AgentSession:
@@ -422,6 +424,21 @@ class Hub:
             tools.append(knowledge.search_knowledge)
         session.tools = tools
         session.refresh_system_prompt()
+
+    def _sync_connectors(self) -> None:
+        """每一輪開始前把打開中的連接器的工具換上去:新加的、關掉的、掛掉重開的都在這裡生效(用到才啟動)。"""
+        if not self.connectors or self.session.whole:
+            return
+        try:
+            extra = self.connectors.tools()
+        except Exception as e:  # 設定壞掉之類的:這一輪不用連接器,照常回答
+            extra = []
+            self.publish("notice", {"text": f"連接器出錯,這一輪先不用:{type(e).__name__}: {e}"})
+        names = {it["id"]: it["name"] for it in self.connectors.items if it.get("enabled", True)}
+        for cid, err in list(self.connectors.errors.items()):
+            if cid in names:
+                self.publish("notice", {"text": f"連接器「{names[cid]}」沒有接上,這一輪先不用它:{err}"})
+        self.session.tools = [t for t in self.session.tools if not (t.metadata or {}).get("mcp")] + extra
 
     def use_knowledge(self, kbs: list) -> None:
         """Desk 的知識庫變了(加了、拿掉、更新完):工具和系統提示裡的知識庫清單跟著換,下一輪生效。"""
@@ -605,6 +622,7 @@ class Hub:
                 except PermissionError as e:
                     raise guard.Blocked(str(e)) from None
             with self.gate.turn(self.publish) if self.gate else nullcontext(), toolbox.using(self.bench):
+                self._sync_connectors()
                 files = [] if self.chat else agent.file_mentions(text)  # 對話模式讀不到電腦上的檔案
                 r = self.session.ask(self.note + text, files, mode, role, images or [], split)
             self.note = ""
@@ -965,6 +983,8 @@ class Desk:
         self.projects: list[dict] = []
         self.settings: dict = {}  # 這個人的設定(帳號選單的回答語言),存在 store/settings.json
         self.focus: str | None = None  # 畫面上最近打開的對話(開事件串流時記下)
+        # MCP 連接器(會在這台電腦上執行程式):只有自己的桌面有,訪客、多人模式沒有
+        self.connectors = mcp_client.Connectors(store) if store and can_add_projects else None
         if store:
             self._load()
         # 預設專案(.env 的 AGENT_WORKSPACE;VS Code 外掛是它開著的資料夾)。桌面版和外掛共用同一個 store,
@@ -1200,6 +1220,7 @@ class Desk:
 
     def _attach(self, cid: str, hub: Hub) -> Hub:
         hub.on_event = lambda kind: self.save(cid) if kind in SAVE_ON else None
+        hub.connectors = self.connectors
         if self.store:
             self._read_settings()
         if self.lang != "zh-TW":
@@ -1560,6 +1581,11 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                     self._json(200, {"items": desk.knowledge_listing(paths=not self._guest()),  # 訪客不給電腦上的路徑
                                      "can_add": desk.can_add_knowledge, "semantic": desk.embed is not None,
                                      "backend": self._hub().session.registry.backend})
+            elif url.path == "/api/connectors":  # 連接器頁面(MCP):只有這台電腦能看、能改 —— 連接器是在這台電腦上執行的程式
+                if self._token_ok(self.headers.get("X-Token")):
+                    conn = self._desk().connectors if self._local() else None
+                    self._json(200, {"items": conn.listing() if conn else [], "can_add": conn is not None,
+                                     "company_ok": guard.COMPANY_OK})
             elif url.path == "/api/outputs":  # 成品
                 if self._token_ok(self.headers.get("X-Token")):
                     self._json(200, self._desk().outputs())
@@ -1728,6 +1754,25 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             if path == "/api/project/upload":  # 拖進來的資料夾,分批傳上來存成副本
                 return self._guarded(lambda: desk.upload_project(str(body.get("name", "")), body.get("files"),
                                                                  body.get("upload") or None, bool(body.get("done")), public))
+            if path.startswith("/api/connectors/"):  # MCP 連接器:只有這台電腦能改(連接器是在這台電腦上執行的程式)
+                conn = desk.connectors
+                if conn is None or team or not self._local():
+                    return self._json(403, {"error": "只有這台電腦可以設定連接器"})
+                cid, action = str(body.get("id", "")), path.rsplit("/", 1)[1]
+                added = lambda items: {"added": [{"id": x["id"], "name": x["name"]} for x in items]}  # noqa: E731
+                if action == "add":  # 貼上的設定(Claude Desktop 的 mcpServers 格式也收)
+                    return self._guarded(lambda: added(conn.add(str(body.get("config", "")), public)))
+                if action == "demo":  # 示範連接器(demo_mcp/tickets_server.py):加過就不再加
+                    if any(any(a.endswith("tickets_server.py") for a in x.get("args", [])) for x in conn.items):
+                        return self._json(200, {"added": []})
+                    return self._guarded(lambda: added(conn.add(mcp_client.demo_config(), public)))
+                if action == "test":  # 重新啟動、重新讀工具清單
+                    item = conn.restart(cid)
+                    return self._json(200 if item else 404, item or {"error": "找不到這個連接器"})
+                if action in ("toggle", "remove"):
+                    ok = conn.set_enabled(cid, bool(body.get("on"))) if action == "toggle" else conn.remove(cid)
+                    return self._json(200 if ok else 404, {} if ok else {"error": "找不到這個連接器"})
+                return self._json(404, {"error": "沒有這個頁面"})
             hub = self._hub()
             if path == "/api/ask":
                 text = str(body.get("text", "")).strip()

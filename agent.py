@@ -980,6 +980,25 @@ def open_knowledge(folders: list[str], registry: ModelRegistry) -> list:
     return [kb for kb in kbs if kb.chunks]
 
 
+def open_connectors(config_file: str) -> list:
+    """CLI 的 --mcp:啟動設定檔裡的連接器,回傳它們的工具(程式結束時一起關掉)。"""
+    import mcp_client
+    if not guard.COMPANY_OK and not ask_yes_no("現在用的是 NVIDIA 試用平台(NVIDIA 可以收集送出的內容):"
+                                               "這些連接器不會碰到公司資料嗎?"):
+        raise SystemExit("沒有啟動連接器")
+    connectors = mcp_client.Connectors(None)
+    try:
+        connectors.add(Path(config_file).read_text(encoding="utf-8"), public=True)
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"連接器設定讀不了:{e}")
+    tools = connectors.tools()
+    for it in connectors.items:
+        if err := connectors.errors.get(it["id"]):
+            print(f"連接器「{it['name']}」沒有接上:{err}")
+    print(f"連接器:{len(connectors.servers)} 個接上、{len(tools)} 個工具(每次使用都會先問你)")
+    return tools
+
+
 def web_status(allow_web: bool) -> str:
     if not allow_web:
         return "上網:關"
@@ -995,6 +1014,8 @@ def main() -> None:
     ap.add_argument("--whole", action="store_true", help="整檔內嵌、不給工具、一次回答(寫文件 / 全檔審查用)")
     ap.add_argument("--kb", action="append", default=[], metavar="資料夾",
                     help="知識庫:這個資料夾的文件建成索引(只重算改過的),回答時照意思找相關段落;可以給好幾個")
+    ap.add_argument("--mcp", metavar="設定檔",
+                    help="MCP 連接器的設定檔(JSON,Claude Desktop 的 mcpServers 格式也可以);每次用連接器都會先問你")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -1012,6 +1033,8 @@ def main() -> None:
     if args.kb and (kbs := open_knowledge(args.kb, registry)):
         toolbox.bench().knowledge = kbs
         tools = tools + [knowledge.search_knowledge]
+    if args.mcp:
+        tools = tools + open_connectors(args.mcp)
 
     def new_session() -> AgentSession:
         return AgentSession(registry, quota, role=args.role, thinking=thinking, whole=args.whole, tools=tools,

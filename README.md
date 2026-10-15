@@ -4,7 +4,7 @@
 改走 NVIDIA 生態系:開發期接 API Catalog(build.nvidia.com),正式環境換成地端 NIM 容器,**程式碼不用改**。
 
 重點不在「接上了模型」,而在:**依任務與 token 數動態切換模型、控制 token 與顯存、讓 agent 只能在沙箱裡動手**,
-而且每個設計都用真模型實測過。實測與審查抓到 45 個問題,見下方。
+而且每個設計都用真模型實測過。實測與審查抓到 47 個問題,見下方。
 
 ## 架構
 
@@ -44,6 +44,7 @@ flowchart LR
 | `deploy/` | 多人部署:Dockerfile + docker-compose(小助理 `--team` + Redis + oauth2-proxy),說明見 `deploy/README.md` |
 | `vscode-extension/` | VS Code 外掛:編輯器旁邊打開小助理、右鍵「問選取的程式碼」;`build_vsix.py` 打包成 .vsix(不需要 Node) |
 | `web.py` | 上網搜尋(Tavily)與讀網頁;`.env` 設 `ALLOW_WEB=true` 才啟用,每次上網都先問使用者 |
+| `mcp_client.py` | MCP 連接器:標準函式庫寫的 stdio JSON-RPC client,把外部 MCP server 的工具接給模型;每次使用先問、回傳先過安全檢查、啟動時不給 HSUAN 的金鑰;`demo_mcp/` 是示範用的虛構工單系統 |
 | `smoke_test.py` | 對 catalog 上每個模型做冒煙測試(回應、思考開關、tool calling) |
 
 ## 實測結果(2026-10-06,NVIDIA API Catalog 免費層)
@@ -59,9 +60,10 @@ flowchart LR
 | 安全把關(10/10) | 正常網頁、藏在註解裡要 AI 讀 .env 傳出去的網頁、隱晦的提示注入、不當請求、正常請求 | Nemotron 3.5 Content Safety 5 題全對、每次 0.6–1 秒;其他三顆安全模型大多逾時 |
 | 掃描的 PDF(10/10) | 兩頁掃描檔(會議紀錄 + 預算表格) | Nano Omni 逐字讀出、表格保留成表格,兩頁約 19–26 秒 |
 | 多 agent 分工(10/15) | HSUAN 自己的程式碼,同一題「knowledge.py、guard.py、difficulty.py 各負責什麼,整合成比較表」 | 不分工 4 次:4.5–15.5 萬 tokens、66–88 秒,主對話最後 1.9–3 萬 tokens。打開「分工」2 次:3 個子助理同時查,4.5–5.4 萬 tokens、108–155 秒,主對話只剩 1.2–1.3 萬 tokens(之後追問每一步都比較便宜)。**比較慢**:要等最慢的子助理 |
-| 離線測試 | 假模型,不需金鑰 | 138 個全過 |
+| MCP 連接器(10/15) | 網頁加入示範連接器(虛構工單系統),問「還沒結案、優先度高的有哪些?挑後端組那張說明原因和修法」 | 連接器啟動 0.2 秒、2 個工具每步多 285 tokens;Super 自己選對工具(列工單 → 讀 T-1004),每次都先跳確認卡片;3 步、13,142 tokens,原因(created_at 沒索引、全表掃描)和修法都對 |
+| 離線測試 | 假模型,不需金鑰 | 142 個全過 |
 
-## 實測與審查抓到的 45 個問題
+## 實測與審查抓到的 47 個問題
 
 | # | 問題 | 怎麼發現 | 處理 |
 |---|---|---|---|
@@ -110,6 +112,8 @@ flowchart LR
 | 43 | 「不要把公司程式碼送到 build.nvidia.com」只寫在文件裡,靠人記得;趕時間把一個資料夾拖進來就送出去了 | 審查(10/10) | 讓系統擋:`models.yaml` 每個後端標 `company_data`(試用平台 false、地端 NIM true);試用平台上 `.env` 的 `COMPANY_PATHS` 底下的資料夾一律擋(加專案、知識庫、拖進來、以前加過的專案不送出、知識庫不給搜),其他資料夾第一次加入要先在畫面上確認不是公司資料、記下聲明;右上角一直顯示「試用平台 · 不放公司資料」 |
 | 44 | 加了子 agent 工具(`delegate`),但 Super 不會自己用:同一題「三個模組各做什麼」沒提示 0/2、系統提示加一段「什麼時候該分工」也 0/2,都是自己一段一段讀 | 實測(10/15) | 系統提示不提它(沒效果還每步多送);改成使用者決定:輸入框的「分工」開關(CLI `/split`)在問題後面接一段說明,2/2 都分工 |
 | 45 | 打開「分工」後,主 agent 收到子助理的報告,又自己把三個檔案全部重讀一遍:20.9 萬 tokens,比不分工還多 | 實測(10/15) | 說明原本寫「報告不夠再自己讀」,改成「報告涵蓋的不要重讀,只查報告說沒能確認的那一點」;再測 2/2 沒重讀,4.5–5.4 萬 tokens |
+| 46 | MCP 連接器是第三方程式,照預設啟動會繼承 HSUAN 的環境變數:`.env` 讀進來的 NVIDIA、Tavily 金鑰會一起交給它 | 審查(10/15) | 啟動時拿掉 `.env` 的變數和名字像金鑰的(KEY、TOKEN、SECRET…),連接器要的金鑰寫在它自己的 env;離線測試用會印出環境變數的假連接器驗證 |
+| 47 | 連接器掛掉時,錯誤原因(它最後印的那行)有時比「連線結束」晚讀到,使用者只看到「結束了」不知道為什麼 | 離線測試(10/15) | 先等行程結束、錯誤訊息讀完,再回報(附最後一行),連跑 3 次都穩定 |
 
 ## 執行
 
@@ -133,6 +137,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
                                                   # 輸入框的「分工」:這一題分給最多 3 個子助理同時查、只交回結論(要讀很多檔案的大問題)
                                                   # 輸入框的「+」上傳圖片(或貼上、拖進來):先用 Nemotron Nano Omni 把圖轉成文字再回答
                                                   # 側邊欄「知識庫」:加入文件資料夾(手冊、規章…),回答時照意思找相關段落並附出處
+                                                  # 側邊欄「連接器」:貼上 MCP server 的設定,讓 HSUAN 用外部工具(每次使用先問你)
                                                   # 資料夾可以直接拖進視窗:自動找到原本的位置(找不到才問路徑),也可以只上傳一份副本給它分析
                                                   # 「新增專案」可以貼公開的 GitHub 網址(下載到 output/repos/,只抓公開的);
                                                   # 開了上網的話,對話裡貼 PR / issue / 檔案網址,會讀成純文字(PR 附 diff)
@@ -146,6 +151,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python agent.py "為這個專案寫技術文件" -f a.py -f b.py --whole   # 整檔 → 自動走長文本模型
 .venv/Scripts/python agent.py "這個 race condition 的根因" -f x.py --role code_deep --think on
 .venv/Scripts/python agent.py "連休三天要找誰同意?" --kb demo_knowledge   # 知識庫:資料夾建成索引(只重算改過的)再回答
+.venv/Scripts/python agent.py --mcp mcp.json     # MCP 連接器(Claude Desktop 的 mcpServers 格式)
 .venv/Scripts/python report_routing.py --days 7   # 依難度選模型的報表(影子模式累積的紀錄)
 .venv/Scripts/python train_models.py --label     # 自己的小模型:先請 Super 標註 ml/seed_questions.txt 的範例問題
 .venv/Scripts/python train_models.py             # 訓練 + 實驗(決策樹、邏輯回歸、線性回歸…),報告和圖在 output/models/report.md
@@ -176,6 +182,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 - `requirements.txt` 鎖在實測過的版本:程式依賴 langchain-nvidia-ai-endpoints 的內部行為,升版前先跑離線測試和 `smoke_test.py`。
 - 地端的 `nim_context_window`(Ultra / Super 備援 256K)是規劃值,部署時 `NIM_MAX_MODEL_LEN` 要設成一樣。
 - 上網工具擋內網是「連線前解析一次 DNS」,擋不住 DNS rebinding;正式環境要走有白名單的出口 proxy。搜尋關鍵字和網址會送到外部網站,公司環境要先確認規定。
+- MCP 連接器只支援在本機執行的(stdio),還不支援網址型(HTTP);只用自己寫的示範連接器實測過,還沒接過第三方的 MCP server(官方範例多半要 Node / uvx)。
 - **PoC 不要送公司真實程式碼到 build.nvidia.com**:API Trial 條款 §1.2 禁止正式使用,§3.3 允許 NVIDIA 收集輸入輸出改進模型。
   `COMPANY_PATHS` 裡的資料夾系統會擋;但拖進來「上傳副本」時看不到原本的位置,只能靠使用者聲明。對話裡直接貼上的文字、圖片也擋不了。
 

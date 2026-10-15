@@ -3211,3 +3211,155 @@ def test_web_split_switch_reaches_the_model(webui_app):
     user = next(e for e in events if e["kind"] == "user")
     assert user["split"] is True and user["text"] == "分別查 a.py、b.py、c.py"
     assert "<split>" in app.seen[0][1][-1].content
+
+
+# ---------- MCP 連接器(mcp_client.py) ----------
+
+def test_mcp_config_formats():
+    """貼上的設定:Claude Desktop 的 mcpServers(好幾個)、單一個都收;網址型、沒有 command、不是 JSON 都講清楚。"""
+    import mcp_client
+    two = mcp_client.parse_config('{"mcpServers": {"git": {"command": "uvx", "args": ["mcp-server-git"]},'
+                                  ' "db": {"command": "python", "args": ["db.py"], "env": {"DB_URL": "x"}}}}')
+    assert [(x["name"], x["command"], x["args"], x["env"]) for x in two] == \
+        [("git", "uvx", ["mcp-server-git"], {}), ("db", "python", ["db.py"], {"DB_URL": "x"})]
+    assert mcp_client.parse_config('{"name": "t", "command": "node", "args": ["s.js"]}')[0]["name"] == "t"
+    for bad, msg in [("{not json", "不是合法的 JSON"), ('{"mcpServers": {"x": {"url": "https://a"}}}', "缺少 command"),
+                     ('{"command": "x", "type": "http"}', "還不支援網址型"), ('{"command": "x", "args": "a b"}', "args 要是清單"),
+                     ("[1]", "要是一個 JSON 物件"), ('{"mcpServers": {}}', "沒有連接器")]:
+        with pytest.raises(ValueError, match=msg):
+            mcp_client.parse_config(bad)
+
+
+def test_mcp_demo_connector_end_to_end(workspace, tmp_path_factory):
+    """10/15 MCP 連接器:真的啟動 demo_mcp/tickets_server.py(子行程,stdio JSON-RPC),工具接進 agent:
+    模型呼叫 → 先問使用者 → 連接器回傳 → 模型回答;使用者不允許就不呼叫。設定存檔、重開還在;移除就關掉行程。"""
+    import mcp_client
+    store = tmp_path_factory.mktemp("state")
+    conn = mcp_client.Connectors(store)
+    try:
+        [item] = conn.add(mcp_client.demo_config())
+        tools_ = conn.tools()
+        assert [t.name for t in tools_] == ["tickets__list_tickets", "tickets__get_ticket"]
+        assert all(t.metadata == {"mcp": "tickets"} and t.description.startswith("[連接器 tickets]") for t in tools_)
+        asked = []
+        tools.bench().confirm = lambda action, detail: asked.append((action, detail)) or len(asked) == 1  # 第二次不允許
+        call = lambda i: {"name": "tickets__get_ticket", "args": {"ticket_id": "T-1004"}, "id": f"m{i}"}  # noqa: E731
+        reg, _ = scripted_registry([ai(tool_calls=[call(1)]), ai(tool_calls=[call(2)]), ai("orders 要加索引")])
+        session = AgentSession(reg, TokenQuota(10**6, 2), tools=tools.ALL_TOOLS + tools_)
+        assert session.ask("T-1004 怎麼修?").answer == "orders 要加索引"
+        outs = [m.content for m in session.messages if isinstance(m, ToolMessage)]
+        assert "orders 表依 created_at 排序、沒有索引" in outs[0] and outs[1] == mcp_client.DENIED
+        assert asked[0] == ("使用連接器「tickets」的 get_ticket", '{"ticket_id": "T-1004"}')
+        [row] = conn.listing()
+        assert row["state"] == "running" and row["server"]["name"] == "demo-tickets" and row["tokens"] > 0
+        assert [t["name"] for t in row["tools"]] == ["list_tickets", "get_ticket"]
+        assert [x["name"] for x in mcp_client.Connectors(store).items] == ["tickets"]  # 存檔了,重開還在
+        server = conn.servers[item["id"]]
+        assert conn.remove(item["id"]) and not server.alive and conn.items == []
+    finally:
+        conn.close()
+
+
+FAKE_MCP = """
+import json, os, sys, time
+out = sys.stdout.buffer
+def send(msg):
+    out.write((json.dumps(msg) + "\\n").encode()); out.flush()
+for raw in sys.stdin.buffer:
+    msg = json.loads(raw)
+    rid, method = msg.get("id"), msg.get("method")
+    if rid is None:
+        continue
+    if method == "initialize":
+        out.write(b"not json: some servers log to stdout\\n")
+        send({"jsonrpc": "2.0", "method": "notifications/message", "params": {"level": "info", "data": "hi"}})
+        send({"jsonrpc": "2.0", "id": "s1", "method": "ping"})
+        send({"jsonrpc": "2.0", "id": rid, "result": {"protocolVersion": "2025-06-18", "capabilities": {},
+                                                      "serverInfo": {"name": "fake"}}})
+    elif method == "tools/list":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"tools": [{"name": n, "inputSchema": {"type": "object"}}
+                                                                for n in ("env", "slow", "crash")]}})
+    elif method == "tools/call":
+        name = msg["params"]["name"]
+        if name == "env":
+            send({"jsonrpc": "2.0", "id": rid, "result": {"content": [{"type": "text", "text": json.dumps(sorted(os.environ))}]}})
+        elif name == "slow":
+            time.sleep(3)
+        else:
+            sys.stderr.write("boom: database is down\\n"); sys.stderr.flush(); sys.exit(1)
+"""
+
+
+def test_mcp_connector_gets_no_hsuan_keys_and_failures_are_reported(tmp_path, monkeypatch):
+    """連接器是第三方程式:啟動時拿掉 .env 讀進來的、名字像金鑰的環境變數(NVIDIA_API_KEY 等),連接器自己設定的 env 照給。
+    伺服器印到 stdout 的雜訊、通知、反過來問 ping 都不影響;逾時、伺服器掛掉回清楚的錯誤(含它最後的錯誤訊息)。"""
+    import sys
+    import mcp_client
+    script = tmp_path / "fake_mcp.py"
+    script.write_text(FAKE_MCP, encoding="utf-8")
+    for k, v in {"NVIDIA_API_KEY": "nvapi-secret", "TAVILY_API_KEY": "tvly", "GITHUB_TOKEN": "ghp",
+                 "HARMLESS_SETTING": "ok"}.items():
+        monkeypatch.setenv(k, v)
+    server = mcp_client.McpServer("fake", sys.executable, [str(script)], env={"SERVER_API_KEY": "its-own"})
+    server.start()
+    try:
+        names = json.loads(mcp_client.result_text(server.call("env", {})))
+        assert "HARMLESS_SETTING" in names and "SERVER_API_KEY" in names and "PATH" in {n.upper() for n in names}
+        assert not {"NVIDIA_API_KEY", "TAVILY_API_KEY", "GITHUB_TOKEN"} & set(names)
+        monkeypatch.setattr(mcp_client, "CALL_TIMEOUT", 0.5)
+        with pytest.raises(mcp_client.McpError, match="秒沒有回應"):
+            server.call("slow", {})
+        monkeypatch.setattr(mcp_client, "CALL_TIMEOUT", 15)  # 伺服器還在睡,睡完才會處理下一個
+        with pytest.raises(mcp_client.McpError, match="結束了.*boom: database is down"):
+            server.call("crash", {})
+        assert not server.alive
+    finally:
+        server.close()
+    bad = mcp_client.Connectors(None)
+    bad.add('{"name": "broken", "command": "this-program-does-not-exist-hsuan"}')
+    assert bad.tools() == [] and "啟動不了" in bad.errors[bad.items[0]["id"]]
+    assert bad.listing()[0]["state"] == "error"
+
+
+def test_connectors_page_api_and_tools_reach_the_model(workspace, tmp_path_factory, monkeypatch, trial_platform):
+    """網頁「連接器」頁:試用平台上要先聲明不碰公司資料(409 → public);示範連接器加一次就好;測試 = 啟動並列出工具;
+    關掉的不給模型;只有這台電腦能看、能改。對話每一輪開始前把連接器的工具接上,模型呼叫、使用者允許後拿到結果。"""
+    import httpx
+    import webui
+    trial_platform()
+    store = tmp_path_factory.mktemp("state")
+    call = {"name": "tickets__list_tickets", "args": {"status": "open"}, "id": "c1"}
+    reg, seen = scripted_registry([ai(tool_calls=[call]), ai("有三張未結案"), ai("好")])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=store)
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    post = lambda path, body: httpx.post(base + path, json=body, headers=h, timeout=30)  # noqa: E731
+    try:
+        r = post("/api/connectors/demo", {})
+        assert r.status_code == 409 and r.json()["need"] == "declare"
+        [added] = post("/api/connectors/demo", {"public": True}).json()["added"]
+        assert post("/api/connectors/demo", {"public": True}).json() == {"added": []}  # 加過就不再加
+        assert post("/api/connectors/add", {"config": "{bad", "public": True}).status_code == 400
+        item = post("/api/connectors/test", {"id": added["id"]}).json()
+        assert item["state"] == "running" and len(item["tools"]) == 2 and item["env"] == []
+        listed = httpx.get(base + "/api/connectors", headers=h).json()
+        assert listed["can_add"] and listed["items"][0]["name"] == "tickets"
+        cid = httpx.post(base + "/api/conv/new", json={}, headers=h).json()["id"]
+        desk.hubs[cid].always.add("使用連接器「tickets」的 list_tickets")  # 等於使用者按過「之後都允許」
+        httpx.post(base + "/api/ask", json={"text": "有哪些未結案的工單?"}, headers={**h, "X-Conv": cid})
+        events = _events_until(base, cid, "done")
+        assert "T-1001 | 登入頁在 Safari 顯示空白" in next(e["output"] for e in events if e["kind"] == "tool_done")
+        assert "tickets__list_tickets" in seen[0][2]
+        assert post("/api/connectors/toggle", {"id": added["id"], "on": False}).status_code == 200
+        httpx.post(base + "/api/ask", json={"text": "再一次"}, headers={**h, "X-Conv": cid})
+        _events_until(base, cid, "done", 2)
+        assert "tickets__list_tickets" not in seen[-1][2]  # 關掉的連接器不給模型
+        monkeypatch.setattr(webui, "LOCAL_ADDRS", set())  # 不是這台電腦:不能看、不能改
+        assert "items" not in httpx.get(base + "/api/connectors", headers=h).json()
+        assert post("/api/connectors/remove", {"id": added["id"]}).status_code == 403
+        assert desk.connectors.item(added["id"])  # 還在
+    finally:
+        server.shutdown()
+        server.server_close()
+        desk.connectors.close()

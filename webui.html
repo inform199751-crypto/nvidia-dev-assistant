@@ -320,6 +320,8 @@
   .none { color: var(--faint); font-size: 14px; padding: 14px; border: 1px dashed var(--line); border-radius: 14px; text-align: center; }
   .page pre.rules { background: var(--code); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
                     white-space: pre-wrap; font: 13px/1.6 ui-monospace, Consolas, monospace; max-height: 320px; overflow: auto; }
+  .page textarea.config { display: block; width: 100%; min-height: 130px; resize: vertical; background: var(--code); color: var(--text);
+                          border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font: 13px/1.6 ui-monospace, Consolas, monospace; }
   .field { display: flex; gap: 8px; margin-top: 10px; }
   .field input { flex: 1; min-width: 0; font: inherit; font-size: 14px; padding: 7px 12px; border: 1px solid var(--line);
                  border-radius: 10px; background: var(--bg); color: var(--text); }
@@ -429,6 +431,9 @@
       </button>
       <button type="button" class="nav-btn" data-page="knowledge">
         <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3.5h9.5A2.5 2.5 0 0116 6v10.5H6.5A2.5 2.5 0 014 14z"/><path d="M4 14a2.5 2.5 0 012.5-2.5H16M8 7h5"/></svg>知識庫
+      </button>
+      <button type="button" class="nav-btn" data-page="connectors">
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 2.5V6M13 2.5V6M5 6h10v3a5 5 0 01-10 0zM10 14v3.5"/></svg>連接器
       </button>
       <button type="button" class="nav-btn" data-page="custom">
         <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="6" width="15" height="10.5" rx="2"/><path d="M7 6V4.5A1.5 1.5 0 018.5 3h3A1.5 1.5 0 0113 4.5V6M2.5 10.5h15"/></svg>自訂
@@ -1113,7 +1118,7 @@ async function loadPending() {
 }
 
 // ---------- 側邊欄的頁面 ----------
-const PAGE_TITLES = { outputs: "成品", pending: "待命", knowledge: "知識庫", custom: "自訂", more: "更多", settings: "設定",
+const PAGE_TITLES = { outputs: "成品", pending: "待命", knowledge: "知識庫", connectors: "連接器", custom: "自訂", more: "更多", settings: "設定",
                       help: "取得協助", changelog: "更新紀錄", about: "了解更多" };
 function openPage(name, focus) {  // focus:打開後捲到這個元素(例如設定頁的「手機」)
   page = name; closeSide();
@@ -1186,7 +1191,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/15", ["多 agent 分工:輸入框多了「分工」開關,打開後 HSUAN 把這一題彼此獨立的部分分給最多 3 個子助理同時查,每個只交回結論(對話不會被一大堆檔案塞滿);畫面上看得到每個子助理正在做什麼"]],
+  ["10/15", ["連接器(MCP):側邊欄多了「連接器」,貼上 MCP server 的設定就能讓 HSUAN 用外部工具(工單系統、資料庫…);每次使用都會先問你,有示範連接器(虛構的工單系統)可以試",
+             "多 agent 分工:輸入框多了「分工」開關,打開後 HSUAN 把這一題彼此獨立的部分分給最多 3 個子助理同時查,每個只交回結論(對話不會被一大堆檔案塞滿);畫面上看得到每個子助理正在做什麼"]],
   ["10/10", ["公司資料保護:用的是 NVIDIA 試用平台時,右上角一直顯示「試用平台 · 不放公司資料」;.env 的 COMPANY_PATHS 寫的公司資料夾一律擋下(加專案、知識庫、拖進來、以前加過的都一樣),其他資料夾第一次加入要先確認不是公司資料",
              "可以把資料夾直接拖進視窗:放在桌面、文件、下載裡的會自動找到原本的位置(HSUAN 改的東西按「套用」才寫進去);找不到才問路徑,留空就上傳一份副本給它分析",
              "設定 → 外觀多了 7 種參考車廠官網的配色:黑金、賽道紅、深海藍、碳纖黑、純黑白、黃黑、電光藍;拿掉淺色、跟著系統",
@@ -1380,6 +1386,59 @@ function renderKnowledge(box, data) {
   clearTimeout(kbTimer);  // 建索引中:每 1.5 秒看一次進度
   if (data.items.some((it) => it.state === "indexing")) kbTimer = setTimeout(() => page === "knowledge" && renderPage(), 1500);
 }
+// ---------- 連接器頁面(MCP):外部工具接給 HSUAN ----------
+const MCP_EXAMPLE = '{\n  "mcpServers": {\n    "名稱": { "command": "python", "args": ["server.py"], "env": { "API_KEY": "..." } }\n  }\n}';
+let mcpDraft = "";  // 還沒按「加入」的設定(頁面重畫不要弄丟)
+function renderConnectors(box, data) {
+  box.appendChild(el("p", "lead", "連接器讓 HSUAN 使用外部的工具,例如工單系統、資料庫、GitHub。用的是 MCP 這個業界標準:"
+    + "很多服務都做好了 MCP server,把它說明文件裡的設定貼到下面就能接上(Claude Desktop 的 mcpServers 格式也可以)。"
+    + "HSUAN 每次要用連接器都會先問你,回傳的內容會先經過安全檢查。"));
+  if (!data.can_add) { box.appendChild(el("div", "none", "只有這台電腦可以設定連接器(連接器是在這台電腦上執行的程式)。")); return; }
+  box.appendChild(el("p", "lead", "連接器是在這台電腦上執行的程式,只加你信任的;HSUAN 啟動它時不會把 .env 裡的金鑰傳給它,"
+    + "它要的金鑰請寫在它自己的 env。每個工具的說明每一步都要送給模型,工具越多越花 token。"
+    + (data.company_ok ? "" : "現在用的是 NVIDIA 試用平台:連接器回傳的內容會送給模型,只接不會碰到公司資料的連接器。")));
+  section(box, "你的連接器");
+  if (!data.items.length) box.appendChild(el("div", "none", "還沒有連接器。可以先加「示範連接器」(虛構的工單系統)試試看。"));
+  else {
+    const list = rows(box);
+    for (const it of data.items) {
+      const act = (path, body) => async () => {
+        const x = await api(path, { id: it.id, ...body });
+        if (!x.ok) alert(x.data.error || "失敗");
+        renderPage();
+      };
+      const sub = !it.enabled ? "已關閉:對話裡不會用到"
+        : it.state === "running" ? `已接上 · ${it.tools.length} 個工具 · 每一步約多 ${it.tokens.toLocaleString()} tokens`
+        : it.state === "error" ? `沒有接上:${it.error}` : "還沒啟動(對話裡第一次用到才啟動,或按「測試」)";
+      const test = button("測試", "pill", async (ev) => { ev.target.textContent = "啟動中…"; await act("/api/connectors/test")(); });
+      test.disabled = !it.enabled;
+      const r = row(list, it.name, sub, [test,
+        button(it.enabled ? "關閉" : "打開", "pill", act("/api/connectors/toggle", { on: !it.enabled })),
+        button("移除", "pill", () => confirm(`移除連接器「${it.name}」?`) && act("/api/connectors/remove")())]);
+      const g = r.querySelector(".grow");
+      if (it.state === "error") g.querySelector("small").classList.add("error");
+      g.appendChild(el("small", "", it.command + (it.env.length ? `(env:${it.env.join("、")})` : "")));
+      if (it.tools.length) g.appendChild(el("small", "", "工具:" + it.tools.map((t) => t.name).join("、")));
+    }
+  }
+  section(box, "加入連接器");
+  const ta = box.appendChild(el("textarea", "config"));
+  ta.placeholder = MCP_EXAMPLE; ta.value = mcpDraft; ta.spellcheck = false;
+  ta.setAttribute("aria-label", "連接器設定(JSON)");
+  ta.oninput = () => { mcpDraft = ta.value; };
+  const add = async (path, body) => {
+    const x = await apiDeclared(path, body);
+    if (x.cancelled) return;
+    if (!x.ok) return alert(x.data.error || "加入失敗");
+    if (path.endsWith("/add")) mcpDraft = "";
+    for (const c of x.data.added || []) await api("/api/connectors/test", { id: c.id });  // 馬上啟動一次,看接不接得上
+    renderPage();
+  };
+  const actions = box.appendChild(el("div", "actions"));
+  actions.style.marginTop = "10px";
+  actions.appendChild(button("加入", "pill dark", () => ta.value.trim() ? add("/api/connectors/add", { config: ta.value }) : ta.focus()));
+  actions.appendChild(button("加入示範連接器(虛構的工單系統)", "pill", () => add("/api/connectors/demo", {})));
+}
 
 // ---------- token 用量(側邊欄左下角、設定頁) ----------
 const fmtTok = (n) => n >= 10000 ? `${(n / 10000).toFixed(n >= 1000000 ? 0 : 1).replace(/\.0$/, "")} 萬` : Number(n).toLocaleString();
@@ -1408,7 +1467,8 @@ function row(list, name, sub, actions) {
 async function renderPage() {
   const box = $("page-in"), name = page;
   const r = name === "outputs" ? await api("/api/outputs") : name === "custom" ? await api("/api/instructions")
-    : name === "settings" ? await api("/api/phone") : name === "knowledge" ? await api("/api/knowledge") : null;
+    : name === "settings" ? await api("/api/phone") : name === "knowledge" ? await api("/api/knowledge")
+    : name === "connectors" ? await api("/api/connectors") : null;
   if (page !== name) return;
   box.innerHTML = "";
   box.appendChild(el("h2", "", PAGE_TITLES[name]));
@@ -1459,6 +1519,8 @@ async function renderPage() {
     }
   } else if (name === "knowledge") {
     renderKnowledge(box, r.data);
+  } else if (name === "connectors") {
+    renderConnectors(box, r.data);
   } else if (name === "custom") {
     box.appendChild(el("p", "lead", "讓 HSUAN 照你的習慣做事。"));
     if (r.data.chat) {

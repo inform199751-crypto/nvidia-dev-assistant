@@ -23,6 +23,7 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 .venv/Scripts/python agent.py "test_add 失敗了,找出 bug 並提出修正" -f calc.py
 .venv/Scripts/python agent.py "寫技術文件" -f a.py -f b.py --whole      # 整檔模式
 .venv/Scripts/python agent.py "..." --role code_deep --think on
+.venv/Scripts/python agent.py --mcp mcp.json                             # 接 MCP 連接器(Claude Desktop 的 mcpServers 格式)
 ```
 
 - 沒有 linter / formatter 設定。
@@ -105,6 +106,8 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 **掃描的 PDF**:`documents.OCR`(`agent.page_reader(registry)`,跟看圖同一顆模型、`OCR_PROMPT` 要求保留繁體)讀沒有文字層的頁:pypdf 取頁面上最大的圖、Pillow 縮到 `OCR_SIDE` 存 JPEG;`_ocr_cache` 依檔案大小 / 時間快取;讀不出來的頁寫「這次讀不出來」,知識庫遇到就記成錯誤、下次更新再試(`knowledge._update` 的 keep 排除有 error 的檔案)。tokens 透過 `agent._billing`(ContextVar,`ask` 設成目前的 session)算進對話和額度;知識庫的背景執行緒沒有 session,不算。
 
 **多 agent 分工**(10/15,`agent.delegate` 工具 → `AgentSession.delegate`):主 agent 把彼此獨立的調查交給最多 `MAX_SUBAGENTS` 個子 agent,`ThreadPoolExecutor`(`SUBAGENT_PARALLEL`,測試設 1 讓劇本照順序)同時跑。子 agent 是 `sub=True` 的 `AgentSession`:`SUBAGENT_PROMPT`、只留 `SUBAGENT_TOOLS`(唯讀,沒有 delegate 所以不會遞迴)、步數上限 `limits.max_subagent_steps`、**不進 `quota.slot`**(主 agent 那一輪已經佔了,`max_concurrent_per_user` 是 2,子 agent 再佔會丟 QuotaExceeded)、`stream=False`、直接呼叫 `_ask`(不摘要、不判斷難度、不寫 routing_log)。工具拿目前的 session 靠 `_billing` ContextVar;子 agent 的執行緒要自己 `toolbox.using(wb)`、設 `_billing`。用量:子 agent 自己扣額度,結束時加進主 session 的 `tokens_used` 和 `sub_tokens`(`_ask` 回傳時加進這一輪),要拿鎖。事件:子 agent 的 tool / notice 轉成 `sub`(`agent`、`what`,不能叫 `kind`:`_emit` 的參數名)、結束送 `sub_done`(`status`);網頁 `delegate` 工具列畫成每個子助理一列。只綁在 `prepare()` 的工具(`AgentSession` 預設的 `ALL_TOOLS` 沒有,測試不受影響);對話模式(`CHAT_TOOLS`)、訪客(`GUEST_BLOCKED_TOOLS`)沒有。工具定義約 200 tokens。**什麼時候分工由使用者決定**:`ask(split=True)`(網頁輸入框的「分工」開關、CLI `/split`,可以跟「先規劃」一起開)在問題後面接 `SPLIT_NOTE`(沒綁 delegate 就不接)。10/15 實測 Super 不會自己用 delegate(沒提示 0/2、系統提示加說明也 0/2),所以系統提示不提它;SPLIT_NOTE 要寫「報告涵蓋的不要重讀」,不然主 agent 收到報告又把檔案全部重讀一次(20.9 萬 tokens)。
+
+**MCP 連接器**(10/15,`mcp_client.py`,標準函式庫自己寫的 stdio JSON-RPC client,不裝 `mcp` 套件):`McpServer` 一個子行程,背景執行緒依 id 把回應交給 `Future`;只做 initialize → notifications/initialized → tools/list(分頁)→ tools/call,伺服器問 ping 回空結果、其他回 -32601;stdout 不是 JSON 的行跳過;結束時先等行程和 stderr 讀完再讓等著的請求失敗(錯誤訊息帶 stderr 最後一行)。**啟動時 `child_env` 拿掉 .env 的變數和名字像金鑰的**(不然 NVIDIA 金鑰會交給第三方程式),連接器自己的 env 照給;Windows 的 .cmd(npx、uvx)用 `cmd /c`、`CREATE_NO_WINDOW`、關閉用 `taskkill /T`。`make_tools` 轉成 `StructuredTool`(`args_schema` 直接用 MCP 的 JSON schema;名稱 `連接器__工具`,只留英數字、最多 64 字;說明截 300 字、每個連接器最多 20 個工具;`metadata={"mcp": 名稱}`),呼叫前 `web._confirm`(動作名「使用連接器「X」的 工具」,「之後都允許」以它為單位),回傳過 `guard.web_content`。`Connectors`(`store/connectors.json`)是 Desk 的:只有自己的桌面有(`store` 且 `can_add_projects`),所有對話共用行程;`Hub._sync_connectors` 在每一輪 `_run` 開始前把 mcp 工具換成目前打開的(用到才啟動、失敗發 notice、對話模式也有、整檔模式沒有)。網頁「連接器」頁:`/api/connectors`(GET)、`/api/connectors/{add,demo,test,toggle,remove}` 只有本機、不是多人;新增走 `guard.check_source` → 409 need=declare。`demo_mcp/tickets_server.py` 是示範用的(虛構工單),離線測試真的啟動它。CLI `--mcp 設定檔`。只支援 stdio,不支援網址型(HTTP)。
 
 **`--whole` 模式**:附檔全部內嵌、不綁工具、一次回答,交給路由決定要不要升級到 Ultra。給工具的話模型會分段重讀,每步重送全部內容。
 

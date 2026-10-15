@@ -218,7 +218,7 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
   <div class="margin">作品集<br>實測 10-06 – 10-10<br>更新 10-15</div>
   <div>
     <h1>對內研發助理<br>實測紀錄</h1>
-    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/15 邊做邊用真模型測試的過程,實測與審查一共抓到 45 個問題。</p>
+    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/15 邊做邊用真模型測試的過程,實測與審查一共抓到 47 個問題。</p>
     <div class="byline">
       <span><strong>HSUAN</strong></span>
       <span>Python · LangChain · NVIDIA NIM · Docker · Redis · scikit-learn</span>
@@ -316,8 +316,9 @@ flowchart LR
           <tr><td>安全把關</td><td>正常網頁、註解裡藏指令的網頁、隱晦的提示注入、不當請求</td><td>Content Safety 每次 0.6–1 秒;另外三顆安全模型大多逾時</td><td><span class="pill pass">5/5</span></td></tr>
           <tr><td>掃描的 PDF</td><td>兩頁:會議紀錄 + 預算表格</td><td>逐字讀出、表格保留成表格,兩頁約 19–26 秒</td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>多 agent 分工</td><td>同一題「三個模組各做什麼」,分工 vs 不分工</td><td class="num">4.5–15.5 萬 → 4.5–5.4 萬 tokens<small>主對話 1.9–3 萬 → 1.2–1.3 萬;但 66–88 秒 → 108–155 秒,要等最慢的子助理</small></td><td><span class="pill warn">省 token、比較慢</span></td></tr>
+          <tr><td>MCP 連接器</td><td>示範連接器(虛構工單系統),問高優先度工單的原因和修法</td><td class="num">3 步 · 13,142 tokens<small>自己選對工具,每次呼叫前都先問;連接器啟動 0.2 秒</small></td><td><span class="pill pass">答對</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">138 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">142 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端 NIM</td><td>需要 GPU 伺服器</td><td>只對照過官方文件</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
       </table>
@@ -327,15 +328,15 @@ flowchart LR
 
 <section>
   <div class="label">
-    <h2>抓到的 45 個問題</h2>
+    <h2>抓到的 47 個問題</h2>
     <div class="note">依類別分組,編號照發現順序,跟 README 一致。每一條都寫了怎麼發現的</div>
   </div>
   <div class="body">
     <ul class="tally">
       <li>模型與套件<b>10</b></li>
       <li>token 與路由<b>7</b></li>
-      <li>agent 行為與工具<b>11</b></li>
-      <li>安全與隱私<b>7</b></li>
+      <li>agent 行為與工具<b>12</b></li>
+      <li>安全與隱私<b>8</b></li>
       <li>多人、部署與介面<b>6</b></li>
       <li>自己訓練的模型與知識庫<b>4</b></li>
     </ul>
@@ -370,7 +371,7 @@ flowchart LR
     </div>
 
     <div class="group">
-      <h3>agent 行為與工具 <span class="count">11</span></h3>
+      <h3>agent 行為與工具 <span class="count">12</span></h3>
       <ol class="findings">
         <li><span class="n">06</span><div><span class="what">agent 沒辦法驗證自己的修正,最後自己編了測試結果</span><span class="how"><span class="tag">端到端實測</span></span></div><div class="fix">提修正時在複本上套用並真的跑測試,回傳實際結果</div></li>
         <li><span class="n">13</span><div><span class="what">模型回的工具參數不是合法 JSON 時,被當成最終答案、回傳空字串</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">讀套件原始碼</span></span></div><div class="fix">把錯誤回給模型,讓它修正重送</div></li>
@@ -383,11 +384,12 @@ flowchart LR
         <li><span class="n">40</span><div><span class="what">讀掃描的表格時把繁體字抄成簡體(預算表 → 预算表)</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">提示加上「保留原本的字」,重跑兩次都正確</div></li>
         <li><span class="n">44</span><div><span class="what">加了子 agent 分工的工具,但模型不會自己用:沒提示 0/2,系統提示加說明也 0/2</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">改成使用者決定:輸入框的「分工」開關,2/2 都分工</div></li>
         <li><span class="n">45</span><div><span class="what">分工後主 agent 收到報告,又把檔案全部重讀一遍,20.9 萬 tokens,比不分工還多</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">提示改成「報告涵蓋的不要重讀」;再測 2/2 沒重讀,4.5–5.4 萬 tokens</div></li>
+        <li><span class="n">47</span><div><span class="what">連接器掛掉時,錯誤原因有時比「連線結束」晚讀到,使用者只看到「結束了」</span><span class="how"><span class="tag">離線測試</span></span></div><div class="fix">先等行程結束、錯誤訊息讀完再回報,附上最後一行</div></li>
       </ol>
     </div>
 
     <div class="group">
-      <h3>安全與隱私 <span class="count">7</span></h3>
+      <h3>安全與隱私 <span class="count">8</span></h3>
       <ol class="findings">
         <li><span class="n">08</span><div><span class="what">讀檔工具擋不住 .env,金鑰可能被送出去</span><span class="how"><span class="tag">接真實專案前檢查</span></span></div><div class="fix">封鎖 .env、金鑰、憑證與 .git</div></li>
         <li><span class="n">16</span><div><span class="what">搜尋工具會跟著捷徑連結(symlink / junction)讀到工作區外的檔案</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">本機重現</span></span></div><div class="fix">依實際位置檢查,工作區外與機密檔一律略過</div></li>
@@ -396,6 +398,7 @@ flowchart LR
         <li><span class="n">28</span><div><span class="what">下載的 repo 自帶的規則檔會直接進系統提示,別人寫的內容被當成團隊規則</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">下載專案的規則改存在 repo 外面,repo 裡那份只當一般檔案</div></li>
         <li><span class="n">38</span><div><span class="what">網頁可以藏給 AI 的指令(例如要它把 .env 傳出去),只靠系統提示不夠保險</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">網頁和搜尋結果先過安全模型,不安全就整段不交給模型</div></li>
         <li><span class="n">43</span><div><span class="what">「不要把公司程式碼送到試用平台」只寫在文件裡,趕時間把資料夾拖進來就送出去了</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">設定檔標明哪個後端能放公司資料;試用平台上公司資料夾一律擋(加專案、知識庫、拖進來、以前加過的),其他資料夾第一次要先確認不是公司資料,畫面一直顯示提醒</div></li>
+        <li><span class="n">46</span><div><span class="what">MCP 連接器是第三方程式,照預設啟動會繼承環境變數,NVIDIA 金鑰會一起交給它</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">啟動時拿掉 .env 的變數和像金鑰的;用會印出環境變數的假連接器驗證</div></li>
       </ol>
     </div>
 
