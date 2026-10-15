@@ -416,7 +416,8 @@ DOC_SUFFIXES = _DOC_SUFFIXES  # 網頁的「成品」頁面只列這些
 @tool
 def save_document(filename: str, content: str) -> str:
     """把寫好的文件、翻譯、摘要、信件草稿、表格存成檔案給使用者(存在輸出資料夾,不會動到工作區)。
-    filename 只給檔名,例如 "技術文件.md"、"摘要.txt"、"清單.csv";同名檔案不會被覆蓋,會自動加編號。"""
+    filename 只給檔名,例如 "技術文件.md"、"摘要.txt"、"清單.csv";同名檔案不會被覆蓋,會自動加編號。
+    網頁存成 .html:單一檔案,CSS、JS、圖片(data URI)都寫在裡面,不能載入外部網址;使用者可以預覽、分享。"""
     name = Path(filename.replace("\\", "/")).name  # 只取檔名:不能藉 ../ 寫到別的地方
     suffix = Path(name).suffix.lower()
     if not name or name.startswith(".") or suffix not in _DOC_SUFFIXES:

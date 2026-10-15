@@ -218,7 +218,7 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
   <div class="margin">作品集<br>實測 10-06 – 10-10<br>更新 10-15</div>
   <div>
     <h1>對內研發助理<br>實測紀錄</h1>
-    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/15 邊做邊用真模型測試的過程,實測與審查一共抓到 47 個問題。</p>
+    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/15 邊做邊用真模型測試的過程,實測與審查一共抓到 48 個問題。</p>
     <div class="byline">
       <span><strong>HSUAN</strong></span>
       <span>Python · LangChain · NVIDIA NIM · Docker · Redis · scikit-learn</span>
@@ -317,8 +317,9 @@ flowchart LR
           <tr><td>掃描的 PDF</td><td>兩頁:會議紀錄 + 預算表格</td><td>逐字讀出、表格保留成表格,兩頁約 19–26 秒</td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>多 agent 分工</td><td>同一題「三個模組各做什麼」,分工 vs 不分工</td><td class="num">4.5–15.5 萬 → 4.5–5.4 萬 tokens<small>主對話 1.9–3 萬 → 1.2–1.3 萬;但 66–88 秒 → 108–155 秒,要等最慢的子助理</small></td><td><span class="pill warn">省 token、比較慢</span></td></tr>
           <tr><td>MCP 連接器</td><td>示範連接器(虛構工單系統),問高優先度工單的原因和修法</td><td class="num">3 步 · 13,142 tokens<small>自己選對工具,每次呼叫前都先問;連接器啟動 0.2 秒</small></td><td><span class="pill pass">答對</span></td></tr>
+          <tr><td>網頁分享</td><td>請 HSUAN 做一個有三張卡片、可以展開說明的介紹網頁</td><td class="num">2 步 · 6,663 tokens<small>沙箱預覽:CSS、JS 正常,連網和 HSUAN 的 token 都拿不到</small></td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">142 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">143 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端 NIM</td><td>需要 GPU 伺服器</td><td>只對照過官方文件</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
       </table>
@@ -328,7 +329,7 @@ flowchart LR
 
 <section>
   <div class="label">
-    <h2>抓到的 47 個問題</h2>
+    <h2>抓到的 48 個問題</h2>
     <div class="note">依類別分組,編號照發現順序,跟 README 一致。每一條都寫了怎麼發現的</div>
   </div>
   <div class="body">
@@ -336,7 +337,7 @@ flowchart LR
       <li>模型與套件<b>10</b></li>
       <li>token 與路由<b>7</b></li>
       <li>agent 行為與工具<b>12</b></li>
-      <li>安全與隱私<b>8</b></li>
+      <li>安全與隱私<b>9</b></li>
       <li>多人、部署與介面<b>6</b></li>
       <li>自己訓練的模型與知識庫<b>4</b></li>
     </ul>
@@ -389,7 +390,7 @@ flowchart LR
     </div>
 
     <div class="group">
-      <h3>安全與隱私 <span class="count">8</span></h3>
+      <h3>安全與隱私 <span class="count">9</span></h3>
       <ol class="findings">
         <li><span class="n">08</span><div><span class="what">讀檔工具擋不住 .env,金鑰可能被送出去</span><span class="how"><span class="tag">接真實專案前檢查</span></span></div><div class="fix">封鎖 .env、金鑰、憑證與 .git</div></li>
         <li><span class="n">16</span><div><span class="what">搜尋工具會跟著捷徑連結(symlink / junction)讀到工作區外的檔案</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">本機重現</span></span></div><div class="fix">依實際位置檢查,工作區外與機密檔一律略過</div></li>
@@ -399,6 +400,7 @@ flowchart LR
         <li><span class="n">38</span><div><span class="what">網頁可以藏給 AI 的指令(例如要它把 .env 傳出去),只靠系統提示不夠保險</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">網頁和搜尋結果先過安全模型,不安全就整段不交給模型</div></li>
         <li><span class="n">43</span><div><span class="what">「不要把公司程式碼送到試用平台」只寫在文件裡,趕時間把資料夾拖進來就送出去了</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">設定檔標明哪個後端能放公司資料;試用平台上公司資料夾一律擋(加專案、知識庫、拖進來、以前加過的),其他資料夾第一次要先確認不是公司資料,畫面一直顯示提醒</div></li>
         <li><span class="n">46</span><div><span class="what">MCP 連接器是第三方程式,照預設啟動會繼承環境變數,NVIDIA 金鑰會一起交給它</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">啟動時拿掉 .env 的變數和像金鑰的;用會印出環境變數的假連接器驗證</div></li>
+        <li><span class="n">48</span><div><span class="what">網頁預覽的網址帶著 HSUAN 的 token,沙箱裡的程式讀得到、可以整頁導出去帶走</span><span class="how"><span class="tag">實測時審查</span></span></div><div class="fix">預覽改用這個網頁專用的鑰匙(token 的 HMAC,反推不回、只能開那一頁)</div></li>
       </ol>
     </div>
 

@@ -3363,3 +3363,55 @@ def test_connectors_page_api_and_tools_reach_the_model(workspace, tmp_path_facto
         server.shutdown()
         server.server_close()
         desk.connectors.close()
+
+
+# ---------- 網頁分享 ----------
+
+def test_share_html_pages_with_people_on_the_same_wifi(workspace, tmp_path_factory, monkeypatch):
+    """10/15 網頁分享:「成品」裡的 .html 可以預覽、分享;分享連結 /s/<代碼> 不用登入(連結就是鑰匙),
+    網頁一律用沙箱打開(拿不到 HSUAN 的 token / cookie、不能連網);只有網頁能分享、路徑不能亂給;
+    同一個網頁沿用同一個連結,存檔重開還在;停止分享後連結失效;訪客不能分享。"""
+    import httpx
+    import webui
+    store, docs = tmp_path_factory.mktemp("state"), tmp_path_factory.mktemp("docs")
+    page = "<html><body><h1>專案介紹</h1><script>fetch('/api/state')</script></body></html>"
+    (docs / "介紹.html").write_text(page, encoding="utf-8")
+    (docs / "notes.md").write_text("# notes", encoding="utf-8")
+    desk = webui.Desk(lambda ws: None, workspace, store=store, docs_dir=docs)
+    lan = webui.LanAccess(["127.0.0.1"])
+    server, base = _serve(desk, lan=lan)
+    h = {"X-Token": "t0k"}
+    post = lambda body: httpx.post(base + "/api/share", json=body, headers=h)  # noqa: E731
+    try:
+        assert post({"name": "notes.md", "on": True}).status_code == 400  # 只有網頁
+        assert post({"name": "../介紹.html", "on": True}).status_code == 400
+        shared = post({"name": "介紹.html", "on": True}).json()
+        tok = shared["share"]
+        port = server.server_address[1]
+        assert len(tok) >= 20 and shared["urls"] == [f"http://127.0.0.1:{port}/s/{tok}"] and shared["qr"].startswith("<svg")
+        assert post({"name": "介紹.html", "on": True}).json()["share"] == tok  # 同一個網頁同一個連結
+        out = httpx.get(base + "/api/outputs", headers=h).json()
+        doc = next(d for d in out["docs"] if d["name"] == "介紹.html")
+        assert out["can_share"] and doc["share"] == tok
+        # 預覽網址不放 token(沙箱裡的程式讀得到自己的網址):用這個網頁專用的鑰匙,鑰匙不對就擋
+        assert "t0k" not in doc["preview"] and "preview" not in next(d for d in out["docs"] if d["name"] == "notes.md")
+        preview = httpx.get(base + doc["preview"])
+        assert preview.status_code == 200 and "sandbox" in preview.headers["content-security-policy"]
+        assert httpx.get(base + "/api/page", params={"name": "介紹.html", "k": "0" * 32}).status_code == 403
+        assert webui.Desk(lambda ws: None, workspace, store=store, docs_dir=docs).shared_page(tok)  # 重開還在
+        monkeypatch.setattr(webui, "LOCAL_ADDRS", set())  # 同一個 Wi-Fi 的別人:沒有登入
+        r = httpx.get(f"{base}/s/{tok}")
+        csp = r.headers["content-security-policy"]
+        assert r.status_code == 200 and r.text == page
+        assert "sandbox" in csp and "allow-same-origin" not in csp and "connect-src 'none'" in csp
+        assert "t0k" not in httpx.get(base + "/").text  # 首頁還是要登入,拿不到 token
+        assert httpx.get(f"{base}/s/not-a-real-code").status_code == 404
+        monkeypatch.setattr(webui, "LOCAL_ADDRS", {"127.0.0.1", "::1"})
+        assert post({"name": "介紹.html", "on": False}).status_code == 200
+        assert httpx.get(f"{base}/s/{tok}").status_code == 404  # 停止分享:連結失效
+    finally:
+        server.shutdown()
+        server.server_close()
+    guest_desk = webui.Desk(lambda ws: None, workspace, can_add_projects=False)
+    with pytest.raises(ValueError):
+        guest_desk.share("沒有這個.html")

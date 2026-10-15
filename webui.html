@@ -261,6 +261,12 @@
   .tool summary code { font: 13px ui-monospace, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .tool pre { max-height: 280px; overflow: auto; background: var(--code); border: 1px solid var(--line); border-radius: 12px;
               padding: 10px 12px; margin: 6px 0 0; font: 12.5px/1.55 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
+  /* 網頁成品:對話裡的「預覽 / 分享」、成品頁的分享連結和 QR code */
+  .page-actions { display: flex; gap: 8px; margin: 2px 0 8px; }
+  a.pill { display: inline-flex; align-items: center; text-decoration: none; color: inherit; }
+  .row a.share-link { display: block; font-size: 13px; overflow-wrap: anywhere; color: var(--accent-text, var(--accent)); }
+  .share-qr { padding: 10px; background: #fff; border-radius: 8px; }
+  .share-qr svg { width: 200px; height: 200px; }
   /* 多 agent 分工(delegate):每個子助理一列 */
   .tool .subs { margin: 6px 0 2px; padding-left: 24px; }
   .tool .subs li { margin: 4px 0; color: var(--text); }
@@ -559,6 +565,17 @@ async function apiDeclared(path, body, decl = {}) {
   return r;
 }
 const download = (url) => { location.href = url; };
+// 網頁成品:預覽(沙箱打開)、分享給同一個 Wi-Fi 的人
+const isPage = (name) => /\.html$/i.test(name);
+// 預覽是一般連結(新分頁打開);網址用伺服器給的這個網頁專用鑰匙,不放 token(網頁裡的程式讀得到自己的網址)
+function previewLink(href, label) {
+  return Object.assign(el("a", "pill", label), { href, target: "_blank", rel: "noopener" });
+}
+async function sharePage(name, on) {
+  const x = await api("/api/share", { name, on });
+  if (!x.ok) { alert(x.data.error || "分享失敗"); return null; }
+  return x.data;
+}
 
 // ---------- 迷你 markdown(先跳脫 HTML,只轉常用語法) ----------
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -799,9 +816,23 @@ const handlers = {
       });
     } else summary.append(el("span", "", e.name), el("code", "", args.length > 100 ? args.slice(0, 100) + "…" : args));
     d.out = d.appendChild(el("pre", "", "執行中…"));
+    d.toolName = e.name;
     tools.push(d);
   },
-  tool_done(e) { const d = tools.shift(); if (d) d.out.textContent = e.output; },
+  tool_done(e) {
+    const d = tools.shift(); if (!d) return;
+    d.out.textContent = e.output;
+    const saved = d.toolName === "save_document" && /已存成 (.+\.html)\s*$/i.exec(e.output || "");
+    if (saved) {  // 存好一個網頁:直接給「預覽」和「分享」(預覽連結的鑰匙跟「成品」要)
+      const name = saved[1].split(/[\\/]/).pop();
+      const bar = d.parentElement.insertBefore(el("div", "page-actions"), d.nextSibling);
+      api("/api/outputs").then((x) => {
+        const doc = (x.data.docs || []).find((o) => o.name === name);
+        if (doc?.preview) bar.prepend(previewLink(doc.preview, "預覽網頁"));
+      });
+      bar.append(button("分享…", "pill", () => openPage("outputs")));
+    }
+  },
   sub(e) {
     const li = ensureBot().subs?.[e.agent - 1];
     if (li && e.what === "tool") { const a = JSON.stringify(e.args); li.now.textContent = `▸ ${e.name} ${a.length > 80 ? a.slice(0, 80) + "…" : a}`; }
@@ -1191,7 +1222,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/15", ["連接器(MCP):側邊欄多了「連接器」,貼上 MCP server 的設定就能讓 HSUAN 用外部工具(工單系統、資料庫…);每次使用都會先問你,有示範連接器(虛構的工單系統)可以試",
+  ["10/15", ["網頁分享:請 HSUAN 做一個網頁(存成 .html),對話裡就能「預覽」;在「成品」按「分享」,同一個 Wi-Fi 的人用連結或 QR code 就能看(不用登入,隨時可以停止分享)",
+             "連接器(MCP):側邊欄多了「連接器」,貼上 MCP server 的設定就能讓 HSUAN 用外部工具(工單系統、資料庫…);每次使用都會先問你,有示範連接器(虛構的工單系統)可以試",
              "多 agent 分工:輸入框多了「分工」開關,打開後 HSUAN 把這一題彼此獨立的部分分給最多 3 個子助理同時查,每個只交回結論(對話不會被一大堆檔案塞滿);畫面上看得到每個子助理正在做什麼"]],
   ["10/10", ["公司資料保護:用的是 NVIDIA 試用平台時,右上角一直顯示「試用平台 · 不放公司資料」;.env 的 COMPANY_PATHS 寫的公司資料夾一律擋下(加專案、知識庫、拖進來、以前加過的都一樣),其他資料夾第一次加入要先確認不是公司資料",
              "可以把資料夾直接拖進視窗:放在桌面、文件、下載裡的會自動找到原本的位置(HSUAN 改的東西按「套用」才寫進去);找不到才問路徑,留空就上傳一份副本給它分析",
@@ -1478,8 +1510,32 @@ async function renderPage() {
     if (!r.data.docs?.length) box.appendChild(el("div", "none", "還沒有文件。請 HSUAN「寫成文件並存檔」,就會出現在這裡。"));
     else {
       const list = rows(box);
-      for (const d of r.data.docs) row(list, d.name, `${fmtSize(d.size)} · ${fmtTime(d.mtime)}`,
-        [button("下載", "pill", () => download(`/api/file?token=${encodeURIComponent(TOKEN)}&name=${encodeURIComponent(d.name)}`))]);
+      for (const d of r.data.docs) {
+        const acts = [button("下載", "pill", () => download(`/api/file?token=${encodeURIComponent(TOKEN)}&name=${encodeURIComponent(d.name)}`))];
+        if (isPage(d.name)) {  // 網頁:預覽、分享給同一個 Wi-Fi 的人(沙箱打開,連結不用登入)
+          acts.unshift(previewLink(d.preview, "預覽"));
+          if (r.data.can_share) acts.push(button(d.share ? "停止分享" : "分享", d.share ? "pill" : "pill dark", async () => {
+            if (d.share && !confirm(`停止分享「${d.name}」?之前給出去的連結會打不開。`)) return;
+            if (await sharePage(d.name, !d.share)) renderPage();
+          }));
+        }
+        const rr = row(list, d.name, `${fmtSize(d.size)} · ${fmtTime(d.mtime)}`, acts);
+        if (!d.share) continue;
+        const g = rr.querySelector(".grow");
+        if (!d.urls?.length) {
+          g.appendChild(el("small", "", "已分享,但手機連線沒開:到「設定 → 手機與訪客」打開,同一個 Wi-Fi 的人才連得到。"));
+          continue;
+        }
+        g.appendChild(el("small", "", "已分享:同一個 Wi-Fi 的人打開這個連結就能看(不用登入)"));
+        for (const u of d.urls) Object.assign(g.appendChild(el("a", "share-link", u)), { href: u, target: "_blank", rel: "noopener" });
+        const qrBtn = g.appendChild(button("QR code", "pill", async () => {
+          const x = await sharePage(d.name, true);
+          if (!x?.qr) return;
+          const box2 = el("div", "share-qr"); box2.innerHTML = x.qr;
+          popup(qrBtn, [{ node: box2 }]);
+        }));
+        qrBtn.style.marginTop = "6px";
+      }
     }
     section(box, "修改(patch)");
     if (!r.data.patches?.length) box.appendChild(el("div", "none", "這次打開以來還沒有修改。修程式時 HSUAN 提的 patch 會列在這裡。"));

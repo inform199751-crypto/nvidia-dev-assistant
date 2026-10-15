@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -813,6 +814,17 @@ def doc_path(d: Path, name: str) -> Path | None:
     return p if p.is_file() else None
 
 
+PAGE_SUFFIXES = {".html"}  # 「成品」裡可以預覽、分享的網頁
+# HSUAN 做的網頁(預覽、分享)用沙箱打開:跟 HSUAN 不同來源(網頁裡的程式拿不到 token、cookie),也不能連網
+# (不能把看的人的資料送出去、不能載外部資源)。模型寫的網頁可能被網頁內容、連接器回傳的指令影響,不能信任
+PAGE_HEADERS = {
+    "Content-Security-Policy": "sandbox allow-scripts allow-modals allow-popups; default-src 'none'; "
+                               "style-src 'unsafe-inline' data:; script-src 'unsafe-inline'; img-src data: blob:; "
+                               "font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; "
+                               "base-uri 'none'; frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"}
+
+
 def docs_in(d: Path) -> list[dict]:
     docs = [p for p in d.glob("*") if doc_path(d, p.name)] if d.is_dir() else []
     docs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
@@ -985,8 +997,13 @@ class Desk:
         self.focus: str | None = None  # 畫面上最近打開的對話(開事件串流時記下)
         # MCP 連接器(會在這台電腦上執行程式):只有自己的桌面有,訪客、多人模式沒有
         self.connectors = mcp_client.Connectors(store) if store and can_add_projects else None
+        self.shares: dict[str, dict] = {}  # 分享出去的網頁:連結代碼 → {name, created},存在 store/shares.json
         if store:
             self._load()
+            try:
+                self.shares = json.loads((store / "shares.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                self.shares = {}
         # 預設專案(.env 的 AGENT_WORKSPACE;VS Code 外掛是它開著的資料夾)。桌面版和外掛共用同一個 store,
         # 預設專案可能不一樣,所以各自記住自己的,不能拿 projects[0]
         default = next((p for p in self.projects if Path(p["path"]) == default_workspace), None)
@@ -1387,10 +1404,46 @@ class Desk:
         for cid, h in loaded:
             for p in h.outputs()["patches"]:
                 patches.append({**p, "conv": cid, "title": self.meta.get(cid, {}).get("title", "")})
-        return {"docs": docs_in(self.docs_dir or toolbox.OUTPUT_DIR), "patches": patches}
+        docs, shared = docs_in(self.docs_dir or toolbox.OUTPUT_DIR), {s["name"]: t for t, s in self.shares.items()}
+        for d in docs:
+            if d["name"] in shared:
+                d["share"] = shared[d["name"]]
+        return {"docs": docs, "patches": patches}
 
     def doc_file(self, name: str) -> Path | None:
         return doc_path(self.docs_dir or toolbox.OUTPUT_DIR, name)
+
+    # ---------- 分享網頁(10/15):HSUAN 做的 .html 給同一個 Wi-Fi 的人看 ----------
+
+    def _save_shares(self) -> None:
+        if self.store:
+            self.store.mkdir(parents=True, exist_ok=True)
+            tmp = self.store / "shares.json.tmp"
+            tmp.write_text(json.dumps(self.shares, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self.store / "shares.json")
+
+    def share(self, name: str) -> str:
+        """分享一個網頁:回傳連結的代碼(猜不到的 128 位元亂數;已經分享過就沿用同一個)。"""
+        p = self.doc_file(name)
+        if not p or p.suffix.lower() not in PAGE_SUFFIXES:
+            raise ValueError("只有「成品」裡的網頁(.html)可以分享")
+        with self.lock:
+            tok = next((t for t, s in self.shares.items() if s["name"] == p.name), None) or secrets.token_urlsafe(16)
+            self.shares[tok] = {"name": p.name, "created": self.shares.get(tok, {}).get("created") or time.time()}
+            self._save_shares()
+        return tok
+
+    def unshare(self, name: str) -> bool:
+        with self.lock:
+            gone = [t for t, s in self.shares.items() if s["name"] == name]
+            for t in gone:
+                del self.shares[t]
+            self._save_shares()
+        return bool(gone)
+
+    def shared_page(self, tok: str) -> Path | None:
+        s = self.shares.get(tok)
+        return self.doc_file(s["name"]) if s else None
 
     def pending(self) -> list[dict]:
         """還沒載入的對話,看存檔時記下的草稿;載入的看現在的狀態(含等回答的確認、等核准的計畫)。"""
@@ -1444,6 +1497,10 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"} | {f"{ip}:{port}" for ip in (lan.ips if lan else [])}
     if team:
         allowed_hosts |= team.allowed_hosts
+
+    def page_key(name: str) -> str:
+        """預覽網頁用的鑰匙:從 token 算出來(反推不回 token),只能打開這一個網頁。"""
+        return hmac.new(token.encode(), f"page:{name}".encode(), hashlib.sha256).hexdigest()[:32]
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args) -> None:  # 安靜一點,不要每個請求都印
@@ -1534,6 +1591,11 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 return self._json(404, {"error": "沒有圖示"})
             if url.path == "/manifest.webmanifest":
                 return self._send(200, json.dumps(MANIFEST, ensure_ascii=False).encode(), "application/manifest+json")
+            if url.path.startswith("/s/"):  # 分享出去的網頁:不用登入(連結本身就是鑰匙),沙箱打開
+                p = None if team else hubs.get("local").shared_page(url.path[3:])
+                if not p:
+                    return self._send(404, "這個連結已經停止分享,或不存在。".encode(), "text/plain; charset=utf-8")
+                return self._send(200, p.read_bytes(), "text/html; charset=utf-8", PAGE_HEADERS)
             if url.path == "/":
                 if team and not self._signed_in():
                     return self._json(401, {"error": f"沒有登入身分(登入代理沒有送 {team.user_header})"})
@@ -1588,7 +1650,22 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                                      "company_ok": guard.COMPANY_OK})
             elif url.path == "/api/outputs":  # 成品
                 if self._token_ok(self.headers.get("X-Token")):
-                    self._json(200, self._desk().outputs())
+                    out = self._desk().outputs()
+                    for d in out["docs"]:
+                        if Path(d["name"]).suffix.lower() in PAGE_SUFFIXES:
+                            d["preview"] = f"/api/page?name={quote(d['name'])}&k={page_key(d['name'])}"
+                        if d.get("share"):
+                            d["urls"] = self._share_urls(d["share"])
+                    self._json(200, {**out, "can_share": self._can_share()})
+            elif url.path == "/api/page":  # 預覽「成品」裡的網頁(跟分享出去的一樣用沙箱打開)
+                # 網址不放 token:沙箱裡的程式讀得到自己的網址,可以整頁導到外面把它帶走。改用這個網頁專用的鑰匙
+                name = (qs.get("name") or [""])[0]
+                if not self._signed_in() or not secrets.compare_digest((qs.get("k") or [""])[0], page_key(name)):
+                    return self._json(403, {"error": "預覽連結不對,請從「成品」重新打開"})
+                p = self._desk().doc_file(name)
+                if not p or p.suffix.lower() not in PAGE_SUFFIXES:
+                    return self._json(404, {"error": "找不到這個網頁"})
+                self._send(200, p.read_bytes(), "text/html; charset=utf-8", PAGE_HEADERS)
             elif url.path == "/api/pending":  # 待命
                 if self._token_ok(self.headers.get("X-Token")):
                     self._json(200, {"items": self._desk().pending()})
@@ -1622,6 +1699,20 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                                {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(p.name)}"})
             else:
                 self._json(404, {"error": "沒有這個頁面"})
+
+        def _can_share(self) -> bool:
+            """分享網頁只有主人可以(訪客、多人模式不行:連結不用登入就能看)。"""
+            return not team and not self._guest()
+
+        def _share_urls(self, tok: str) -> list[str]:
+            """分享連結:同一個 Wi-Fi 的人用的網址(桌面版的手機連線、或 webui.py --lan 開著才有)。"""
+            if phone and phone.server:
+                bases = [f"http://{ip}:{phone.port}" for ip in phone.lan.ips]
+            elif lan and lan.open:
+                bases = [f"http://{ip}:{port}" for ip in lan.ips]
+            else:
+                bases = []
+            return [f"{b}/s/{tok}" for b in bases]
 
         def _guarded(self, run: Callable[[], dict]) -> None:
             """加資料夾的 API:試用平台上要先聲明不是公司資料 —— 回 409 + need=declare,畫面問過再送一次 public=true。"""
@@ -1754,6 +1845,19 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             if path == "/api/project/upload":  # 拖進來的資料夾,分批傳上來存成副本
                 return self._guarded(lambda: desk.upload_project(str(body.get("name", "")), body.get("files"),
                                                                  body.get("upload") or None, bool(body.get("done")), public))
+            if path == "/api/share":  # 分享 / 停止分享「成品」裡的網頁
+                if not self._can_share():
+                    return self._json(403, {"error": "訪客和多人模式不能分享網頁"})
+                name = str(body.get("name", ""))
+                if not body.get("on"):
+                    desk.unshare(name)
+                    return self._json(200, {})
+                try:
+                    tok = desk.share(name)
+                except ValueError as e:
+                    return self._json(400, {"error": str(e)})
+                urls = self._share_urls(tok)
+                return self._json(200, {"share": tok, "urls": urls, "qr": qr.svg(urls[0]) if urls else ""})
             if path.startswith("/api/connectors/"):  # MCP 連接器:只有這台電腦能改(連接器是在這台電腦上執行的程式)
                 conn = desk.connectors
                 if conn is None or team or not self._local():
