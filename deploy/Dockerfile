@@ -16,6 +16,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py models.yaml webui.html ./
+# 子資料夾要另外列:ml/ 是 agent.py 一啟動就 import 的(少了它整個服務起不來),assets/ 是頁面的圖示
+COPY ml/*.py ml/
+COPY assets/ assets/
 
 RUN useradd --create-home app && mkdir -p /data/output && chown app /data/output
 USER app
