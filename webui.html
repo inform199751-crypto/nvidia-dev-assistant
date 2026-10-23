@@ -206,10 +206,9 @@
   .topbar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; min-height: 52px; }
   .model { font-size: 17px; font-weight: 600; display: flex; align-items: baseline; gap: 6px; min-width: 0; }
   .model span { color: var(--faint); font-weight: 400; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top-spacer { flex: 1; }
+  .term-toggle[aria-pressed="true"], .panel-toggle[aria-pressed="true"] { background: var(--active); color: var(--text); }
   /* 終端機面板(10/23):在輸入框上面,只有這台電腦看得到 */
-  .term-toggle { margin-left: auto; }
-  .term-toggle[aria-pressed="true"] { background: var(--active); color: var(--text); }
-  .term-toggle:not([hidden]) + .trial-badge { margin-left: 4px; }
   .term { max-width: 768px; margin: 0 auto 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--code);
           display: flex; flex-direction: column; height: min(38vh, 360px); }
   .term-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
@@ -225,10 +224,39 @@
   .term-line span { color: var(--faint); white-space: nowrap; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }
   .term-line input { flex: 1; min-width: 0; background: none; border: 0; color: var(--text); font: inherit; outline: none; }
   /* 公司資料保護:用的是試用平台時一直掛在右上角 */
-  .trial-badge { margin-left: auto; flex-shrink: 0; border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  .trial-badge { flex-shrink: 0; border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
                  background: color-mix(in srgb, var(--warn) 12%, transparent); border-radius: 999px;
                  color: color-mix(in srgb, var(--warn) 75%, var(--text));  /* 摻一點內文色:淺底的黃黑、電光藍才到 4.5 */
                  padding: 2px 10px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+  /* 右邊的工作狀態面板(10/24,像 Claude 桌面版):環境、背景資訊、變更 */
+  .panel { width: 300px; flex-shrink: 0; background: var(--sidebar); border-left: 1px solid var(--line);
+           display: flex; flex-direction: column; font-size: 14px; line-height: 1.5; }
+  .panel-head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 4px 16px; min-height: 52px; font-weight: 600; }
+  .panel-head span { flex: 1; }
+  .panel-body { flex: 1; overflow-y: auto; padding: 4px 12px 16px; display: flex; flex-direction: column; gap: 12px; }
+  .pcard { border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; background: var(--bg); }
+  .pcard h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 13.5px; font-weight: 600; }
+  .pcard h4 .right { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--faint); font-weight: 400; }
+  .prow { display: flex; align-items: center; gap: 8px; padding: 3px 0; min-width: 0; }
+  .prow svg { color: var(--faint); }
+  .prow span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pnote { color: var(--faint); font-size: 12.5px; margin: 4px 0 0; }
+  .pcard .actions { margin-top: 10px; }
+  .pcard .pill { padding: 4px 12px; font-size: 13px; }
+  /* 用了幾成:圓環 */
+  .ring { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0;
+          background: conic-gradient(var(--ring, var(--accent)) calc(var(--p) * 1%), var(--line) 0);
+          -webkit-mask: radial-gradient(circle, transparent 4px, #000 4.5px); mask: radial-gradient(circle, transparent 4px, #000 4.5px); }
+  .ring.high { --ring: var(--warn); }
+  .n-add { color: #3fb950; } .n-del { color: var(--error); }
+  :root:is([data-theme="yellow"], [data-theme="blue"]) .n-add { color: #1a7f37; }  /* 白底要深一點的綠 */
+  .pfile summary { display: flex; align-items: center; gap: 8px; padding: 3px 4px; border-radius: 6px; cursor: pointer; list-style: none; }
+  .pfile summary::-webkit-details-marker { display: none; }
+  .pfile summary:hover { background: var(--hover); }
+  .pfile summary .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                         font: 12.5px ui-monospace, Consolas, monospace; }
+  .pfile summary small { font: 12px ui-monospace, Consolas, monospace; white-space: nowrap; }
+  .pfile .diff { margin: 4px 0 6px; max-height: 260px; font-size: 11.5px; }
   main { flex: 1; overflow-y: auto; }
   .log { max-width: 768px; margin: 0 auto; padding: 8px 24px 24px; display: flex; flex-direction: column; gap: 22px; }
 
@@ -415,6 +443,7 @@
     body.side-open aside { transform: none; }
     body.side-open .scrim { display: block; position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, .35); }
     #close-side, #open-side { display: block; }
+    .panel { position: fixed; inset: 0 0 0 auto; z-index: 20; width: min(320px, 88vw); box-shadow: var(--shadow); }
     .log, .page-in { padding-left: 16px; padding-right: 16px; }
     .msg.user { max-width: 88%; }
     .welcome h1 { font-size: 26px; }
@@ -488,8 +517,12 @@
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l-6 6 6 6"/></svg>
     </button>
     <div class="model"><span style="color:var(--text);font-size:17px;font-weight:600" id="top-title">HSUAN</span></div>
+    <span class="top-spacer"></span>
     <button type="button" class="icon-btn term-toggle" id="term-btn" hidden aria-label="終端機" title="終端機:在這段對話的專案資料夾裡跑指令(只有這台電腦看得到)">
       <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M6 8l2.5 2L6 12M10.5 12.5H14"/></svg>
+    </button>
+    <button type="button" class="icon-btn panel-toggle" id="panel-btn" aria-pressed="false" aria-label="工作狀態" title="工作狀態:專案和分支、這段對話用了多少上下文、還沒套用的修改">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M12.5 3.5v13"/></svg>
     </button>
     <button type="button" class="trial-badge" id="trial-badge" hidden
             title="現在用的是 NVIDIA 試用平台:送出的內容 NVIDIA 可以收集,也不能用在正式工作。公司資料夾會被擋下,其他資料夾第一次加入要先確認不是公司資料。">試用平台 · 不放公司資料</button>
@@ -543,6 +576,14 @@
     <div class="hint" id="hint">用 @檔名 附上專案裡的檔案 · Enter 送出、Shift+Enter 換行 · HSUAN 也會出錯,重要的結果請自己確認</div>
   </footer>
 </div>
+<section class="panel" id="panel" hidden aria-label="工作狀態"><!-- 不用 aside:左側欄的 aside 樣式(手機上的抽屜)會套上來 -->
+  <div class="panel-head"><span>工作狀態</span>
+    <button type="button" class="icon-btn" id="panel-close" aria-label="關閉工作狀態">
+      <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
+    </button>
+  </div>
+  <div class="panel-body" id="panel-body"></div>
+</section>
 <script>
 const TOKEN = "__TOKEN__";
 const $ = (id) => document.getElementById(id);
@@ -1004,6 +1045,7 @@ const handlers = {
 const patchUrl = (c, i) => `/api/patch?token=${encodeURIComponent(TOKEN)}&c=${encodeURIComponent(c)}&i=${i}`;
 
 let checkedAt = 0;
+const PANEL_EVENTS = new Set(["step", "tool_done", "done", "error", "applied", "clear", "notice"]);
 function connect() {
   if (es) es.close();
   const mine = conv;
@@ -1011,6 +1053,7 @@ function connect() {
   es.onmessage = (m) => {
     if (mine !== conv) return;  // 已經切到別段對話了
     const e = JSON.parse(m.data); (handlers[e.kind] || (() => {}))(e);
+    if (PANEL_EVENTS.has(e.kind)) later("panel", loadPanel, 800);  // 右邊面板的用量、草稿跟著更新
   };
   // 伺服器重啟後 token 會換,舊頁面會一直用舊 token 重連、畫面默默卡住:確認是 403 就重新載入拿新的
   es.onerror = async () => {
@@ -1027,7 +1070,7 @@ function openConv(id) {
   sideMode = kindOf(convMeta()); store.set("mode", sideMode);
   bot = null; tools.length = 0; cards = {}; dirty.clear(); pendingImages = []; renderThumbs();
   closePage(); closeSide(); setPlanMode(false); setBusy(false); applyMode();
-  showEmpty(); connect(); loadState(); renderSide();
+  showEmpty(); connect(); loadState(); renderSide(); loadPanel();
   input.focus();
 }
 async function newConv(projectId, kind = sideMode) {
@@ -1180,6 +1223,7 @@ $("add-project").onclick = async () => {
 };
 
 // ---------- 這段對話的狀態、待命數量 ----------
+let panelRestored = false;
 async function loadState() {
   const r = await api("/api/state");
   if (!r.ok) return;
@@ -1188,6 +1232,10 @@ async function loadState() {
   $("term-btn").hidden = !state.terminal;  // 終端機:只有這台電腦自己看得到
   if (!state.terminal) $("term").hidden = true;
   else if (!term.restored) { term.restored = true; if (store.get("term", "") === "1") termOpen(true); }
+  if (!panelRestored) {  // 上次開著就打開(手機上面板會蓋住對話,不自動開)
+    panelRestored = true;
+    if (store.get("panel", "") === "1" && innerWidth > 768) panelOpen(true);
+  }
   $("split-mode").hidden = sideMode === "chat" || !!state.guest;
   renderUsage();
   renderModel();
@@ -1279,6 +1327,7 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
+  ["10/24", ["右上角多了「工作狀態」面板:這段對話在哪個專案和 git 分支、用了上下文的幾成(快滿時會自動整理成摘要)、HSUAN 還沒套用的修改(每個檔案 +/− 幾行,點開看差異,可以直接套用、捨棄、下載 patch)"]],
   ["10/23", ["右上角多了「終端機」:在這段對話的專案資料夾裡跑指令(只有這台電腦看得到);按「交給 HSUAN」把輸出放進輸入框,請它幫你看錯誤"]],
   ["10/16", ["回答中可以按「停止」(輸入框空的時候,送出鍵會變成方塊);也可以直接再傳訊息,HSUAN 下一步就會看到,來不及就接著當下一題回答",
              "回答更精簡:長度配合問題、不再結尾客套和表情符號、資訊不夠會先問你;你指定長度或格式就照做",
@@ -1855,6 +1904,98 @@ $("term-give").onclick = () => {  // 最後一個指令和輸出放進輸入框:
   input.value = (input.value.trim() ? input.value.trim() + "\n\n" : "請幫我看這個終端機的輸出:\n\n") + "```\n" + t + "\n```";
   autosize(); updateSend(); input.focus();
 };
+
+// ---------- 右邊的工作狀態面板(10/24 使用者要的,像 Claude 桌面版):環境、背景資訊、變更 ----------
+const PANEL_ICONS = {
+  project: '<rect x="2.5" y="4" width="15" height="10" rx="1.5"/><path d="M1.5 16.5h17"/>',
+  folder: '<path d="M2.5 6V15a1.5 1.5 0 001.5 1.5h12A1.5 1.5 0 0017.5 15V8A1.5 1.5 0 0016 6.5h-6L8.5 4.5H4A1.5 1.5 0 002.5 6z"/>',
+  branch: '<circle cx="6" cy="4.5" r="2"/><circle cx="6" cy="15.5" r="2"/><circle cx="14" cy="7" r="2"/><path d="M6 6.5v7M14 9c0 3-8 2-8 4.5"/>',
+  chat: '<path d="M4 4.5h12A1.5 1.5 0 0117.5 6v7a1.5 1.5 0 01-1.5 1.5H9l-3.5 3v-3H4A1.5 1.5 0 012.5 13V6A1.5 1.5 0 014 4.5z"/>',
+};
+const kTokens = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+function panelOpen(on) {
+  $("panel").hidden = !on;
+  $("panel-btn").setAttribute("aria-pressed", String(on));
+  store.set("panel", on ? "1" : "");
+  if (on) loadPanel();
+}
+async function loadPanel() {
+  if ($("panel").hidden || !conv) return;
+  const x = await api("/api/panel");
+  if (x.ok) renderPanel(x.data);
+}
+function pcard(box, title) {
+  const card = box.appendChild(el("section", "pcard"));
+  const h = card.appendChild(el("h4", "", title));
+  return { card, right: h.appendChild(el("span", "right")) };
+}
+function prow(box, iconName, text, title) {
+  const row = box.appendChild(el("div", "prow"));
+  row.innerHTML = icon(PANEL_ICONS[iconName]);
+  row.appendChild(el("span", "", text)).title = title || text;
+  return row;
+}
+function renderPanel(d) {
+  const box = $("panel-body"), open = new Set([...box.querySelectorAll(".pfile[open]")].map((x) => x.dataset.path));
+  box.innerHTML = "";
+  const env = pcard(box, "環境").card;  // 這段對話在哪個專案、哪個分支
+  if (!d.env) prow(env, "chat", "對話模式:不綁專案");
+  else {
+    prow(env, "project", d.env.project);
+    if (d.env.path) prow(env, "folder", d.env.path);
+    prow(env, "branch", d.env.branch || "不是 git 專案");
+    if (d.env.copy) env.appendChild(el("p", "pnote", "這是拖進來的資料夾的副本:套用的修改改在副本,原本的資料夾不會動。"));
+  }
+  // 背景資訊:這段對話送給模型的內容佔上下文的幾成;超過 summarize_at,下一題開始前會先整理成摘要
+  const c = d.context, pct = Math.min(100, Math.round((c.tokens / c.budget) * 100)), high = c.tokens >= c.budget * c.summarize_at;
+  const ctx = pcard(box, "背景資訊");
+  ctx.right.append(`${pct}%`);
+  const ring = ctx.right.appendChild(el("span", "ring" + (high ? " high" : "")));
+  ring.style.setProperty("--p", pct);
+  ctx.card.appendChild(el("div", "", `約 ${kTokens(c.tokens)} / ${kTokens(c.budget)} tokens`));
+  ctx.card.appendChild(el("p", "pnote", `模型:${c.model}`));
+  ctx.card.appendChild(el("p", "pnote", high
+    ? `超過 ${Math.round(c.summarize_at * 100)}% 了:下一題開始前會先把前面的對話整理成摘要。`
+    : `超過 ${Math.round(c.summarize_at * 100)}% 時,下一題開始前會先把前面的對話整理成摘要。`));
+  const used = [`這段對話累計 ${kTokens(c.used)} tokens`];
+  if (state.usage) used.push(`今天 ${kTokens(state.usage.used)} / ${kTokens(state.usage.limit)}`);
+  ctx.card.appendChild(el("p", "pnote", used.join(" · ")));
+  if (c.used > 0) cardButtons(ctx.card, [["整理對話", "", async () => {
+    const x = await api("/api/compact", {});
+    if (x.data.text) alert(x.data.text);
+    loadPanel();
+  }]]);
+  if (!d.changes) return;
+  // 變更:HSUAN 草稿裡還沒套用的修改(按了套用才會改到專案)
+  const ch = d.changes, add = ch.files.reduce((s, f) => s + f.added, 0), del = ch.files.reduce((s, f) => s + f.removed, 0);
+  const chg = pcard(box, "變更");
+  if (!ch.files.length) {
+    chg.card.appendChild(el("p", "pnote", "HSUAN 還沒有改任何檔案。它的修改會先放在草稿,你按「套用到專案」才會改到檔案。"));
+    return;
+  }
+  chg.right.append(el("span", "n-add", `+${add}`), el("span", "n-del", `−${del}`));
+  for (const f of ch.files) {
+    const item = chg.card.appendChild(el("details", "pfile"));
+    item.dataset.path = f.path; item.open = open.has(f.path);
+    const sum = item.appendChild(el("summary"));
+    sum.appendChild(el("span", "name", f.path)).title = f.path;
+    if (f.new) sum.appendChild(el("span", "tag ok", "新增"));
+    sum.append(el("small", "n-add", `+${f.added}`), el("small", "n-del", `−${f.removed}`));
+    item.appendChild(diffView(f.diff.replace(/\n$/, "")));
+  }
+  if (ch.passed !== null) chg.card.appendChild(el("p", "pnote", ch.passed ? "沙箱測試通過" : "沙箱測試沒有通過,套用前請先看清楚"));
+  const act = (action) => async () => {
+    const x = await api("/api/apply", { patch: -1, action });
+    if (x.data.text && !x.data.text.startsWith("已")) alert(x.data.text);  // 成功的結果對話裡的卡片會顯示
+    loadPanel(); refreshSoon();
+  };
+  cardButtons(chg.card, [
+    ...(ch.team ? [] : [[ch.copy ? "套用到副本" : "套用到專案", "dark", act("apply")], ["捨棄", "", act("discard")]]),
+    ["下載 patch", "", () => { download(patchUrl(conv, -1)); return false; }],
+  ]);
+}
+$("panel-btn").onclick = () => panelOpen($("panel").hidden);
+$("panel-close").onclick = () => panelOpen(false);
 
 // ---------- 規劃模式、送出 ----------
 let planMode = false;

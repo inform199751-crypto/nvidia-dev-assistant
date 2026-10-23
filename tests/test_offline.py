@@ -4,7 +4,9 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -15,6 +17,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Sys
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
 import documents
+import run_evals
 import tools
 import web
 from agent import SYSTEM_PROMPT, AgentSession, build_user_prompt, chat, file_mentions, run_agent
@@ -3798,6 +3801,134 @@ def test_terminal_only_on_this_computer(workspace, tmp_path_factory, monkeypatch
         monkeypatch.setattr(webui, "LOCAL_ADDRS", set())  # 手機 / 訪客
         assert httpx.post(base + "/api/term", json={"cmd": "echo hi"}, headers=h).status_code == 403
         assert httpx.get(base + "/api/term", headers=h).status_code == 403
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+# ---------- 端到端評測(run_evals.py,10/23) ----------
+
+def _host_pytest(root):
+    """只拿來跑題目原本的程式和參考解答(都是自己寫的);HSUAN 改過的程式一律在 Docker 裡驗收(run_evals.docker_tests)。"""
+    r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"], cwd=root,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+                       env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"})  # 不載入 langsmith 等外掛:每次 1.8 → 0.5 秒
+    return f"exit code {r.returncode}\n{r.stdout}\n{r.stderr}"
+
+
+@pytest.mark.parametrize("task", run_evals.load_tasks(), ids=lambda t: t.id)
+def test_eval_task_is_well_formed(task):
+    """每一題:原本的程式過不了驗收(真的有 bug)、題目說測試會失敗的就真的會失敗,套上參考解答全部通過(題目沒寫錯)。"""
+    assert task.level in ("normal", "hard") and task.kind
+    for rel in task.files:
+        assert (task.root / "repo" / rel).is_file()
+    assert not run_evals.verify(task, {}, _host_pytest)["passed"]
+    visible = run_evals.verify(task, {}, _host_pytest, hidden=False)
+    assert visible["passed"] != task.fails_visible, visible["output"]
+    fixed = run_evals.verify(task, run_evals.reference_fix(task), _host_pytest)
+    assert fixed["passed"], fixed["output"]
+
+
+def _edit_call(task, edits, call_id="c1"):
+    return ai(tool_calls=[{"name": "propose_patch", "id": call_id, "args": {
+        "edits": [{"path": rel, "old_string": old, "new_string": new} for rel, old, new in edits],
+        "reason": "修正", "test_target": "tests"}}])
+
+
+def test_eval_runner_scores_with_hidden_tests_and_original_tests(tmp_path, monkeypatch):
+    """跑評測的流程(假模型):照參考解答改 → 通過;把測試改成一定會過 → 驗收換回原本的測試,不算通過,
+    報表列在「自己跑測試通過、驗收沒過」。"""
+    monkeypatch.setattr(tools, "_run_sandbox", lambda root, target: "exit code 0\n1 passed")  # propose_patch 裡的沙箱
+    tasks = {t.id: t for t in run_evals.load_tasks()}
+    good, cheat = tasks["retry"], tasks["paging"]
+    src = (good.root / "repo" / "retry.py").read_text(encoding="utf-8")
+    test_file = (cheat.root / "repo" / "tests" / "test_views.py").read_text(encoding="utf-8")
+    script = [_edit_call(good, [("retry.py", src, run_evals.reference_fix(good)["retry.py"])]), ai("改好了"),
+              _edit_call(cheat, [("tests/test_views.py", test_file, "def test_ok():\n    assert True\n"),
+                                 ("tests/conftest.py", "", "collect_ignore = ['.']\n")]), ai("改好了")]
+    reg, seen = scripted_registry(script)
+    quota = TokenQuota(10**6, 2)
+    cfg = run_evals.CONFIGS["super"]
+    rows = [run_evals.run_one(t, cfg, reg, quota, tmp_path / t.id, _host_pytest) for t in (good, cheat)]
+    assert rows[0]["passed"] and rows[0]["self_passed"] and rows[0]["error"] is None
+    assert (rows[0]["files_changed"], rows[0]["steps"], rows[0]["tokens"]) == (1, 2, 200)
+    assert rows[0]["lines_changed"] > 0 and rows[0]["roles"] == ["code"]
+    assert "7 passed" in rows[0]["tests"]  # 驗收跑的是原本 3 個 + 隱藏 4 個測試,不是 HSUAN 的沙箱結果
+    assert not rows[1]["passed"] and rows[1]["self_passed"]
+    assert rows[1]["ignored"] == ["tests/test_views.py", "tests/conftest.py"]
+    assert not (tmp_path / "retry" / "ws" / ".agent_patches").exists()  # patch 存在工作區外面
+    assert "<task>" in str(seen[0][1][-1].content) and "retry" in str(seen[0][1][-1].content)
+
+    for r in rows:
+        r.update(rep=1)
+    report = run_evals.summarize(rows)
+    assert "**1/2**" in report and "自己跑測試通過、驗收沒過" in report and "paging · super" in report
+
+
+def test_eval_runner_records_errors_and_classifier(tmp_path, routing_log, monkeypatch):
+    """伺服器出錯記在 error、換下一題;依難度選模型 on 的那一輪記下分類器判斷(報表比對出題時標的難度)。"""
+    monkeypatch.setattr(tools, "_run_sandbox", lambda root, target: "exit code 0\n1 passed")
+    task = {t.id: t for t in run_evals.load_tasks()}["install_order"]
+    config = copy.deepcopy(CONFIG)
+    config["roles"]["deep"] = {k: v for k, v in config["roles"]["code"].items() if k != "fallbacks"}
+    config["routing"]["difficulty"] = {"mode": "off", "classifier_role": "code", "hard_role": "deep"}
+    reg, _ = scripted_registry([ai('{"level": "hard"}'), RuntimeError("503 忙線")], config)
+    row = run_evals.run_one(task, run_evals.CONFIGS["routed"], reg, TokenQuota(10**6, 2), tmp_path / "w", _host_pytest)
+    assert row["error"] == "RuntimeError: 503 忙線" and not row["passed"] and row["tests"] == "(HSUAN 沒有提出修改)"
+    assert row["judged"] == "hard"
+    assert os.environ.get("DIFFICULTY_ROUTING") is None  # 這一題用完就還原
+    report = run_evals.summarize([dict(row, rep=1)])
+    assert "一致 1/1" in report and "503 忙線" in report
+
+
+# ---------- 右邊的工作狀態面板(10/24) ----------
+
+def test_git_branch_reads_head_without_running_git(tmp_path):
+    """面板的分支直接讀 .git/HEAD(不開 git 行程):子資料夾往上找、detached 給前 7 碼、worktree 的 .git 是檔案。"""
+    import webui
+    repo, sub, other = tmp_path / "repo", tmp_path / "repo" / "pkg" / "a", tmp_path / "wt"
+    sub.mkdir(parents=True)
+    other.mkdir()
+    assert webui.git_branch(sub) is None
+    (repo / ".git").mkdir()
+    (repo / ".git" / "HEAD").write_text("ref: refs/heads/fix/calc\n", encoding="utf-8")
+    assert webui.git_branch(sub) == "fix/calc"
+    (repo / ".git" / "HEAD").write_text("0123456789abcdef0123\n", encoding="utf-8")
+    assert webui.git_branch(repo) == "0123456"
+    (other / ".git").write_text(f"gitdir: {repo / '.git'}\n", encoding="utf-8")
+    assert webui.git_branch(other) == "0123456"
+
+
+def test_panel_shows_project_context_and_draft(workspace, fake_sandbox, tmp_path_factory):
+    """/api/panel:環境(專案、路徑、分支)、這段對話用了多少上下文、草稿每個檔案 +/− 幾行和 diff;
+    套用之後變更清空;對話模式沒有環境和變更。"""
+    import httpx
+    import webui
+    (workspace / "calc.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    (workspace / ".git").mkdir()
+    (workspace / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    reg, _ = scripted_registry([])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=tmp_path_factory.mktemp("state"))
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    try:
+        p = httpx.get(base + "/api/panel", headers=h).json()
+        assert p["env"] == {"project": workspace.name, "branch": "main", "path": str(workspace), "copy": False}
+        assert p["changes"]["files"] == [] and 0 < p["context"]["tokens"] < p["context"]["budget"]
+        assert p["context"]["summarize_at"] == 0.6 and p["context"]["model"] == "deepseek-v4.1-flash"
+        hub = desk.hub(None)
+        with tools.using(hub.bench):
+            patch(("calc.py", "    return a - b", "    return a + b"), ("tests/test_new.py", "", "def test_x():\n    pass\n"))
+        files = httpx.get(base + "/api/panel", headers=h).json()["changes"]["files"]
+        assert [(f["path"], f["added"], f["removed"], f["new"]) for f in files] == [
+            ("calc.py", 1, 1, False), ("tests/test_new.py", 2, 0, True)]
+        assert "+    return a + b" in files[0]["diff"]
+        assert httpx.post(base + "/api/apply", json={"patch": -1, "action": "apply"}, headers=h).json()["text"].startswith("已套用")
+        assert httpx.get(base + "/api/panel", headers=h).json()["changes"]["files"] == []
+        chat = httpx.post(base + "/api/conv/new", json={"kind": "chat"}, headers=h).json()["id"]
+        p = httpx.get(base + "/api/panel", headers={**h, "X-Conv": chat}).json()
+        assert p["env"] is None and p["changes"] is None and p["context"]["tokens"] > 0
     finally:
         server.shutdown()
         server.server_close()

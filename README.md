@@ -44,10 +44,12 @@ flowchart LR
 | `deploy/` | 多人部署:Dockerfile + docker-compose(小助理 `--team` + Redis + oauth2-proxy),說明見 `deploy/README.md` |
 | `vscode-extension/` | VS Code 外掛:編輯器旁邊打開小助理、右鍵「問選取的程式碼」;`build_vsix.py` 打包成 .vsix(不需要 Node) |
 | `web.py` | 上網搜尋(Tavily)與讀網頁;`.env` 設 `ALLOW_WEB=true` 才啟用,每次上網都先問使用者 |
+| 工作狀態面板(`webui.html` 右邊) | 像 Claude 桌面版:這段對話的專案和 git 分支、用了上下文的幾成(快滿時自動整理成摘要)、HSUAN 還沒套用的修改(每個檔案 +/− 幾行、點開看 diff、直接套用 / 捨棄 / 下載 patch) |
 | `terminal.py` | 終端機面板(使用者自己用):在專案資料夾裡跑 PowerShell 指令,只有這台電腦能用、不帶 .env 的金鑰;輸出可以一鍵放進輸入框交給 HSUAN 看 |
 | `browser.py` | 操作瀏覽器:用電腦上的 Edge(無頭、暫存設定檔)透過 DevTools 協定測自己開發中的網站;只能開 localhost 等開發用位址,打開前先問,回傳可操作的元素、畫面文字和主控台錯誤 |
 | `mcp_client.py` | MCP 連接器:標準函式庫寫的 stdio JSON-RPC client,把外部 MCP server 的工具接給模型;每次使用先問、回傳先過安全檢查、啟動時不給 HSUAN 的金鑰;`demo_mcp/` 是示範用的虛構工單系統 |
 | `smoke_test.py` | 對 catalog 上每個模型做冒煙測試(回應、思考開關、tool calling) |
+| `run_evals.py` + `evals/` | 端到端評測:12 個埋好 bug 的小專案,讓 HSUAN 自己修;驗收用原本的測試(它改過的換回原本的)加上它看不到的隱藏測試,在 Docker 裡全部通過才算;比較 Super / DeepSeek / 依難度選模型 / 分工的通過率、tokens、秒數 |
 
 ## 實測結果(2026-10-06,NVIDIA API Catalog 免費層)
 
@@ -67,7 +69,8 @@ flowchart LR
 | 操作瀏覽器(10/15) | 本機的「開發中網站」埋兩個 bug:登入後 `/api/cart` 回 500(前端解析 JSON 出錯)、歡迎訊息顯示方案代碼 basic 而不是「基本」;請 HSUAN「測登入流程,最後看一下排版」 | 打開前先問;自己填名字和密碼、按登入、截圖看排版;6 步、28,008 tokens、76 秒。**抓到 500 和主控台的兩則錯誤,漏掉顯示錯誤**(還說歡迎訊息正確):有報錯的問題很會抓,畫面文字對不對還是要人看 |
 | 回答長度(10/16) | 使用者 10/15 問過的題目,改了回答原則後重問(鳥璇點餐專案) | 「沒反應」3,878 → 346 字、改成先問錯誤訊息;「你有什麼模型」知道自己是 HSUAN、用 Nemotron;「為什麼打不開」原本空白,現在有回答。客套結尾還是偶爾出現(6 題有 2 題) |
 | 停止 / 回答中送出(10/16) | 網頁上用真模型:等確認時、思考中、寫到一半按停止;回答中再送一則「改成只要 10 種就好」 | 停止都在 0.3 秒內生效,已寫出的文字留在畫面;同一題再問不會照抄;中途送的訊息標「已收到」,答完自動接著回答、只列 10 種 |
-| 離線測試 | 假模型,不需金鑰 | 155 個全過 |
+| 端到端評測(10/24) | `run_evals.py`:12 題自己寫的修 bug 題(一般 8、難題 4:跨檔追查、只有描述沒有失敗的測試、運算式解析、循環依賴);驗收用原本的測試加上 HSUAN 看不到的隱藏測試,在 Docker 裡跑 | Super **12/12** 通過,平均 20.9k tokens、4.9 步、秒數中位數 59(27–144 秒),12 題共 25.1 萬 tokens。7 題它自己在原本的測試檔補了測試(驗收時換回原本的,照樣通過)。**這組題目對 Super 太簡單**:還比不出 DeepSeek、依難度選模型有沒有比較好,要再加更難的題目 |
+| 離線測試 | 假模型,不需金鑰 | 171 個全過 |
 
 ## 實測與審查抓到的 58 個問題
 
@@ -178,6 +181,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python report_routing.py --days 7   # 依難度選模型的報表(影子模式累積的紀錄)
 .venv/Scripts/python train_models.py --label     # 自己的小模型:先請 Super 標註 ml/seed_questions.txt 的範例問題
 .venv/Scripts/python train_models.py             # 訓練 + 實驗(決策樹、邏輯回歸、線性回歸…),報告和圖在 output/models/report.md
+.venv/Scripts/python run_evals.py --configs super deepseek   # 端到端評測(會呼叫模型、要 Docker),報表在 output/evals/<時間>/report.md
 .venv/Scripts/python -m pytest -q                 # 離線測試,不需金鑰
 ```
 
@@ -200,6 +204,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 
 - **地端 NIM 沒實際部署過**:需要 GPU 伺服器。Ultra 550B 要 8×B200/H200 等級,建議第一階段用 Super 120B(FP8 約 2×H100)。
 - 多人部署(`deploy/`)已在本機 Docker 實測(兩個身分同時問、Redis 額度正確、唯讀工作區提 patch),但**還沒在公司 SSO 和 GPU 主機上實際跑過**;對話存在每人的資料夾,多台伺服器要設 sticky session。
+- 端到端評測的 12 題 Super 全部做對(每題只跑一次),還分不出模型之間的差別;要加跨更多檔案、更大的專案、要看 git 歷史的題目,每題多跑幾次再比較。
 - 依難度選模型還在影子模式:分類器只用 14 題自己出的題目測過,每輪多約 300 tokens(在背景跑,不拖慢回答);要累積真實紀錄、抽查準確後才改 `on`。
 - 模型清單會汰換,上線前用 `ChatNVIDIA.get_available_models()` 或 `smoke_test.py` 再對一次。
 - `requirements.txt` 鎖在實測過的版本:程式依賴 langchain-nvidia-ai-endpoints 的內部行為,升版前先跑離線測試和 `smoke_test.py`。

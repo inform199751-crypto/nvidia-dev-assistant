@@ -1,0 +1,72 @@
+# HSUAN 端到端評測的題目(run_evals.py 讀這份)。每題是 tasks/<id>/ 底下的一個小專案,全部是自己寫的,不含公司程式碼:
+#   repo/   HSUAN 看得到、可以改的專案(原本就有 bug)
+#   hidden/ 驗收時才放進 tests/ 的隱藏測試:同一個 bug 的其他情況,HSUAN 看不到,只修到題目舉的例子會過不了
+#   fixed/  參考解答(改過的檔案);離線測試用它確認「原本過不了驗收、套上就全部通過」,題目本身沒寫錯
+# prompt 照使用者平常的問法寫;files 是一起附上的檔案(像 CLI 的 -f)。
+# level 是出題時自己標的難度(normal / hard),拿來跟難度分類器的判斷比較;fails_visible: false = 原本的測試都會過(只有描述)。
+
+- id: discount_rounding
+  kind: 數值
+  level: normal
+  prompt: test_line_total_rounds_half_up 失敗了:5 元打 5 折、25 元打 1 折都應該收 3 元。找出 bug 並修正。
+  files: [cart.py]
+
+- id: paging
+  kind: 邊界
+  level: normal
+  prompt: 分頁有問題:第一頁少了前 10 筆,23 筆資料每頁 10 筆的時候,最後只剩 3 筆的那一頁也不見了。幫我修好。
+
+- id: notes_tags
+  kind: Python 陷阱
+  level: normal
+  prompt: 新建的筆記會帶著別則筆記的標籤,test_notes_do_not_share_tags 失敗了。找出原因並修正。
+  files: [notes.py]
+
+- id: csv_quotes
+  kind: 解析
+  level: normal
+  fails_visible: false
+  prompt: 匯入客戶名單的時候,地址裡有逗號的那幾筆,電話會跑到別的欄位去。幫我修好。
+
+- id: ttl_cache
+  kind: 狀態
+  level: normal
+  prompt: 快取設定 60 秒過期,可是常常被讀的資料過了好幾分鐘還是舊的。test_reading_does_not_extend_ttl 失敗了,幫我修。
+  files: [ttl_cache.py]
+
+- id: retry
+  kind: 錯誤處理
+  level: normal
+  prompt: 外部 API 掛掉的時候 retry 沒有丟出錯誤,呼叫的地方拿到 None,到別的地方才爆掉;看 log 最後一次失敗之後還多等了一次。幫我修好。
+
+- id: inventory
+  kind: 狀態
+  level: normal
+  prompt: 同一個商品被兩張訂單預留,結果超賣了。另外客服說,取消一張沒有預留的訂單時系統會跳錯誤。幫我修好這兩個問題。
+
+- id: toc_slug
+  kind: 解析
+  level: normal
+  prompt: README 自動產生的目錄,中文標題的連結點了跳不過去,同名的標題也都跳到第一個。幫我修好。
+  files: [toc.py]
+
+- id: config_bool
+  kind: 跨檔追查
+  level: hard
+  prompt: 正式機設了 APP_DEBUG=false,結果還是一直印除錯訊息,連 SQL 都印出來了。幫我查原因並修好。
+
+- id: cjk_truncate
+  kind: 沒有失敗的測試
+  level: hard
+  fails_visible: false
+  prompt: 終端機表格裡的中文標題會超出欄位寬度,把後面的欄位擠歪了(英文正常)。幫我修好,並補上中文的測試。
+
+- id: expr_eval
+  kind: 演算法
+  level: hard
+  prompt: 報表公式算錯了:2-3-4 算出 3,應該是 -5;有些連續除法的結果也怪怪的。幫我找出原因並修正。
+
+- id: install_order
+  kind: 演算法
+  level: hard
+  prompt: 安裝順序的功能遇到循環依賴(a 依賴 b、b 依賴 c、c 依賴 a)不會報錯,直接排出一個裝不起來的順序。幫我修好,不要影響正常的情況。

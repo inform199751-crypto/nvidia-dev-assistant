@@ -847,6 +847,32 @@ class Hub:
         self.publish("applied", {"patch": index, "text": result})
         return result
 
+    def panel(self, paths: bool = True) -> dict:
+        """右邊的工作狀態面板(10/24,像 Claude 桌面版):環境(專案、資料夾、git 分支)、
+        背景資訊(這段對話佔了模型上下文的幾成,超過 summarize_at 下一題會先整理成摘要)、變更(草稿裡還沒套用的修改)。
+        paths=False:訪客不給電腦上的路徑。"""
+        s = self.session
+        role = s.requested_role or s.registry.routing["default_role"]
+        draft = dict(self.bench.draft)  # 複製一份:回答中 propose_patch 可能正在改它
+        files = []
+        with toolbox.using(self.bench):
+            tokens = s.sized()
+            for rel in sorted(draft):
+                before = toolbox._original(rel)
+                diff = toolbox._unified_diff(rel, before, draft[rel])
+                lines = diff.splitlines()
+                files.append({"path": rel, "new": before is None, "diff": diff[:MAX_DIFF_CHARS],
+                              "added": sum(1 for x in lines if x.startswith("+") and not x.startswith("+++")),
+                              "removed": sum(1 for x in lines if x.startswith("-") and not x.startswith("---"))})
+        patches = self.bench.patches
+        return {"env": None if self.chat else {"project": self.workspace.name, "branch": git_branch(self.workspace),
+                                               "path": str(self.workspace) if paths else "", "copy": self.copy},
+                "context": {"tokens": tokens, "budget": s.registry.budget(role), "used": s.tokens_used,
+                            "summarize_at": s.registry.limits.get("summarize_at", 0.6),
+                            "model": s.registry.spec(role).model.split("/")[-1]},
+                "changes": None if self.chat else {"files": files, "team": self.team, "copy": self.copy,
+                                                   "passed": patches[-1][1] if files and patches else None}}
+
     def patch_file(self, index: int) -> Path | None:
         if index == -1:  # 最新的那份
             index = len(self.bench.patches) - 1
@@ -989,6 +1015,25 @@ def version() -> str:
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def git_branch(folder: Path) -> str | None:
+    """右邊面板顯示的 git 分支。直接讀 .git/HEAD,不開 git 行程(面板常常重新整理;桌面版沒有主控台,開行程可能閃視窗)。
+    專案在 repo 的子資料夾也找得到(往上找 .git);不是 git 專案回傳 None。"""
+    for d in [folder, *folder.parents]:
+        git = d / ".git"
+        try:
+            if git.is_file():  # worktree / submodule:.git 是一行「gitdir: 路徑」
+                text = git.read_text(encoding="utf-8", errors="replace").strip()
+                if not text.startswith("gitdir:"):
+                    return None
+                git = d / text[len("gitdir:"):].strip()
+            if git.is_dir():
+                head = (git / "HEAD").read_text(encoding="utf-8", errors="replace").strip()
+                return head.removeprefix("ref: refs/heads/") if head.startswith("ref:") else head[:7] or None
+        except OSError:
+            return None
+    return None
 
 
 def parse_images(raw) -> list[dict]:
@@ -1760,6 +1805,9 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                     if lan and self._local():  # 手機連線方式只給這台電腦看
                         state["lan"] = {"urls": [f"http://{ip}:{port}" for ip in lan.ips], "pin": lan.pin}
                     self._json(200, state)
+            elif url.path == "/api/panel":  # 右邊的工作狀態面板:環境、背景資訊、變更
+                if self._token_ok(self.headers.get("X-Token")):
+                    self._json(200, self._hub().panel(paths=not self._guest()))
             elif url.path == "/api/phone":  # 手機連線的狀態(含 PIN):只給這台電腦自己看
                 if self._token_ok(self.headers.get("X-Token")):
                     if not phone or not self._local():
