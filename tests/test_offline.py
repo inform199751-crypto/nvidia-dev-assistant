@@ -3724,3 +3724,80 @@ def test_last_step_answers_without_tools(workspace):
     r = AgentSession(reg, TokenQuota(10**6, 2)).ask("這個專案在做什麼")
     assert r.hit_limit and r.answer.startswith("目前看到 a.py 是入口,b.py 還沒看") and "做到 6 步上限" in r.answer
     assert seen[-1][2] is None and seen[-1][1][-1].content == agent.WRAP_UP_NOTE  # 最後一步沒綁工具
+
+
+# ---------- 終端機面板(terminal.py,10/23) ----------
+
+def _py(code: str) -> str:
+    """在終端機裡跑這個 Python 的指令(Windows 是 PowerShell:路徑有空白要用 &)。"""
+    import os
+    import sys
+    return f'& "{sys.executable}" -c "{code}"' if os.name == "nt" else f'"{sys.executable}" -c "{code}"'
+
+
+def _wait(term):
+    import time as _time
+    for _ in range(300):
+        if not term.running:
+            break
+        _time.sleep(0.05)
+    _time.sleep(0.2)  # 讀輸出的執行緒把最後一行寫完
+
+
+def test_terminal_runs_commands_in_the_project_folder(tmp_path, monkeypatch):
+    """10/23 使用者要的終端機(簡單版):一行一個指令,在專案資料夾裡跑、輸出逐行收進來(中文不亂碼)、結束代碼照傳;
+    cd 會記住;按停止整個行程樹一起關;環境變數拿掉 .env 讀進來的和像金鑰的(不然一按「交給 HSUAN」金鑰就送出去了)。"""
+    import terminal
+    (tmp_path / "sub").mkdir()
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-should-not-show")
+    t = terminal.Terminal(tmp_path)
+    assert t.run(_py("import os; print(os.getcwd()); print(chr(20013)+chr(25991))")) == ""
+    _wait(t)
+    out = t.read()
+    assert out["lines"][0].startswith(t.prompt()) and str(tmp_path) in out["lines"][1] and "中文" in out["lines"]
+    assert out["lines"][-1].startswith("(結束,代碼 0")
+    t.run("cd sub")
+    assert t.cwd == (tmp_path / "sub").resolve() and "sub" in t.prompt()
+    t.run("cd nope")
+    assert "找不到資料夾" in t.read()["lines"][-1]
+    t.run(_py("import sys; print('bye'); sys.exit(3)"))
+    _wait(t)
+    assert t.read()["lines"][-1].startswith("(結束,代碼 3") and t.read()["last"].splitlines()[1] == "bye"
+    t.run(_py("import os; print('NVIDIA_API_KEY' in os.environ)"))
+    _wait(t)
+    assert "False" in t.read()["lines"]
+    since = t.read()["next"]
+    t.run(_py("import time; time.sleep(30)"))
+    assert t.running and t.run("echo hi").startswith("上一個指令還在跑")
+    assert t.stop()
+    _wait(t)
+    assert not t.running and t.read(since)["lines"][-1].startswith("(結束")
+    t.clear()
+    assert t.read()["lines"] == []
+
+
+def test_terminal_only_on_this_computer(workspace, tmp_path_factory, monkeypatch):
+    """終端機會在這台電腦上執行指令:手機、訪客(不是本機的連線)一律 403;本機的 /api/state 才有 terminal。"""
+    import httpx
+    import webui
+    reg, _ = scripted_registry([])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=tmp_path_factory.mktemp("state"))
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    try:
+        assert httpx.get(base + "/api/state", headers=h).json()["terminal"] is True
+        assert httpx.post(base + "/api/term", json={"cmd": _py("print(42)")}, headers=h).status_code == 200
+        for _ in range(100):
+            got = httpx.get(base + "/api/term", params={"since": 0}, headers=h).json()
+            if not got["running"] and any(line.startswith("(結束") for line in got["lines"]):
+                break
+            import time as _time
+            _time.sleep(0.05)
+        assert "42" in got["lines"] and got["cwd"] == str(workspace)
+        monkeypatch.setattr(webui, "LOCAL_ADDRS", set())  # 手機 / 訪客
+        assert httpx.post(base + "/api/term", json={"cmd": "echo hi"}, headers=h).status_code == 403
+        assert httpx.get(base + "/api/term", headers=h).status_code == 403
+    finally:
+        server.shutdown()
+        server.server_close()

@@ -218,7 +218,7 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
   <div class="margin">作品集<br>實測 10-06 – 10-10<br>更新 10-15</div>
   <div>
     <h1>對內研發助理<br>實測紀錄</h1>
-    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/15 邊做邊用真模型測試的過程,實測與審查一共抓到 56 個問題。</p>
+    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/15 邊做邊用真模型測試的過程,實測與審查一共抓到 58 個問題。</p>
     <div class="byline">
       <span><strong>HSUAN</strong></span>
       <span>Python · LangChain · NVIDIA NIM · Docker · Redis · scikit-learn</span>
@@ -321,7 +321,7 @@ flowchart LR
           <tr><td>操作瀏覽器</td><td>本機開發中網站埋兩個 bug,請它測登入流程</td><td class="num">6 步 · 28,008 tokens · 76 秒<small>抓到 API 500 和主控台錯誤,漏掉畫面文字錯誤</small></td><td><span class="pill warn">1/2</span></td></tr>
           <tr><td>停止 / 回答中送出</td><td>思考中、寫到一半、等確認時按停止;回答中再送一則訊息</td><td>停止 0.3 秒內生效、已寫的文字留著;中途的訊息答完自動接著回答</td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">153 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">155 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端 NIM</td><td>需要 GPU 伺服器</td><td>只對照過官方文件</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
       </table>
@@ -331,7 +331,7 @@ flowchart LR
 
 <section>
   <div class="label">
-    <h2>抓到的 56 個問題</h2>
+    <h2>抓到的 58 個問題</h2>
     <div class="note">依類別分組,編號照發現順序,跟 README 一致。每一條都寫了怎麼發現的</div>
   </div>
   <div class="body">
@@ -339,8 +339,8 @@ flowchart LR
       <li>模型與套件<b>11</b></li>
       <li>token 與路由<b>7</b></li>
       <li>agent 行為與工具<b>18</b></li>
-      <li>安全與隱私<b>9</b></li>
-      <li>多人、部署與介面<b>7</b></li>
+      <li>安全與隱私<b>10</b></li>
+      <li>多人、部署與介面<b>8</b></li>
       <li>自己訓練的模型與知識庫<b>4</b></li>
     </ul>
 
@@ -399,7 +399,7 @@ flowchart LR
     </div>
 
     <div class="group">
-      <h3>安全與隱私 <span class="count">9</span></h3>
+      <h3>安全與隱私 <span class="count">10</span></h3>
       <ol class="findings">
         <li><span class="n">08</span><div><span class="what">讀檔工具擋不住 .env,金鑰可能被送出去</span><span class="how"><span class="tag">接真實專案前檢查</span></span></div><div class="fix">封鎖 .env、金鑰、憑證與 .git</div></li>
         <li><span class="n">16</span><div><span class="what">搜尋工具會跟著捷徑連結(symlink / junction)讀到工作區外的檔案</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">本機重現</span></span></div><div class="fix">依實際位置檢查,工作區外與機密檔一律略過</div></li>
@@ -410,11 +410,12 @@ flowchart LR
         <li><span class="n">43</span><div><span class="what">「不要把公司程式碼送到試用平台」只寫在文件裡,趕時間把資料夾拖進來就送出去了</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">設定檔標明哪個後端能放公司資料;試用平台上公司資料夾一律擋(加專案、知識庫、拖進來、以前加過的),其他資料夾第一次要先確認不是公司資料,畫面一直顯示提醒</div></li>
         <li><span class="n">46</span><div><span class="what">MCP 連接器是第三方程式,照預設啟動會繼承環境變數,NVIDIA 金鑰會一起交給它</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">啟動時拿掉 .env 的變數和像金鑰的;用會印出環境變數的假連接器驗證</div></li>
         <li><span class="n">48</span><div><span class="what">網頁預覽的網址帶著 HSUAN 的 token,沙箱裡的程式讀得到、可以整頁導出去帶走</span><span class="how"><span class="tag">實測時審查</span></span></div><div class="fix">預覽改用這個網頁專用的鑰匙(token 的 HMAC,反推不回、只能開那一頁)</div></li>
+        <li><span class="n">57</span><div><span class="what">終端機照預設會帶著 NVIDIA 金鑰,打 env 就印出來,再一鍵就送給模型</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">拿掉 .env 的變數和像金鑰的;終端機只有這台電腦能用</div></li>
       </ol>
     </div>
 
     <div class="group">
-      <h3>多人、部署與介面 <span class="count">7</span></h3>
+      <h3>多人、部署與介面 <span class="count">8</span></h3>
       <ol class="findings">
         <li><span class="n">07</span><div><span class="what">.env 裡設定的工作目錄被忽略</span><span class="how"><span class="tag">端到端實測</span></span></div><div class="fix">讀完 .env 之後再設定工具</div></li>
         <li><span class="n">19</span><div><span class="what">沙箱逾時只停掉 docker 指令,容器在背景繼續跑;Windows 上中文輸出變亂碼</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">本機實測</span></span></div><div class="fix">容器加名字、逾時就強制停止;輸出一律用 UTF-8 解碼</div></li>
@@ -423,6 +424,7 @@ flowchart LR
         <li><span class="n">37</span><div><span class="what">只有一支手機,設定頁卻寫「已配對 2 支」</span><span class="how"><span class="tag">使用時發現</span></span></div><div class="fix">配對紀錄多記裝置類型和時間,設定頁逐支列出、可以個別取消</div></li>
         <li><span class="n">41</span><div><span class="what">想加語音輸入,但中文錯字太多;手機用區網 http 連線,瀏覽器也不給麥克風</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">不加;說明頁改成建議用系統內建的語音輸入</div></li>
         <li><span class="n">50</span><div><span class="what">多人模式的 Docker 映像只複製最上層的程式,少了自己訓練的小模型(ml/),服務一啟動就壞</span><span class="how"><span class="tag">審查</span> <span class="tag">Docker 實測</span></span></div><div class="fix">另外複製 ml/ 和圖示;重建後服務起得來,登入檢查和圖示都正常</div></li>
+        <li><span class="n">58</span><div><span class="what">終端機的錯誤看不懂:一大段 XML、多出「位於 線路…」、夾著顏色控制碼</span><span class="how"><span class="tag">網頁實測</span></span></div><div class="fix">錯誤併進一般輸出只留訊息、濾掉顏色碼;重測和一般終端機一樣</div></li>
       </ol>
     </div>
 

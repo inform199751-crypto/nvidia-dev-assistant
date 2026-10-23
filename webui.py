@@ -44,6 +44,7 @@ import guard
 import knowledge
 import mcp_client
 import qr
+import terminal
 import tools as toolbox
 import web
 
@@ -465,7 +466,14 @@ class Hub:
         self.copy = False  # 拖進來的資料夾的副本(Desk._make 設定):「套用」改的是副本,不是原本的資料夾
         self.connectors: mcp_client.Connectors | None = None  # 這個人的 MCP 連接器(Desk._attach 設定)
         self.browser_on = False  # 「設定」裡打開了操作瀏覽器(Desk._attach / set_browser 設定)
+        self.terminal: terminal.Terminal | None = None  # 終端機面板(使用者自己用的,第一次打開才建)
         self.session = self._new_session()
+
+    def term(self) -> terminal.Terminal:
+        """這段對話的終端機:在專案資料夾裡跑(對話模式是預設專案)。"""
+        if self.terminal is None:
+            self.terminal = terminal.Terminal(self.workspace)
+        return self.terminal
 
     def _new_session(self) -> agent.AgentSession:
         with toolbox.using(self.bench):  # 系統提示要讀這個專案的 ASSISTANT.md
@@ -1500,6 +1508,8 @@ class Desk:
                 return False
             if hub and hub.bench.browser:  # 這段對話開過的瀏覽器分頁一起關掉
                 hub.bench.browser.close()
+            if hub and hub.terminal:  # 終端機還在跑的指令也停掉
+                hub.terminal.stop()
             self.hubs.pop(cid, None)
             self.meta.pop(cid, None)
             if self.store:
@@ -1745,6 +1755,7 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                              "company_ok": guard.COMPANY_OK,
                              # 設定頁的「操作瀏覽器」:開了沒、這裡能不能開(訪客、多人模式、沒有 Edge / Chrome 不行)
                              "browser": {"on": desk.browser_on, "can": desk.can_browse and not team and not guest},
+                             "terminal": self._term_ok(),  # 右上角的終端機按鈕:只有這台電腦自己看得到
                              "company_paths": [str(x) for x in guard.COMPANY_PATHS] if self._local() and not guest else []}
                     if lan and self._local():  # 手機連線方式只給這台電腦看
                         state["lan"] = {"urls": [f"http://{ip}:{port}" for ip in lan.ips], "pin": lan.pin}
@@ -1780,6 +1791,12 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                         if d.get("share"):
                             d["urls"] = self._share_urls(d["share"])
                     self._json(200, {**out, "can_share": self._can_share()})
+            elif url.path == "/api/term":  # 終端機面板:since 之後的輸出(網頁一直來拿)
+                if self._token_ok(self.headers.get("X-Token")):
+                    if not self._term_ok():
+                        return self._json(403, {"error": "終端機只能在這台電腦上用"})
+                    since = (qs.get("since") or ["0"])[0]
+                    self._json(200, self._hub().term().read(int(since) if since.isdigit() else 0))
             elif url.path == "/api/page":  # 預覽「成品」裡的網頁(跟分享出去的一樣用沙箱打開)
                 # 網址不放 token:沙箱裡的程式讀得到自己的網址,可以整頁導到外面把它帶走。改用這個網頁專用的鑰匙
                 name = (qs.get("name") or [""])[0]
@@ -1822,6 +1839,10 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                                {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(p.name)}"})
             else:
                 self._json(404, {"error": "沒有這個頁面"})
+
+        def _term_ok(self) -> bool:
+            """終端機會在這台電腦上執行指令:只給這台電腦自己(手機、訪客、多人模式一律不行)。"""
+            return self._local() and not team and not self._guest()
 
         def _can_share(self) -> bool:
             """分享網頁只有主人可以(訪客、多人模式不行:連結不用登入就能看)。"""
@@ -2022,6 +2043,17 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             elif path == "/api/stop":  # 輸入框的「停止」
                 ok = hub.stop()
                 self._json(200 if ok else 409, {} if ok else {"error": "現在沒有在回答"})
+            elif path == "/api/term":  # 終端機:跑一行指令 / 停止 / 清除(只有這台電腦)
+                if not self._term_ok():
+                    return self._json(403, {"error": "終端機只能在這台電腦上用"})
+                term, action = hub.term(), str(body.get("action") or "run")
+                if action == "stop":
+                    term.stop()
+                elif action == "clear":
+                    term.clear()
+                elif err := term.run(str(body.get("cmd", ""))):
+                    return self._json(409, {"error": err})
+                self._json(200, {"running": term.running, "cwd": str(term.cwd)})
             elif path == "/api/execute":  # 規劃模式交出計畫後:照計畫執行 / 先不要
                 ok = hub.execute_plan(bool(body.get("go")))
                 self._json(202 if ok else 409, {} if ok else {"error": "上一個問題還在回答中"})

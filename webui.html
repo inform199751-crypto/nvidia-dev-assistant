@@ -206,6 +206,24 @@
   .topbar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; min-height: 52px; }
   .model { font-size: 17px; font-weight: 600; display: flex; align-items: baseline; gap: 6px; min-width: 0; }
   .model span { color: var(--faint); font-weight: 400; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 終端機面板(10/23):在輸入框上面,只有這台電腦看得到 */
+  .term-toggle { margin-left: auto; }
+  .term-toggle[aria-pressed="true"] { background: var(--active); color: var(--text); }
+  .term-toggle:not([hidden]) + .trial-badge { margin-left: 4px; }
+  .term { max-width: 768px; margin: 0 auto 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--code);
+          display: flex; flex-direction: column; height: min(38vh, 360px); }
+  .term-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .term-title { font-weight: 600; }
+  .term-cwd { flex: 1; min-width: 0; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px ui-monospace, Consolas, monospace; }
+  .term-head .pill { padding: 2px 10px; font-size: 12.5px; }
+  .term-out { flex: 1; margin: 0; padding: 8px 12px; overflow: auto; font: 12.5px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace;
+              white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+  .term-out .cmd { color: var(--accent-text, var(--accent)); }
+  .term-out .end { color: var(--faint); }
+  .term-line { display: flex; gap: 6px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--line);
+               font: 12.5px ui-monospace, Consolas, monospace; }
+  .term-line span { color: var(--faint); white-space: nowrap; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }
+  .term-line input { flex: 1; min-width: 0; background: none; border: 0; color: var(--text); font: inherit; outline: none; }
   /* 公司資料保護:用的是試用平台時一直掛在右上角 */
   .trial-badge { margin-left: auto; flex-shrink: 0; border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
                  background: color-mix(in srgb, var(--warn) 12%, transparent); border-radius: 999px;
@@ -470,6 +488,9 @@
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l-6 6 6 6"/></svg>
     </button>
     <div class="model"><span style="color:var(--text);font-size:17px;font-weight:600" id="top-title">HSUAN</span></div>
+    <button type="button" class="icon-btn term-toggle" id="term-btn" hidden aria-label="終端機" title="終端機:在這段對話的專案資料夾裡跑指令(只有這台電腦看得到)">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M6 8l2.5 2L6 12M10.5 12.5H14"/></svg>
+    </button>
     <button type="button" class="trial-badge" id="trial-badge" hidden
             title="現在用的是 NVIDIA 試用平台:送出的內容 NVIDIA 可以收集,也不能用在正式工作。公司資料夾會被擋下,其他資料夾第一次加入要先確認不是公司資料。">試用平台 · 不放公司資料</button>
   </div>
@@ -478,6 +499,21 @@
   </main>
   <section class="page" id="page" hidden><div class="page-in" id="page-in"></div></section>
   <footer id="composer-area">
+    <section class="term" id="term" hidden aria-label="終端機">
+      <div class="term-head">
+        <span class="term-title">終端機</span><span class="term-cwd" id="term-cwd"></span>
+        <button type="button" class="pill" id="term-give" title="把最後一個指令和輸出放進輸入框,看過再送給 HSUAN">交給 HSUAN</button>
+        <button type="button" class="pill" id="term-stop" hidden>停止</button>
+        <button type="button" class="pill" id="term-clear">清除</button>
+        <button type="button" class="icon-btn" id="term-close" aria-label="關閉終端機">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
+        </button>
+      </div>
+      <pre class="term-out" id="term-out"></pre>
+      <form class="term-line" id="term-form">
+        <span id="term-prompt"></span><input id="term-in" autocomplete="off" spellcheck="false" aria-label="終端機指令">
+      </form>
+    </section>
     <form id="form" class="composer">
       <div class="thumbs" id="thumbs" aria-label="要一起送出的圖片"></div>
       <input type="file" id="image-input" accept="image/*" multiple hidden>
@@ -521,6 +557,8 @@ let desk = { projects: [], conversations: [] };
 let state = {};           // /api/state(這段對話的狀態)
 let es = null;            // 事件串流
 let page = null;          // 打開中的側邊欄頁面
+// 終端機面板:輸出讀到第幾行、輪詢的計時器、輸出屬於哪段對話、指令紀錄(↑↓)、最後一個指令的輸出(「交給 HSUAN」用)
+const term = { since: 0, timer: null, conv: null, history: [], hi: 0, last: "", restored: false };
 const SEND_ICON = send.innerHTML;
 const STOP_ICON = '<svg width="14" height="14" viewBox="0 0 20 20"><rect x="3" y="3" width="14" height="14" rx="2.5" fill="currentColor"/></svg>';
 const store = {
@@ -715,7 +753,7 @@ function showEmpty() {
 function dock() {  // 開始對話:輸入框回到最下面
   if (!document.body.classList.contains("hero")) return;
   document.body.classList.remove("hero");
-  $("composer-area").prepend(form);
+  $("composer-area").insertBefore(form, $("hint"));  // 終端機面板在它上面
   log.querySelector(".welcome")?.remove();
 }
 
@@ -1147,6 +1185,9 @@ async function loadState() {
   if (!r.ok) return;
   state = r.data;
   $("trial-badge").hidden = state.company_ok !== false;
+  $("term-btn").hidden = !state.terminal;  // 終端機:只有這台電腦自己看得到
+  if (!state.terminal) $("term").hidden = true;
+  else if (!term.restored) { term.restored = true; if (store.get("term", "") === "1") termOpen(true); }
   $("split-mode").hidden = sideMode === "chat" || !!state.guest;
   renderUsage();
   renderModel();
@@ -1238,6 +1279,7 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
+  ["10/23", ["右上角多了「終端機」:在這段對話的專案資料夾裡跑指令(只有這台電腦看得到);按「交給 HSUAN」把輸出放進輸入框,請它幫你看錯誤"]],
   ["10/16", ["回答中可以按「停止」(輸入框空的時候,送出鍵會變成方塊);也可以直接再傳訊息,HSUAN 下一步就會看到,來不及就接著當下一題回答",
              "回答更精簡:長度配合問題、不再結尾客套和表情符號、資訊不夠會先問你;你指定長度或格式就照做",
              "做不到的事(例如幫你在電腦上打開檔案)會直接說,不再一直硬試;存好的文件在對話裡就有「下載」按鈕",
@@ -1756,6 +1798,63 @@ async function renderPage() {
     ]) ul.appendChild(el("li", "", t));
   }
 }
+
+// ---------- 終端機面板(10/23 使用者要的,只有這台電腦):使用者自己跑指令,輸出可以「交給 HSUAN」----------
+function termOpen(on) {
+  $("term").hidden = !on;
+  $("term-btn").setAttribute("aria-pressed", String(on));
+  store.set("term", on ? "1" : "");
+  clearTimeout(term.timer);
+  if (on) { dock(); termPoll(true); $("term-in").focus(); }
+}
+async function termPoll(reset) {
+  clearTimeout(term.timer);
+  if ($("term").hidden || !conv) return;
+  const out = $("term-out");
+  if (reset || term.conv !== conv) { term.since = 0; term.conv = conv; out.textContent = ""; }  // 換了對話:那段對話自己的終端機
+  const x = await api(`/api/term?since=${term.since}`);
+  if (!x.ok) { out.textContent = x.data.error || "終端機打不開"; return; }
+  const d = x.data, stick = out.scrollTop + out.clientHeight >= out.scrollHeight - 30;
+  if (d.from > term.since) out.textContent = "";  // 太舊的已經丟掉了:從還留著的開始畫
+  for (const line of d.lines) {
+    const span = out.appendChild(el("span", line.startsWith(d.prompt + " ") ? "cmd" : /^\((結束,代碼|執行不了|找不到資料夾)/.test(line) ? "end" : ""));
+    span.textContent = line + "\n";
+  }
+  if (stick) out.scrollTop = out.scrollHeight;
+  term.since = d.next; term.last = d.last;
+  $("term-prompt").textContent = d.prompt; $("term-cwd").textContent = d.cwd;
+  $("term-stop").hidden = !d.running;
+  term.timer = setTimeout(termPoll, d.running ? 400 : 1500);
+}
+// 新對話時輸入框在畫面中間(最下面那排藏起來):按了就打開,不要當成「關掉」
+$("term-btn").onclick = () => termOpen($("term").hidden || document.body.classList.contains("hero"));
+$("term-close").onclick = () => termOpen(false);
+$("term-stop").onclick = async () => { await api("/api/term", { action: "stop" }); termPoll(); };
+$("term-clear").onclick = async () => { await api("/api/term", { action: "clear" }); termPoll(true); };
+$("term-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const cmd = $("term-in").value;
+  if (!cmd.trim()) return;
+  term.history.push(cmd); term.hi = term.history.length; $("term-in").value = "";
+  const x = await api("/api/term", { cmd });
+  if (!x.ok) alert(x.data.error || "執行失敗");
+  termPoll();
+};
+$("term-in").addEventListener("keydown", (ev) => {  // ↑↓ 翻之前打過的指令
+  if (ev.key !== "ArrowUp" && ev.key !== "ArrowDown") return;
+  ev.preventDefault();
+  term.hi = Math.max(0, Math.min(term.history.length, term.hi + (ev.key === "ArrowUp" ? -1 : 1)));
+  $("term-in").value = term.history[term.hi] || "";
+});
+$("term-give").onclick = () => {  // 最後一個指令和輸出放進輸入框:使用者看過、自己按送出才會給模型
+  let t = term.last.trim();
+  if (!t) return alert("還沒有輸出");
+  const lines = t.split("\n");
+  if (lines.length > 150) t = "…(前面省略)\n" + lines.slice(-150).join("\n");
+  if (t.length > 6000) t = "…" + t.slice(-6000);
+  input.value = (input.value.trim() ? input.value.trim() + "\n\n" : "請幫我看這個終端機的輸出:\n\n") + "```\n" + t + "\n```";
+  autosize(); updateSend(); input.focus();
+};
 
 // ---------- 規劃模式、送出 ----------
 let planMode = false;
