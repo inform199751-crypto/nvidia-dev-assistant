@@ -4,6 +4,9 @@
 #   fixed/  參考解答(改過的檔案);離線測試用它確認「原本過不了驗收、套上就全部通過」,題目本身沒寫錯
 # prompt 照使用者平常的問法寫;files 是一起附上的檔案(像 CLI 的 -f)。
 # level 是出題時自己標的難度(normal / hard),拿來跟難度分類器的判斷比較;fails_visible: false = 原本的測試都會過(只有描述)。
+# history:工作區照順序提交這些快照(完整的專案),最後一個一定是 repo;HSUAN 可以用 git_log / git_blame 查是哪次改壞的。
+# 10/24 前 12 題 Super 全對,分不出模型的差別,後面 5 題(10/24 加的)刻意更難:要看 git 歷史、沒有重現方式、
+# 要對照規格文件找全部不一致、問題描述把人引到錯的地方、兩條路徑都要修而且不能拿掉快取;每題都有改錯地方就會被抓到的隱藏測試。
 
 - id: discount_rounding
   kind: 數值
@@ -70,3 +73,37 @@
   kind: 演算法
   level: hard
   prompt: 安裝順序的功能遇到循環依賴(a 依賴 b、b 依賴 c、c 依賴 a)不會報錯,直接排出一個裝不起來的順序。幫我修好,不要影響正常的情況。
+
+- id: daily_report_tz
+  kind: 要看 git 歷史
+  level: hard
+  fails_visible: false
+  prompt: 上週報表都還正常,這週開始每日報表怪怪的:有些訂單被算到前一天,營業額也比收銀機多。幫我查出是哪幾次改動造成的,並修好。
+  history:
+    - {dir: history/1, message: 每日報表第一版, author: Amy, date: "2026-10-06T10:12:00+08:00"}
+    - {dir: history/2, message: 重構:時間處理集中到 timeutil.py,新增金流對帳, author: 小陳, date: "2026-10-14T16:40:00+08:00"}
+    - {dir: repo, message: 每日報表加上取消數, author: 小陳, date: "2026-10-16T11:05:00+08:00"}
+
+- id: cursor_paging
+  kind: 沒有重現方式
+  level: hard
+  fails_visible: false
+  prompt: App 往下滑載入更多訂單的時候,偶爾會漏掉幾筆,訂單量大的店家比較常發生。幫我找出原因並修好。
+
+- id: order_states
+  kind: 對照規格
+  level: hard
+  fails_visible: false
+  prompt: 客服回報:已出貨的訂單還能被取消。規則寫在 docs/訂單狀態.md,請對照文件,把程式跟規則不一致的地方都找出來修好。
+
+- id: invoice_shipping
+  kind: 誤導的線索
+  level: hard
+  fails_visible: false
+  prompt: 客訴:有客人說他買的東西明明超過 1,000 元,結帳卻被收了 80 元運費。我們這週剛改過折價券的計算,是不是那邊改壞了?幫我查清楚並修好。
+
+- id: cache_invalidation
+  kind: 兩條路徑
+  level: hard
+  fails_visible: false
+  prompt: 後台改了商品價格之後,前台常常要過好幾分鐘才會變;用 CSV 批次改價的也一樣。幫我修好,但快取不能拿掉,資料庫撐不住。

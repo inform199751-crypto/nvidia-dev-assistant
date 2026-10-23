@@ -74,6 +74,7 @@ class Task:
     level: str = "normal"
     files: list[str] = field(default_factory=list)
     fails_visible: bool = True  # 原本的測試會不會失敗;False = 只有描述,要 HSUAN 自己重現
+    history: list[dict] = field(default_factory=list)  # git 歷史:照順序提交的快照 {dir, message, author, date},最後一個是 repo
 
 
 def load_tasks(root: Path = EVALS) -> list[Task]:
@@ -88,13 +89,24 @@ def reference_fix(task: Task) -> dict[str, str]:
 
 
 def make_workspace(task: Task, dest: Path) -> Path:
-    """題目的 repo/ 複製一份給 HSUAN;建成有一個提交的 git repo,git_log / git_blame 才有東西看。"""
-    shutil.copytree(task.root / "repo", dest)
-    if shutil.which("git"):
-        git = ["git", "-c", "user.name=eval", "-c", "user.email=eval@example.invalid", "-c", "core.autocrlf=false",
-               "-c", "init.defaultBranch=main"]
-        for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "初始版本"]):
-            subprocess.run(git + args, cwd=dest, capture_output=True)
+    """題目的 repo/ 複製一份給 HSUAN,建成 git repo(git_log / git_blame 才有東西看)。
+    有 history 的題目照順序提交每個快照,HSUAN 可以從歷史查出是哪次改壞的;沒有就只有一個「初始版本」。"""
+    dest.mkdir(parents=True)
+    has_git = shutil.which("git") is not None
+    git = ["git", "-c", "core.autocrlf=false", "-c", "init.defaultBranch=main"]
+    if has_git:
+        subprocess.run(git + ["init", "-q"], cwd=dest, capture_output=True)
+    for step in task.history or [{"dir": "repo", "message": "初始版本"}]:
+        for p in dest.iterdir():  # 換成這個快照:上一個快照有、這個沒有的檔案要刪掉
+            if p.name != ".git":
+                shutil.rmtree(p) if p.is_dir() else p.unlink()
+        shutil.copytree(task.root / step["dir"], dest, dirs_exist_ok=True)
+        if has_git:
+            date = {"GIT_AUTHOR_DATE": step["date"], "GIT_COMMITTER_DATE": step["date"]} if step.get("date") else {}
+            who = ["-c", f"user.name={step.get('author', 'eval')}", "-c", "user.email=eval@example.invalid"]
+            subprocess.run(git + ["add", "-A"], cwd=dest, capture_output=True)
+            subprocess.run(git + who + ["commit", "-q", "-m", step["message"]], cwd=dest, capture_output=True,
+                           env={**os.environ, **date})
     return dest
 
 

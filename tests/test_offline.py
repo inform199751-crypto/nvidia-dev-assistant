@@ -3820,6 +3820,7 @@ def _host_pytest(root):
 def test_eval_task_is_well_formed(task):
     """每一題:原本的程式過不了驗收(真的有 bug)、題目說測試會失敗的就真的會失敗,套上參考解答全部通過(題目沒寫錯)。"""
     assert task.level in ("normal", "hard") and task.kind
+    assert not task.history or task.history[-1]["dir"] == "repo"  # 最後一個提交就是 HSUAN 看到的工作區
     for rel in task.files:
         assert (task.root / "repo" / rel).is_file()
     assert not run_evals.verify(task, {}, _host_pytest)["passed"]
@@ -3827,6 +3828,22 @@ def test_eval_task_is_well_formed(task):
     assert visible["passed"] != task.fails_visible, visible["output"]
     fixed = run_evals.verify(task, run_evals.reference_fix(task), _host_pytest)
     assert fixed["passed"], fixed["output"]
+
+
+def test_eval_workspace_replays_git_history(tmp_path):
+    """要看 git 歷史的題目(10/24):工作區照順序提交每個快照(作者、日期照設定),最後的內容跟 repo/ 一模一樣。"""
+    task = {t.id: t for t in run_evals.load_tasks()}["daily_report_tz"]
+    ws = run_evals.make_workspace(task, tmp_path / "ws")
+    git = lambda *a: subprocess.run(["git", *a], cwd=ws, capture_output=True, text=True, encoding="utf-8").stdout
+    assert git("log", "--format=%an|%ad|%s", "--date=short").splitlines() == [
+        f"{s['author']}|{s['date'][:10]}|{s['message']}" for s in reversed(task.history)]
+    assert git("status", "--porcelain") == ""
+
+    def files(root):
+        return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*")
+                if p.is_file() and ".git" not in p.relative_to(root).parts}
+
+    assert files(ws) == files(task.root / "repo")
 
 
 def _edit_call(task, edits, call_id="c1"):
