@@ -660,10 +660,11 @@ def test_confirm_action_always_allow(monkeypatch):
 
 
 def test_nim_backend_uses_nim_context_window():
-    """catalog 給 Ultra 1M,地端預設 256K;切到 nim 時路由要照地端的長度算,不然送出去才被伺服器拒絕。"""
+    """catalog 給 Ultra 1M,地端預設 256K;切到 nim 時路由要照地端的長度算,不然送出去才被伺服器拒絕。
+    (10/25 起設成 1,000,000:跟備援 3.5 Super VL 的上限一樣,Ultra 收下的大請求退到備援才放得下)"""
     catalog = ModelRegistry.from_yaml(backend="catalog")
     nim = ModelRegistry.from_yaml(backend="nim")
-    assert catalog.spec("long_context").context_window == 1_048_576
+    assert catalog.spec("long_context").context_window == 1_000_000
     assert nim.spec("long_context").context_window == 262_144
     assert nim.spec("code").context_window == catalog.spec("code").context_window  # 沒寫 nim_context_window 就沿用
     assert catalog.pick_role(prompt_tokens=500_000) == "long_context"
@@ -4026,3 +4027,25 @@ def test_panel_files_source_git_changes_and_browser_shot(workspace, fake_sandbox
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_notice_when_a_fallback_model_answered(workspace):
+    """10/25:Nemotron 3 Super 在 catalog 上回 404 一整天,with_fallbacks 默默換成 DeepSeek,畫面看起來正常、其實每步慢 3–4 倍,
+    依難度選模型的分類器也全部失敗,沒人發現。現在伺服器回報的模型是設定裡的備援,就提醒一次,也記在結果裡(評測照它記)。
+    地端可能用自訂的模型名稱:不是設定裡的備援就不提醒。"""
+    def said(content, model):
+        msg = ai(content)
+        msg.response_metadata = {"model_name": model}
+        return msg
+
+    backup = CONFIG["roles"]["code_backup"]["model"]
+    events = []
+    reg, _ = scripted_registry([said("", backup), said("好了", backup), said("嗯", "my-onprem-name")])
+    session = AgentSession(reg, TokenQuota(10**6, 2), on_event=lambda kind, data: events.append((kind, data)))
+    r = session.ask("你好")
+    notices = [d["text"] for k, d in events if k == "notice" and "備援" in d["text"]]
+    assert r.answer == "好了" and r.models == [backup] and len(notices) == 1  # 同一輪只提醒一次
+    assert "deepseek-v4.1-flash 沒有回應" in notices[0] and "nemotron-3-super-120b-a12b" in notices[0]
+    events.clear()
+    r = session.ask("再一題")
+    assert r.models == ["my-onprem-name"] and not [d for k, d in events if k == "notice" and "備援" in d["text"]]

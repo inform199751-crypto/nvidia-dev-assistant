@@ -175,11 +175,11 @@ def run_one(task: Task, cfg: Config, registry, quota, work: Path, run: Callable[
             guard.check_folder(ws, public=True)  # 交給模型的資料夾一律過這一關(題目是自己寫的)
             session = agent.AgentSession(registry, quota, user=USER, role=cfg.role, tools=TOOLS)
             r = session.ask(task.prompt, task.files, split=cfg.split)
-            row.update(steps=r.steps, roles=[r.role], hit_limit=r.hit_limit, answer=r.answer[:500])
+            row.update(steps=r.steps, roles=[r.role], hit_limit=r.hit_limit, answer=r.answer[:500], served=list(r.models))
             if cfg.escalate and (hard := session.escalation(r)):
                 r = session.ask(agent.CONTINUE_TASK, role=hard)
                 row.update(steps=row["steps"] + r.steps, roles=row["roles"] + [r.role], hit_limit=r.hit_limit,
-                           answer=r.answer[:500])
+                           answer=r.answer[:500], served=row["served"] + [m for m in r.models if m not in row["served"]])
         except QuotaExceeded:
             raise
         except Exception as e:  # 伺服器忙線、放不下…:記下來,換下一題
@@ -344,7 +344,9 @@ def main() -> None:
                     print(f"這次的 token 預算用完了,停止:{e}")
                     break
             row.update(rep=rep, at=datetime.now(TAIPEI).isoformat(timespec="seconds"),
-                       models=[registry.spec(r).model.split("/")[-1] for r in row["roles"]])
+                       # 實際回答的模型(伺服器回報的):10/25 Super 下架,備援 DeepSeek 默默接手,以前照角色記會記錯
+                       models=[m.split("/")[-1] for m in row.pop("served", None) or
+                               [registry.spec(r).model for r in row["roles"]]])
             spent += row["tokens"]
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
             f.flush()

@@ -73,8 +73,11 @@ limits:
 roles:
   # 寫程式、改 Bug、邏輯推理 —— agent 主腦,必須支援 tool calling
   # 2026-10-06 冒煙測試:Super 每次 0.4–2.6 秒、DeepSeek 18–27 秒 → 日常用 Super,難題再指定 code_deep
+  # 2026-10-25:Nemotron 3 Super 在 catalog 上回 404(還列在模型清單裡,但呼叫找不到),備援默默換成 DeepSeek、
+  #   每步慢 3–4 倍,依難度選模型的分類器也一直失敗 → 換成 Nemotron 3.5 Super VL(同樣 120B-A12B,也看得懂圖片):
+  #   回答、關思考、tool calling 都正常,每次 0.8–1.9 秒;上限 1,000,000 tokens(送超量內容看錯誤訊息得知)
   code:
-    model: nvidia/nemotron-3-super-120b-a12b
+    model: nvidia/nemotron-3.5-super-vl-120b-a12b
     nim_base_url: http://nim-nemotron-super:8000/v1
     context_window: 131072                  # 模型支援 1M,刻意限制在 128K 控成本與延遲
     max_output: 8192
@@ -114,7 +117,8 @@ roles:
   long_context:
     model: nvidia/nemotron-3-ultra-550b-a55b
     nim_base_url: http://nim-nemotron-ultra:8000/v1
-    context_window: 1048576                 # catalog 給 1M
+    # catalog 實際給 1,048,576;設成跟備援(3.5 Super VL,1,000,000)一樣,Ultra 收下的大請求退到備援才放得下
+    context_window: 1000000
     nim_context_window: 262144              # 地端預設 256K;要 1M 得另開 vLLM 參數,顯存也要跟著加
     max_output: 16384
     timeout_s: 900                          # 幾十萬 token 的 prefill 可能要好幾分鐘
@@ -125,11 +129,11 @@ roles:
     thinking_off: {chat_template_kwargs: {enable_thinking: false}}
     fallbacks: [long_context_backup]        # 10/6 實測 Ultra 免費層會間歇回 503 過載
 
-  # Ultra 的備援:Super 在 catalog 上也給 1M(地端要另開 vLLM 參數才有)
+  # Ultra 的備援:3.5 Super VL 在 catalog 上也給 1M(地端要另開 vLLM 參數才有);10/25 從 Nemotron 3 Super 換過來
   long_context_backup:
-    model: nvidia/nemotron-3-super-120b-a12b
+    model: nvidia/nemotron-3.5-super-vl-120b-a12b
     nim_base_url: http://nim-nemotron-super:8000/v1
-    context_window: 1048576
+    context_window: 1000000
     nim_context_window: 262144              # 不能比 Ultra 小,不然 Ultra 收下的大請求一退到這裡就爆
     max_output: 16384
     timeout_s: 900

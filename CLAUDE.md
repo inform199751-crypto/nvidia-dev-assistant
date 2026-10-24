@@ -78,7 +78,7 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 
 **模型註冊表**(`llm_registry.py` + `models.yaml`):角色 → 模型。`code`(Super,日常主腦)、`code_deep`(DeepSeek,慢但適合難題)、`long_context`(Ultra 1M)、`long_context_backup`、`code_writer`(Qwen,只有地端、不支援工具)。
 - 預算 = `context_window × (1 − safety_margin) − max_output`。地端長度不同時寫 `nim_context_window`,`LLM_BACKEND=nim` 時取代 `context_window`。
-- 備援用 `with_fallbacks`;備援模型的預算不能比主模型小(`test_shipped_fallbacks_can_hold_what_primary_accepts` 會檢查)。
+- 備援用 `with_fallbacks`;備援模型的預算不能比主模型小(`test_shipped_fallbacks_can_hold_what_primary_accepts` 會檢查)。備援是安靜接手的:10/25 Nemotron 3 Super 在 catalog 上 404 一整天(清單上還在),全靠 DeepSeek 撐著沒人發現,所以 `AgentSession._note_served` 看伺服器回報的 `response_metadata["model_name"]`,是設定裡的備援就發 notice 一次,並記在 `AgentResult.models`(評測照它記 models)。現在日常主模型是 Nemotron 3.5 Super VL(上限 1,000,000,Ultra 設定跟著降到一樣)。
 - 思考開關寫在 YAML 的 `chat_template_kwargs`,不用套件的 `with_thinking_mode()`(地端自訂模型名會失效、而且會蓋掉 extra_body)。DeepSeek V4 的鍵是 `thinking`,Nemotron 是 `enable_thinking`。
 - Ultra 不能送 `force_nonempty_content`(會把推理混進回答);`strip_think_text` 另外清孤立的 `</think>`。
 - `ModelRegistry(chat_factory=...)` 可注入,離線測試就是靠這個換成假模型。
