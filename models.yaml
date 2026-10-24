@@ -32,9 +32,12 @@ routing:
   # 依難度選模型(difficulty.py):每輪開始先請分類器判斷「一般 / 難題」,難題改用 hard_role。
   #   off 不判斷 · shadow 在背景判斷、只記錄「本來會選哪個」,實際仍用 default_role、不等它 · on 等判斷結果再切換
   # 先用 shadow 累積紀錄(output/routing_log.jsonl),python report_routing.py 看準不準再改 on。
-  # 緊急關閉不用改這裡:環境變數 DIFFICULTY_ROUTING=off。使用者用 --role 指定時不判斷。
+  # 2026-10-25 改 on:端到端評測 17 題(run_evals.py),依難度選模型 16/17、平均 50.1k tokens;
+  #   只用 3.5 Super VL 兩次都 12/17、平均 65.8k / 78.8k(難題常做到 15 步上限)。分類器跟出題難度只有 9/15 一致,
+  #   但判斷錯的那幾題也都答對了;多花的是每輪約 300 tokens、約 1 秒。
+  # 緊急關閉不用改這裡:環境變數 DIFFICULTY_ROUTING=off(改回影子模式:DIFFICULTY_ROUTING=shadow)。使用者用 --role 指定時不判斷。
   difficulty:
-    mode: shadow
+    mode: "on"              # 要加引號:YAML 會把沒引號的 on / off 讀成 True / False
     classifier_role: code   # Super 關思考,約 1 秒;資料不出公司(地端一樣用自己的 NIM)
     hard_role: code_deep    # 也用在:一般模型做到步數上限時,問使用者要不要換它接著做(不管 mode)
     timeout_s: 20           # 分類器逾時就照預設,不讓整題卡住(只有 on 會等它)

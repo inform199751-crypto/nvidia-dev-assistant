@@ -218,7 +218,7 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
   <div class="margin">作品集<br>實測 10-06 – 10-10<br>更新 10-15</div>
   <div>
     <h1>對內研發助理<br>實測紀錄</h1>
-    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/15 邊做邊用真模型測試的過程,實測與審查一共抓到 60 個問題。</p>
+    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/15 邊做邊用真模型測試的過程,實測與審查一共抓到 61 個問題。</p>
     <div class="byline">
       <span><strong>HSUAN</strong></span>
       <span>Python · LangChain · NVIDIA NIM · Docker · Redis · scikit-learn</span>
@@ -261,7 +261,7 @@ flowchart LR
     G --> R{路由}
     R -->|放得下| S[code: Nemotron 3.5 Super 120B]
     R -->|超過約 11 萬 tokens| L[long_context: Nemotron 3 Ultra 550B]
-    R -.->|難題, 影子模式只記錄| D
+    R -->|難題| D
     S -.失敗備援.-> D[code_deep: DeepSeek v4.1-flash]
     L -.失敗備援.-> S2[Super 1M]
     A --> T1[讀檔 / 搜尋 / git 紀錄: 擋 .env 與金鑰]
@@ -272,7 +272,7 @@ flowchart LR
 </pre>
     </div>
     <p>agent 迴圈是自己寫的,沒有用現成的 create_agent,因為 token 檢查、歷史瘦身、模型升級都要插在「每一步送出之前」。工具只能讀、只能在沙箱裡跑測試、只能提 patch 等人確認,不會直接改任何檔案。</p>
-    <p>長度路由只管放不放得下。另外有一個難度分類器判斷題目難不難,目前在影子模式:只記錄「本來會選哪個模型」,累積真實紀錄、抽查準確之後才會真的切換。</p>
+    <p>長度路由只管放不放得下。另外有一個難度分類器判斷題目難不難,難題改用 DeepSeek。先用影子模式只記錄「本來會選哪個模型」,10/25 用 17 題端到端評測比較(依難度選模型 16/17、只用 Super 12/17)之後才打開。</p>
   </div>
 </section>
 
@@ -321,7 +321,7 @@ flowchart LR
           <tr><td>操作瀏覽器</td><td>本機開發中網站埋兩個 bug,請它測登入流程</td><td class="num">6 步 · 28,008 tokens · 76 秒<small>抓到 API 500 和主控台錯誤,漏掉畫面文字錯誤</small></td><td><span class="pill warn">1/2</span></td></tr>
           <tr><td>停止 / 回答中送出</td><td>思考中、寫到一半、等確認時按停止;回答中再送一則訊息</td><td>停止 0.3 秒內生效、已寫的文字留著;中途的訊息答完自動接著回答</td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">181 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">182 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端 NIM</td><td>需要 GPU 伺服器</td><td>只對照過官方文件</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
       </table>
@@ -331,13 +331,13 @@ flowchart LR
 
 <section>
   <div class="label">
-    <h2>抓到的 60 個問題</h2>
+    <h2>抓到的 61 個問題</h2>
     <div class="note">依類別分組,編號照發現順序,跟 README 一致。每一條都寫了怎麼發現的</div>
   </div>
   <div class="body">
     <ul class="tally">
       <li>模型與套件<b>13</b></li>
-      <li>token 與路由<b>7</b></li>
+      <li>token 與路由<b>8</b></li>
       <li>agent 行為與工具<b>18</b></li>
       <li>安全與隱私<b>10</b></li>
       <li>多人、部署與介面<b>8</b></li>
@@ -364,7 +364,7 @@ flowchart LR
     </div>
 
     <div class="group">
-      <h3>token 與路由 <span class="count">7</span></h3>
+      <h3>token 與路由 <span class="count">8</span></h3>
       <ol class="findings">
         <li><span class="n">09</span><div><span class="what">檔案都附上了,模型還分段重讀,每步重送 18 萬 tokens</span><span class="how"><span class="tag">長文本實測</span></span></div><div class="fix">整檔模式不給工具,一次回答</div></li>
         <li><span class="n">10</span><div><span class="what">token 估算低估約 20%(估 15.3 萬,實際 18.3 萬)</span><span class="how"><span class="tag">長文本實測</span></span></div><div class="fix">用實測重新校準,執行中再依實際用量修正</div></li>
@@ -373,6 +373,7 @@ flowchart LR
         <li><span class="n">15</span><div><span class="what">上下文長度用的是 catalog 的值(Ultra 1M),地端預設只有 256K,切到地端要送出才被拒</span><span class="how"><span class="tag">程式碼審查</span></span></div><div class="fix">角色可以另寫地端的上下文長度,切到地端時自動套用</div></li>
         <li><span class="n">26</span><div><span class="what">難度分類器把最常見的「單一測試失敗」判成難題,真的開啟會把一般請求丟給慢約 10 倍的 DeepSeek</span><span class="how"><span class="tag">分類器實測</span></span></div><div class="fix">改判斷標準:跨多個檔案又沒有頭緒才算難題;同 14 題重跑全部符合</div></li>
         <li><span class="n">29</span><div><span class="what">影子模式也同步等分類器,每題多等約 1 秒,答案卻不會變</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">影子模式改在背景判斷,不擋這一輪的回答</div></li>
+        <li><span class="n">61</span><div><span class="what">打開依難度選模型時,沒加引號的 on 被設定檔讀成 True,程式以為沒打開、永遠不會換模型</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">設定加引號;讀設定時把 True / False 當成 on / off</div></li>
       </ol>
     </div>
 
@@ -537,7 +538,7 @@ flowchart LR
       <li><strong>地端 NIM 沒有實際部署。</strong>需要 GPU 伺服器;Ultra 550B 要 8 張 B200 / H200 等級,建議第一階段先用 Super 120B(FP8 約 2 張 H100)。</li>
       <li>多人部署只在本機 Docker 測過,還沒在公司 SSO 和 GPU 主機上跑;多台伺服器要設 sticky session。</li>
       <li>沒有獨立的工作佇列:整份文件這種 8 分鐘的任務會佔住一個執行名額,同時執行上限要依 GPU 數量調整。</li>
-      <li>依難度選模型還在影子模式,要累積真實紀錄、抽查準確後才開啟。</li>
+      <li>依難度選模型 10/25 打開,但分類器跟出題時標的難度只有 9/15 一致,真實使用的準確度還要看紀錄。</li>
       <li>PoC 期間不能送公司真實程式碼到 build.nvidia.com:試用條款允許 NVIDIA 收集輸入輸出改進模型。這次測試用的是我自己的專案和虛構的示範文件。</li>
     </ul>
   </div>

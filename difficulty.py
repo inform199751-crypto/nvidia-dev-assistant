@@ -84,7 +84,10 @@ def settings(routing: dict) -> tuple[str, dict]:
         return "off", cfg
     if env:
         return (env if env in MODES else "off"), cfg
-    return cfg.get("mode", "off"), cfg
+    mode = cfg.get("mode", "off")
+    if isinstance(mode, bool):  # YAML 把沒加引號的 on / off 讀成 True / False(10/25 改 on 時差點踩到:True 永遠不會換模型)
+        mode = "on" if mode else "off"
+    return (mode if mode in MODES else "off"), cfg
 
 
 def _clip(text: str, chars: int, *, tail: bool = False) -> str:

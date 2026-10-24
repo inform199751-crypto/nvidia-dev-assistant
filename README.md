@@ -4,7 +4,7 @@
 改走 NVIDIA 生態系:開發期接 API Catalog(build.nvidia.com),正式環境換成地端 NIM 容器,**程式碼不用改**。
 
 重點不在「接上了模型」,而在:**依任務與 token 數動態切換模型、控制 token 與顯存、讓 agent 只能在沙箱裡動手**,
-而且每個設計都用真模型實測過。實測與審查抓到 60 個問題,見下方。
+而且每個設計都用真模型實測過。實測與審查抓到 61 個問題,見下方。
 
 ## 架構
 
@@ -15,7 +15,7 @@ flowchart LR
     G --> R{"路由<br/>llm_registry"}
     R -->|放得下| S["code<br/>Nemotron 3.5 Super 120B"]
     R -->|"超過約 11 萬 tokens"| L["long_context<br/>Nemotron 3 Ultra 550B · 1M"]
-    R -->|"難題(分類器判斷,預設影子模式只記錄)"| D
+    R -->|"難題(分類器判斷)"| D
     S -. 失敗備援 .-> D["code_deep<br/>DeepSeek v4.1-flash"]
     L -. 失敗備援 .-> S2["Super(1M)"]
     A --> T[工具]
@@ -71,9 +71,9 @@ flowchart LR
 | 停止 / 回答中送出(10/16) | 網頁上用真模型:等確認時、思考中、寫到一半按停止;回答中再送一則「改成只要 10 種就好」 | 停止都在 0.3 秒內生效,已寫出的文字留在畫面;同一題再問不會照抄;中途送的訊息標「已收到」,答完自動接著回答、只列 10 種 |
 | 端到端評測(10/24) | `run_evals.py`:17 題自己寫的修 bug 題,驗收用原本的測試加上 HSUAN 看不到的隱藏測試,在 Docker 裡跑。前 12 題一般難度(一般 8、難題 4);後 5 題刻意更難:要看 git 歷史、沒有重現方式、要對照規格文件找全部不一致、問題描述把人引到錯的地方(「是不是折價券改壞了」)、兩條路徑都要修而且不能拿掉快取 | Super **17/17** 通過(每題跑一次)。前 12 題平均 20.9k tokens、秒數中位數 59;後 5 題平均 75.4k tokens(3.6 倍)、中位數 298 秒(5 倍),最慢 716 秒。git 歷史那題做到 15 步上限(15.2 萬 tokens),但在上限前已經改對,也正確指出是哪兩個 commit;沒有被「折價券」的說法誤導,也沒有去改對帳共用的 `utc_day`。**難題差在成本和時間,不是做不做得到**。後 5 題再用 DeepSeek 跑一次:一樣 5/5,平均 49.5k tokens(比 Super 少 34%)、平均 7.6 步、沒有做到上限,但秒數中位數 396(Super 298):每一步比較慢,步數少的題目反而比較久;git 歷史和誤導線索這兩題最難的,DeepSeek 又省 tokens 又比較快(15.2 萬 / 559 秒 → 7.0 萬 / 396 秒) |
 | 端到端評測 · 換模型後(10/25) | 同樣 17 題,主模型換成 3.5 Super VL 之後,三種設定並排(每題跑一次) | **依難度選模型 16/17**(平均 50.1k tokens、秒數中位數 66):分類器把 7 題交給 DeepSeek,跟出題時標的難度一致 9/15;**只用 Super 12/17**(平均 65.8k、中位數 63):2 題把 propose_patch 的 edits 整個傳成字串、工具一直回參數錯誤後放棄(已修,見第 60 個問題),3 題只修到題目舉的例子、被隱藏測試抓到;DeepSeek 難題 5/5(49.5k、中位數 396)。**新的 Super 比舊的不穩,難題交給 DeepSeek 又準又省**。免費層的 3.5 Super VL 偶爾沒回應、由 DeepSeek 接手幾步,加上 temperature 1.0、只跑一次,數字當參考。修好參數之後只用 Super 再跑一次:**還是 12/17**(平均 78.8k、中位數 92):參數那兩題這次過了,但 4 題難題做到 15 步上限(每題 11–21 萬 tokens);兩次都沒過的是 notes_tags、cjk_truncate、daily_report_tz;order_states 它自己說刪除整行(new_string 空白)、含引號或中文的修改「序列化失敗」,還沒查清楚 |
-| 離線測試 | 假模型,不需金鑰 | 181 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 182 個全過 |
 
-## 實測與審查抓到的 60 個問題
+## 實測與審查抓到的 61 個問題
 
 | # | 問題 | 怎麼發現 | 處理 |
 |---|---|---|---|
@@ -137,6 +137,7 @@ flowchart LR
 | 58 | 終端機的錯誤看不懂:PowerShell 用 `-EncodedCommand` 又轉向時,錯誤變成一大段 CLIXML;原生程式的 stderr 被包成「位於 線路:2 字元:1…」;Python 3.13 的錯誤夾著顏色控制碼 | 網頁實測(10/23) | 在 PowerShell 裡把錯誤併進一般輸出、只留訊息文字;濾掉 ANSI 顏色碼、請子程式不要上色;重測 Python 錯誤和一般終端機一樣 |
 | 59 | Nemotron 3 Super(日常主模型)在 catalog 上回 404:模型清單上還在,呼叫卻找不到;備援默默換成 DeepSeek,畫面看起來正常、其實每步慢 3–4 倍,依難度選模型的分類器也全部失敗,一整天沒人發現 | 端到端評測(10/25,每步秒數跟 DeepSeek 一樣、分類器紀錄全是 404) | 換成 Nemotron 3.5 Super VL(冒煙測試全過;送超量內容從錯誤訊息得知上限 100 萬,Ultra 設定跟著降到一樣,備援才接得住);伺服器回報的模型是設定裡的備援時,畫面提醒一次、評測照實際回答的模型記錄 |
 | 60 | 換上 3.5 Super VL 後,它呼叫 propose_patch 常把 edits(修改清單)整個傳成 JSON 字串,工具一直回參數錯誤,17 題有 2 題它最後放棄、叫使用者自己手動改 | 端到端評測(10/25) | 呼叫工具前,參數定義是陣列 / 物件、收到的卻是 JSON 字串的,先轉回來再交給工具;本來就是字串的參數不動,轉不了就照原樣讓工具回錯誤 |
+| 61 | 把依難度選模型打開時,`mode: on` 沒加引號會被 YAML 讀成 True,程式拿 True 比 "on" 不相等,永遠不會換模型(寫 off 也會變成 False,反而一直判斷) | 審查(10/25,改設定時檢查讀出來的值) | 設定檔加引號;讀設定時把布林值當成 on / off、看不懂的值當 off |
 
 ## 執行
 
@@ -181,14 +182,14 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 .venv/Scripts/python agent.py "連休三天要找誰同意?" --kb demo_knowledge   # 知識庫:資料夾建成索引(只重算改過的)再回答
 .venv/Scripts/python agent.py --mcp mcp.json     # MCP 連接器(Claude Desktop 的 mcpServers 格式)
 .venv/Scripts/python agent.py --browser          # 操作瀏覽器測 localhost 的網站(用電腦上的 Edge,不用另外下載)
-.venv/Scripts/python report_routing.py --days 7   # 依難度選模型的報表(影子模式累積的紀錄)
+.venv/Scripts/python report_routing.py --days 7   # 依難度選模型的報表(每輪的判斷和結果)
 .venv/Scripts/python train_models.py --label     # 自己的小模型:先請 Super 標註 ml/seed_questions.txt 的範例問題
 .venv/Scripts/python train_models.py             # 訓練 + 實驗(決策樹、邏輯回歸、線性回歸…),報告和圖在 output/models/report.md
 .venv/Scripts/python run_evals.py --configs super deepseek   # 端到端評測(會呼叫模型、要 Docker),報表在 output/evals/<時間>/report.md
 .venv/Scripts/python -m pytest -q                 # 離線測試,不需金鑰
 ```
 
-### 依難度選模型(預設影子模式)
+### 依難度選模型(10/25 起打開)
 
 長度路由只管「放不放得下」;`difficulty.py` 每輪開始再問一次「難不難」。作法參考 jev-codex-router,
 但它把每一步的任務摘要送到外部的 TypeSafe 做判斷,這裡改用自己的模型,**資料不出公司,地端 NIM 也一樣能用**:
@@ -196,6 +197,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 - `models.yaml` 的 `routing.difficulty.mode`:`off` 不判斷、`shadow` 在背景判斷、只記錄「本來會選哪個」(實際仍用 Super,也不等它)、`on` 等判斷結果再切換。
 - 分類器只看這次的問題、上一個問題和回答的結尾、附檔名稱(不看檔案內容和工具輸出)。一輪只判斷一次,照計畫執行沿用規劃那輪的判斷。
 - 分類失敗(逾時 20 秒、伺服器掛掉、回答看不懂)就照預設模型回答,不擋這一題;`--role` 指定時不判斷。
+- 10/25 從影子模式改成 `on`:端到端評測 17 題,依難度選模型 16/17、平均 50.1k tokens;只用 3.5 Super VL 兩次都 12/17、平均 65.8k / 78.8k(難題常做到 15 步上限)。`models.yaml` 的 `"on"` 要加引號:YAML 會把沒引號的 on / off 讀成 True / False(程式也做了防呆)。
 - 緊急關閉不用改設定檔:環境變數 `DIFFICULTY_ROUTING=off`。
 - 每輪一行記在 `output/routing_log.jsonl`(只留問題開頭 80 字,不記使用者;8 MB 輪替)。`report_routing.py` 會依判斷分組比較步數、tokens、秒數;
   判斷為難題的那組如果明顯比較吃力,再人工抽查列出的題目,確認準了才改 `on`。
@@ -208,7 +210,7 @@ docker build -t dev-assistant-sandbox sandbox     # 測試沙箱(含 pytest)
 - **地端 NIM 沒實際部署過**:需要 GPU 伺服器。Ultra 550B 要 8×B200/H200 等級,建議第一階段用 Super 120B(FP8 約 2×H100)。
 - 多人部署(`deploy/`)已在本機 Docker 實測(兩個身分同時問、Redis 額度正確、唯讀工作區提 patch),但**還沒在公司 SSO 和 GPU 主機上實際跑過**;對話存在每人的資料夾,多台伺服器要設 sticky session。
 - 端到端評測每題只跑一次(temperature 1.0),差一兩題可能只是運氣;要每題多跑幾次才看得出穩定的差別。題目是自己寫的小專案(最多十幾個檔案),比真實的專案小很多。
-- 依難度選模型還在影子模式:分類器只用 14 題自己出的題目測過,每輪多約 300 tokens(在背景跑,不拖慢回答);要累積真實紀錄、抽查準確後才改 `on`。
+- 依難度選模型 10/25 打開(端到端評測 16/17 vs 只用 Super 12/17),但分類器跟出題時標的難度只有 9/15 一致,真實使用的準確度要看 `report_routing.py`;每輪多約 300 tokens、等分類器約 1 秒。免費層的 Super 沒回應時分類器會失敗,照預設模型回答。
 - 模型清單會汰換,上線前用 `ChatNVIDIA.get_available_models()` 或 `smoke_test.py` 再對一次。
 - `requirements.txt` 鎖在實測過的版本:程式依賴 langchain-nvidia-ai-endpoints 的內部行為,升版前先跑離線測試和 `smoke_test.py`。
 - 地端的 `nim_context_window`(Ultra / Super 備援 256K)是規劃值,部署時 `NIM_MAX_MODEL_LEN` 要設成一樣。

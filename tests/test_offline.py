@@ -4066,3 +4066,14 @@ def test_list_arguments_sent_as_json_strings_are_accepted(workspace, fake_sandbo
     assert "已改在草稿上" in str(seen[1][1][-1].content)
     assert coerce_args(tools.read_file, {"path": "[1]"}) == {"path": "[1]"}
     assert coerce_args(tools.propose_patch, {"edits": "不是 JSON"}) == {"edits": "不是 JSON"}  # 轉不了就照原樣,讓工具回錯誤
+
+
+def test_shipped_difficulty_routing_is_on_and_yaml_booleans_read_as_modes(monkeypatch):
+    """10/25 打開依難度選模型(端到端評測 16/17,只用 3.5 Super VL 兩次都 12/17)。改設定時差點踩到:
+    YAML 會把沒加引號的 on / off 讀成 True / False,True 不等於 "on",永遠不會換模型 —— 設定檔加引號,
+    settings 也把布林值當成 on / off,看不懂的值當 off。"""
+    import difficulty
+    monkeypatch.delenv("DIFFICULTY_ROUTING", raising=False)
+    assert difficulty.settings(ModelRegistry.from_yaml().routing)[0] == "on"
+    assert [difficulty.settings({"difficulty": {"mode": m}})[0] for m in (True, False, "shadow", "亂寫")] == [
+        "on", "off", "shadow", "off"]
