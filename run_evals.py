@@ -327,13 +327,16 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     # 這次的路由紀錄、成品都放在結果資料夾:不混進平常使用的 routing_log.jsonl(report_routing.py 看的是真實使用)
     toolbox.configure(output_dir=out)
-    quota = TokenQuota(args.budget, registry.limits["max_concurrent_per_user"])  # 只記在記憶體,不算進平常的用量
+    spent = 0  # 這次用掉的 tokens(--budget 是整次的上限)
     done = {(r["task"], r["config"], r.get("rep", 1)) for r in latest(read_rows(out)) if not r["error"]}
     todo = [(t, CONFIGS[c], rep) for rep in range(1, args.repeat + 1) for c in args.configs for t in tasks
             if (t.id, c, rep) not in done]
     print(f"{len(todo)} 次要跑(跳過已經有結果的 {len(done)} 次),結果在 {out}")
     with (out / "results.jsonl").open("a", encoding="utf-8") as f:
         for n, (task, cfg, rep) in enumerate(todo, 1):
+            # 額度只記在記憶體,不算進平常的用量;每題用剩下的預算重建 —— TokenQuota 是「每日」額度,
+            # 10/25 跑到一半過了午夜,用量歸零,預算和最後印的總用量都不對
+            quota = TokenQuota(max(args.budget - spent, 0), registry.limits["max_concurrent_per_user"])
             with tempfile.TemporaryDirectory(prefix=f"hsuan_eval_{task.id}_") as tmp:
                 try:
                     row = run_one(task, cfg, registry, quota, Path(tmp))
@@ -342,13 +345,14 @@ def main() -> None:
                     break
             row.update(rep=rep, at=datetime.now(TAIPEI).isoformat(timespec="seconds"),
                        models=[registry.spec(r).model.split("/")[-1] for r in row["roles"]])
+            spent += row["tokens"]
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
             f.flush()
             mark = "✓ 通過" if row["passed"] else "✗ 出錯" if row["error"] else "✗ 上限" if row["hit_limit"] else "✗ 沒過"
             print(f"[{n:>2}/{len(todo)}] {cfg.name:<8} {task.id:<18} {mark}  {row['steps']} 步  "
                   f"{row['tokens']:,} tokens  {row['seconds']:.0f} 秒" + (f"  {row['error']}" if row["error"] else ""),
                   flush=True)
-    print(f"\n用掉 {quota.used(USER):,} tokens。報表:{write_report(out)}")
+    print(f"\n這次用掉 {spent:,} tokens。報表:{write_report(out)}")
 
 
 if __name__ == "__main__":
