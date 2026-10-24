@@ -16,7 +16,7 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 .venv/Scripts/python smoke_test.py                       # 對 catalog 真模型做冒煙測試,結果附加到 smoke_results.log
 .venv/Scripts/python smoke_test.py --roles long_context --checks think_off tool   # 只重跑失敗的項目
 .venv/Scripts/python report_routing.py --days 7          # 依難度選模型的報表(讀 output/routing_log.jsonl)
-.venv/Scripts/python run_evals.py --configs super deepseek  # 端到端評測(會呼叫模型、要 Docker):12 題修 bug → output/evals/<時間>/report.md
+.venv/Scripts/python run_evals.py --configs super deepseek  # 端到端評測(會呼叫模型、要 Docker):17 題修 bug → output/evals/<時間>/report.md
 .venv/Scripts/python run_evals.py --out output/evals/<那次>  # 接著跑沒跑完 / 出錯的;--report <那次> 只重產報表
 .venv/Scripts/python train_models.py --label             # 小模型:請 Super 標註 ml/seed_questions.txt(會呼叫模型)
 .venv/Scripts/python train_models.py                     # 訓練 + 實驗報告 → output/models/(report.md、圖、模型 JSON)
