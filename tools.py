@@ -45,6 +45,7 @@ class Workbench:
     lang: str | None = None         # 回答語言(網頁帳號選單選的,見 agent.ANSWER_LANGS);None = 繁中
     knowledge: list = field(default_factory=list)  # 這個人的知識庫(knowledge.KnowledgeBase),search_knowledge 搜這些
     browser: object | None = None   # 這段對話的瀏覽器分頁(browser.Tab,第一次用 browser 工具才開)
+    browser_shot: tuple | None = None  # HSUAN 瀏覽器最後的畫面 (時間, 網址, JPEG):網頁右邊面板的「瀏覽器」分頁顯示
 
 
 _bench: ContextVar[Workbench] = ContextVar("workbench", default=Workbench())

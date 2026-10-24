@@ -362,6 +362,7 @@ def browser(action: Literal["open", "click", "type", "press", "back", "look", "c
             if not is_dev_url(now := tab.url()):  # 轉址或點了連結跑到別的網站:停下來
                 tab.goto("about:blank")
                 return f"網頁被導到 {urlsplit(now).hostname}(不是開發用的位址),已經停下來、回到空白頁。"
+            _keep_shot(wb, tab, now)
             return _look(tab, text) if action == "look" else tab.snapshot()
     except BrowserError as e:
         return f"錯誤:{e}"
@@ -370,6 +371,14 @@ def browser(action: Literal["open", "click", "type", "press", "back", "look", "c
             wb.browser.close()
         wb.browser = None
         return f"錯誤:瀏覽器斷線了({type(e).__name__}),請重新 open"
+
+
+def _keep_shot(wb: toolbox.Workbench, tab: Tab, url: str) -> None:
+    """每個動作後留一張截圖,網頁右邊的「瀏覽器」分頁讓使用者看 HSUAN 現在看到什麼(10/24)。截不到不影響工具。"""
+    try:
+        wb.browser_shot = (time.time(), url, tab.screenshot())
+    except Exception:
+        pass
 
 
 def _look(tab: Tab, focus: str) -> str:

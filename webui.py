@@ -864,14 +864,80 @@ class Hub:
                 files.append({"path": rel, "new": before is None, "diff": diff[:MAX_DIFF_CHARS],
                               "added": sum(1 for x in lines if x.startswith("+") and not x.startswith("+++")),
                               "removed": sum(1 for x in lines if x.startswith("-") and not x.startswith("---"))})
-        patches = self.bench.patches
-        return {"env": None if self.chat else {"project": self.workspace.name, "branch": git_branch(self.workspace),
+        patches, shot = self.bench.patches, self.bench.browser_shot
+        # 拖進來的副本放在 HSUAN 的 output 裡:往上找到的是 HSUAN 自己的 git,不是這個專案的
+        branch = None if self.copy else git_branch(self.workspace)
+        return {"env": None if self.chat else {"project": self.workspace.name, "branch": branch,
                                                "path": str(self.workspace) if paths else "", "copy": self.copy},
+                "browser": {"at": shot[0], "url": shot[1]} if shot else None,
                 "context": {"tokens": tokens, "budget": s.registry.budget(role), "used": s.tokens_used,
                             "summarize_at": s.registry.limits.get("summarize_at", 0.6),
                             "model": s.registry.spec(role).model.split("/")[-1]},
                 "changes": None if self.chat else {"files": files, "team": self.team, "copy": self.copy,
                                                    "passed": patches[-1][1] if files and patches else None}}
+
+    def files(self) -> dict:
+        """右邊面板的「檔案」分頁:專案裡看得到的檔案。跟 list_files 同一套規則(不給機密檔、.git、隱藏和大型目錄),
+        草稿改過的標 draft、草稿新增還沒套用的也列出來(new)。"""
+        root, draft, out, more = self.workspace, dict(self.bench.draft), [], False
+        with toolbox.using(self.bench):
+            for folder, dirs, names in os.walk(root):
+                dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in toolbox._SKIP_DIRS)
+                for name in sorted(names):
+                    p = Path(folder) / name
+                    if not toolbox._visible(p):
+                        continue
+                    rel = toolbox._rel(p)
+                    out.append({"path": rel, "size": p.stat().st_size, "draft": rel in draft})
+                    if len(out) >= FILES_LIMIT:
+                        more = True
+                        break
+                if more:
+                    break
+            out += [{"path": rel, "size": len(text.encode("utf-8")), "draft": True, "new": True}
+                    for rel, text in sorted(draft.items()) if not (root / rel).exists()]
+        return {"root": root.name, "files": out, "more": more}
+
+    def source(self, rel: str) -> dict:
+        """「檔案」分頁打開一個檔案:草稿改過的給草稿版本(跟 HSUAN 讀到的一樣)。機密檔、工作區外丟 PermissionError / ValueError。"""
+        with toolbox.using(self.bench):
+            p = toolbox._safe_path(rel)
+            rel = toolbox._rel(p)
+            in_draft = rel in self.bench.draft
+            if not in_draft and not p.is_file():
+                raise FileNotFoundError(rel)
+            data = self.bench.draft[rel].encode("utf-8") if in_draft else p.read_bytes()[:VIEW_MAX_BYTES + 1]
+        info = {"path": rel, "draft": in_draft, "size": len(data) if in_draft else p.stat().st_size}
+        if b"\0" in data[:8000]:
+            return {**info, "binary": True, "text": ""}
+        return {**info, "binary": False, "truncated": len(data) > VIEW_MAX_BYTES,
+                "text": data[:VIEW_MAX_BYTES].decode("utf-8", errors="replace")}
+
+    def git_changes(self) -> dict:
+        """「變更」分頁的下半部:專案裡還沒 commit 的修改(git diff HEAD + 還沒加入 git 的檔案),只讀。
+        不是 git 專案、拖進來的副本、沒有 git 回傳 {"git": False}。"""
+        root = self.workspace
+        if self.chat or self.copy or not shutil.which("git") or git_branch(root) is None:
+            return {"git": False}
+
+        def git(*args: str) -> subprocess.CompletedProcess:
+            return subprocess.run(["git", "-c", "core.quotepath=false", *args], cwd=root, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=15, stdin=subprocess.DEVNULL,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))  # 桌面版不閃黑視窗
+
+        opts = ["--relative", "--no-color", "--no-ext-diff", "--no-renames"]  # --relative:專案是 repo 的子資料夾時只看它
+        try:
+            r = git("diff", "HEAD", *opts)
+            if r.returncode != 0:  # 還沒有任何 commit:跟暫存區比
+                r = git("diff", *opts)
+            untracked = git("ls-files", "--others", "--exclude-standard").stdout.splitlines()
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return {"git": True, "branch": git_branch(root), "error": f"git 沒有回應:{type(e).__name__}"}
+        files = parse_git_diff(r.stdout)
+        untracked = [u for u in untracked if not toolbox._is_secret(Path(u))
+                     and not set(PurePosixPath(u).parts) & toolbox._SKIP_DIRS]
+        return {"git": True, "branch": git_branch(root), "files": files[:GIT_DIFF_FILES], "more": len(files) > GIT_DIFF_FILES,
+                "untracked": untracked[:GIT_DIFF_FILES]}
 
     def patch_file(self, index: int) -> Path | None:
         if index == -1:  # 最新的那份
@@ -1015,6 +1081,43 @@ def version() -> str:
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return r.stdout.strip() if r.returncode == 0 else ""
+
+
+FILES_LIMIT = 3000             # 「檔案」分頁最多列幾個檔案
+VIEW_MAX_BYTES = 400_000       # 「檔案」分頁打開檔案:太大的只給前面
+GIT_DIFF_FILES = 300           # 「變更」分頁:git 的修改最多列幾個檔案
+
+
+def parse_git_diff(text: str) -> list[dict]:
+    """`git diff` 的輸出拆成每個檔案:路徑、+/− 行數、diff(太長截斷)。機密檔(.env、金鑰)只留名字,內容不給。"""
+    files, chunk = [], []
+
+    def flush():
+        if not chunk:
+            return
+        path = ""
+        for line in chunk:  # +++ b/路徑(刪掉的檔案是 /dev/null,改看 --- a/路徑)
+            if line.startswith(("+++ ", "--- ")) and line[4:].strip('"') != "/dev/null":
+                path = line[4:].strip('"')[2:]
+                if line.startswith("+++ "):
+                    break
+        if not path:  # 二進位檔沒有 +++ / --- 行
+            path = chunk[0].split(" b/", 1)[-1].strip('"')
+        body = "\n".join(chunk)
+        secret = toolbox._is_secret(Path(path))
+        files.append({"path": path, "secret": secret, "binary": "Binary files" in body and "@@" not in body,
+                      "added": sum(1 for x in chunk if x.startswith("+") and not x.startswith("+++")),
+                      "removed": sum(1 for x in chunk if x.startswith("-") and not x.startswith("---")),
+                      "deleted": "deleted file mode" in body, "new": "new file mode" in body,
+                      "diff": "" if secret else body[:MAX_DIFF_CHARS]})
+        chunk.clear()
+
+    for line in text.splitlines():
+        if line.startswith("diff --git "):
+            flush()
+        chunk.append(line)
+    flush()
+    return files
 
 
 def git_branch(folder: Path) -> str | None:
@@ -1801,6 +1904,7 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                              # 設定頁的「操作瀏覽器」:開了沒、這裡能不能開(訪客、多人模式、沒有 Edge / Chrome 不行)
                              "browser": {"on": desk.browser_on, "can": desk.can_browse and not team and not guest},
                              "terminal": self._term_ok(),  # 右上角的終端機按鈕:只有這台電腦自己看得到
+                             "seq": len(hub.events),  # 最新的事件編號:頁面分得出哪些是重播、哪些是剛發生的
                              "company_paths": [str(x) for x in guard.COMPANY_PATHS] if self._local() and not guest else []}
                     if lan and self._local():  # 手機連線方式只給這台電腦看
                         state["lan"] = {"urls": [f"http://{ip}:{port}" for ip in lan.ips], "pin": lan.pin}
@@ -1808,6 +1912,33 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             elif url.path == "/api/panel":  # 右邊的工作狀態面板:環境、背景資訊、變更
                 if self._token_ok(self.headers.get("X-Token")):
                     self._json(200, self._hub().panel(paths=not self._guest()))
+            elif url.path == "/api/files":  # 右邊面板的「檔案」分頁:專案的檔案清單
+                if self._token_ok(self.headers.get("X-Token")):
+                    hub = self._hub()
+                    if hub.chat:
+                        return self._json(400, {"error": "對話模式不綁專案,沒有檔案"})
+                    self._json(200, hub.files())
+            elif url.path == "/api/source":  # 「檔案」分頁打開一個檔案(唯讀;機密檔、工作區外一律不給)
+                if self._token_ok(self.headers.get("X-Token")):
+                    hub = self._hub()
+                    try:
+                        if hub.chat:
+                            raise FileNotFoundError("對話模式不綁專案")
+                        self._json(200, hub.source((qs.get("path") or [""])[0]))
+                    except PermissionError as e:
+                        self._json(403, {"error": str(e)})
+                    except (ValueError, FileNotFoundError, OSError) as e:
+                        self._json(404, {"error": f"打不開:{e}"})
+            elif url.path == "/api/gitdiff":  # 「變更」分頁:專案裡還沒 commit 的修改
+                if self._token_ok(self.headers.get("X-Token")):
+                    # 訪客的空間在 HSUAN 自己的資料夾裡,往上找到的是 HSUAN 的 git,不給看
+                    self._json(200, {"git": False} if self._guest() else self._hub().git_changes())
+            elif url.path == "/api/browser/shot":  # 「瀏覽器」分頁:HSUAN 的瀏覽器最後的畫面(<img> 不能帶標頭,token 放網址)
+                if self._token_ok((qs.get("token") or [None])[0]):
+                    shot = self._hub().bench.browser_shot
+                    if not shot:
+                        return self._json(404, {"error": "HSUAN 還沒用過瀏覽器"})
+                    self._send(200, shot[2], "image/jpeg", {"Cache-Control": "no-store"})
             elif url.path == "/api/phone":  # 手機連線的狀態(含 PIN):只給這台電腦自己看
                 if self._token_ok(self.headers.get("X-Token")):
                     if not phone or not self._local():

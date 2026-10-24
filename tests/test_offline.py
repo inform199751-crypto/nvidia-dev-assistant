@@ -3556,6 +3556,8 @@ def test_browser_tests_a_local_dev_site(workspace):
         assert run(action="open", url=base + "/") == browser.DENIED and asked[0][1] == base + "/"
         page = run(action="open", url=base + "/")
         assert "標題:測試商店" in page and "input(text) 「名字」" in page
+        shot = tools.bench().browser_shot  # 10/24:每個動作後留一張截圖,網頁右邊「瀏覽器」分頁看 HSUAN 看到什麼
+        assert shot[1] == base + "/" and shot[2][:2] == b"\xff\xd8"
         run(action="type", ref=_ref(page, "名字"), text="小明")
         page = run(action="type", ref=_ref(page, "密碼"), text="test-only-pass")
         assert "已填" in page and "test-only-pass" not in page  # 密碼欄不回傳內容
@@ -3946,6 +3948,81 @@ def test_panel_shows_project_context_and_draft(workspace, fake_sandbox, tmp_path
         chat = httpx.post(base + "/api/conv/new", json={"kind": "chat"}, headers=h).json()["id"]
         p = httpx.get(base + "/api/panel", headers={**h, "X-Conv": chat}).json()
         assert p["env"] is None and p["changes"] is None and p["context"]["tokens"] > 0
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_parse_git_diff_splits_files_and_hides_secrets():
+    """「變更」分頁的 git 修改:每個檔案 +/− 行數;.env 這類機密檔只給名字不給內容;刪掉的、二進位的分得出來。"""
+    import webui
+    text = ("diff --git a/app.py b/app.py\nindex 1..2 100644\n--- a/app.py\n+++ b/app.py\n@@ -1 +1,2 @@\n-x = 1\n+x = 2\n+y = 3\n"
+            "diff --git a/.env b/.env\nindex 3..4 100644\n--- a/.env\n+++ b/.env\n@@ -1 +1 @@\n-TOKEN=old\n+TOKEN=new\n"
+            "diff --git a/old.txt b/old.txt\ndeleted file mode 100644\n--- a/old.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-bye\n"
+            "diff --git a/logo.png b/logo.png\nnew file mode 100644\nBinary files /dev/null and b/logo.png differ\n")
+    files = webui.parse_git_diff(text)
+    assert [(f["path"], f["added"], f["removed"]) for f in files] == [
+        ("app.py", 2, 1), (".env", 1, 1), ("old.txt", 0, 1), ("logo.png", 0, 0)]
+    assert files[1]["secret"] and files[1]["diff"] == "" and "TOKEN" not in json.dumps(files)
+    assert files[2]["deleted"] and files[3]["binary"] and files[3]["new"] and "+y = 3" in files[0]["diff"]
+
+
+def test_panel_files_source_git_changes_and_browser_shot(workspace, fake_sandbox, tmp_path_factory):
+    """右邊面板的分頁(10/24):「檔案」不列機密檔、.git、node_modules,草稿改過 / 新增的標出來,打開看到草稿版本,
+    .env 拿不到、二進位檔不給內容;「變更」的 git 修改只讀、機密檔只給名字、列出還沒加入 git 的檔案,不是 git 專案就說沒有;
+    「瀏覽器」拿得到 HSUAN 最後的截圖;對話模式沒有檔案。"""
+    import httpx
+    import webui
+    for rel, text in {"calc.py": "def add(a, b):\n    return a - b\n", "notes.md": "待辦\n", ".env": "TOKEN=old\n",
+                      "node_modules/x/i.js": "1\n"}.items():
+        (workspace / rel).parent.mkdir(parents=True, exist_ok=True)
+        (workspace / rel).write_text(text, encoding="utf-8")
+    (workspace / "logo.bin").write_bytes(b"\x00\x01\x02")
+    reg, _ = scripted_registry([])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=tmp_path_factory.mktemp("state"))
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    get = lambda route, **params: httpx.get(base + route, params=params, headers=h)  # noqa: E731
+    try:
+        assert get("/api/gitdiff").json() == {"git": False}
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "init.defaultBranch=main"]
+        for args in (["init", "-q"], ["add", "-A", "-f"], ["commit", "-q", "-m", "init"]):
+            subprocess.run(git + args, cwd=workspace, check=True, capture_output=True)
+        (workspace / "notes.md").write_text("待辦:補測試\n", encoding="utf-8")
+        (workspace / ".env").write_text("TOKEN=new-secret\n", encoding="utf-8")
+        (workspace / "new.txt").write_text("新的\n", encoding="utf-8")
+        (workspace / ".env.local").write_text("KEY=x\n", encoding="utf-8")
+        hub = desk.hub(None)
+        with tools.using(hub.bench):
+            patch(("calc.py", "    return a - b", "    return a + b"), ("tests/test_new.py", "", "def test_x():\n    pass\n"))
+
+        files = {f["path"]: f for f in get("/api/files").json()["files"]}
+        assert set(files) == {"calc.py", "notes.md", "new.txt", "logo.bin", "tests/test_new.py"}
+        assert files["calc.py"]["draft"] and not files["notes.md"]["draft"] and files["tests/test_new.py"].get("new")
+        src = get("/api/source", path="calc.py").json()
+        assert src["draft"] and "a + b" in src["text"] and not src["binary"]
+        assert get("/api/source", path="logo.bin").json()["binary"] is True
+        assert get("/api/source", path="tests/test_new.py").json()["text"] == "def test_x():\n    pass\n"
+        assert get("/api/source", path=".env").status_code == 403
+        assert get("/api/source", path="../x").status_code == 404
+
+        g = get("/api/gitdiff").json()
+        changed = {f["path"]: f for f in g["files"]}
+        assert g["git"] and g["branch"] == "main" and set(changed) == {"notes.md", ".env"}  # 草稿還沒套用,不在 git 裡
+        assert changed[".env"]["secret"] and "new-secret" not in json.dumps(g)
+        assert g["untracked"] == ["new.txt"]  # .env.local 是機密檔,名字也不列
+
+        assert httpx.get(base + "/api/browser/shot", params={"token": "t0k"}).status_code == 404
+        hub.bench.browser_shot = (1.5, "http://localhost:3000/", b"\xff\xd8jpeg")
+        r = httpx.get(base + "/api/browser/shot", params={"token": "t0k"})
+        assert r.content == b"\xff\xd8jpeg" and r.headers["content-type"] == "image/jpeg"
+        assert get("/api/panel").json()["browser"] == {"at": 1.5, "url": "http://localhost:3000/"}
+        assert get("/api/state").json()["seq"] == len(hub.events)
+
+        chat = httpx.post(base + "/api/conv/new", json={"kind": "chat"}, headers=h).json()["id"]
+        assert httpx.get(base + "/api/files", headers={**h, "X-Conv": chat}).status_code == 400
+        assert httpx.get(base + "/api/gitdiff", headers={**h, "X-Conv": chat}).json() == {"git": False}
     finally:
         server.shutdown()
         server.server_close()

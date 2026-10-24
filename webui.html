@@ -257,6 +257,41 @@
                          font: 12.5px ui-monospace, Consolas, monospace; }
   .pfile summary small { font: 12px ui-monospace, Consolas, monospace; white-space: nowrap; }
   .pfile .diff { margin: 4px 0 6px; max-height: 260px; font-size: 11.5px; }
+  /* 分頁:狀態 / 變更 / 檔案 / 瀏覽器;變更、檔案、瀏覽器比較寬,左邊緣可以拖拉調寬度 */
+  .panel { position: relative; }
+  .panel.wide { width: var(--panel-w, 560px); }
+  .panel-grip { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 5; display: none; }
+  .panel.wide .panel-grip { display: block; }
+  .panel-grip:hover, .panel-grip.drag { background: color-mix(in srgb, var(--accent) 50%, transparent); }
+  .panel-tabs { display: flex; gap: 2px; flex: 1; min-width: 0; overflow-x: auto; font-weight: 400; }
+  .panel-tabs button { border: 0; background: none; color: var(--faint); padding: 4px 10px; border-radius: 8px; font-size: 13.5px; white-space: nowrap; }
+  .panel-tabs button:hover { color: var(--text); }
+  .panel-tabs button[aria-selected="true"] { background: var(--active); color: var(--text); }
+  .pane { display: flex; flex-direction: column; gap: 12px; }
+  .pane[data-tab="browser"] { flex: 1; min-height: 0; }
+  .pbar { display: flex; gap: 6px; align-items: center; }
+  .pbar input { flex: 1; min-width: 0; font: inherit; font-size: 13.5px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 8px;
+                background: var(--bg); color: var(--text); }
+  .pane h5 { margin: 6px 0 0; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+  .flist { font-size: 13.5px; }
+  .fdir > summary, .ffile { display: flex; align-items: center; gap: 6px; width: 100%; padding: 2px 6px; border: 0; border-radius: 6px;
+                            background: none; color: var(--text); text-align: left; cursor: pointer; list-style: none; font: inherit; }
+  .fdir > summary::-webkit-details-marker { display: none; }
+  .fdir > summary:hover, .ffile:hover { background: var(--hover); }
+  .fdir svg, .ffile svg { color: var(--faint); }
+  .fkids { padding-left: 14px; }
+  .ffile .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ffile small { color: var(--faint); font-size: 11.5px; white-space: nowrap; }
+  .fhead { font: 12.5px ui-monospace, Consolas, monospace; color: var(--muted); overflow-wrap: anywhere; }
+  pre.src { margin: 0; background: var(--code); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; overflow: auto;
+            font: 12px/1.55 ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre; tab-size: 4; }
+  pre.src .ln { display: inline-block; color: var(--faint); margin-right: 12px; text-align: right; user-select: none; }
+  .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 10px; background: var(--hover); align-self: flex-start; }
+  .seg button { border: 0; background: none; color: var(--faint); border-radius: 8px; padding: 3px 12px; font-size: 13px; }
+  .seg button[aria-pressed="true"] { background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
+  .bview { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; }
+  .bframe { width: 100%; flex: 1; min-height: 420px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  .bshot { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; }
   main { flex: 1; overflow-y: auto; }
   .log { max-width: 768px; margin: 0 auto; padding: 8px 24px 24px; display: flex; flex-direction: column; gap: 22px; }
 
@@ -444,6 +479,8 @@
     body.side-open .scrim { display: block; position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, .35); }
     #close-side, #open-side { display: block; }
     .panel { position: fixed; inset: 0 0 0 auto; z-index: 20; width: min(320px, 88vw); box-shadow: var(--shadow); }
+    .panel.wide { width: 100vw; }
+    .panel-grip, .pane-btn { display: none !important; }  /* 手機:用面板上面的分頁切換 */
     .log, .page-in { padding-left: 16px; padding-right: 16px; }
     .msg.user { max-width: 88%; }
     .welcome h1 { font-size: 26px; }
@@ -521,6 +558,15 @@
     <button type="button" class="icon-btn term-toggle" id="term-btn" hidden aria-label="終端機" title="終端機:在這段對話的專案資料夾裡跑指令(只有這台電腦看得到)">
       <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M6 8l2.5 2L6 12M10.5 12.5H14"/></svg>
     </button>
+    <button type="button" class="icon-btn panel-toggle pane-btn" id="changes-btn" aria-pressed="false" aria-label="變更" title="變更:HSUAN 還沒套用的修改、專案裡還沒 commit 的修改">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3 3v12H5z"/><path d="M10 7v4M8 9h4M8 14h4"/></svg>
+    </button>
+    <button type="button" class="icon-btn panel-toggle pane-btn" id="browser-btn" aria-pressed="false" aria-label="瀏覽器" title="瀏覽器:預覽開發中的網站,看 HSUAN 操作瀏覽器的畫面">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M3 10h14M10 3c2 2.2 3 4.5 3 7s-1 4.8-3 7c-2-2.2-3-4.5-3-7s1-4.8 3-7z"/></svg>
+    </button>
+    <button type="button" class="icon-btn panel-toggle pane-btn" id="files-btn" aria-pressed="false" aria-label="檔案" title="檔案:瀏覽專案的檔案(唯讀),可以用 @ 附加到問題">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6V15a1.5 1.5 0 001.5 1.5h12A1.5 1.5 0 0017.5 15V8A1.5 1.5 0 0016 6.5h-6L8.5 4.5H4A1.5 1.5 0 002.5 6z"/></svg>
+    </button>
     <button type="button" class="icon-btn panel-toggle" id="panel-btn" aria-pressed="false" aria-label="工作狀態" title="工作狀態:專案和分支、這段對話用了多少上下文、還沒套用的修改">
       <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M12.5 3.5v13"/></svg>
     </button>
@@ -577,8 +623,9 @@
   </footer>
 </div>
 <section class="panel" id="panel" hidden aria-label="工作狀態"><!-- 不用 aside:左側欄的 aside 樣式(手機上的抽屜)會套上來 -->
-  <div class="panel-head"><span>工作狀態</span>
-    <button type="button" class="icon-btn" id="panel-close" aria-label="關閉工作狀態">
+  <div class="panel-grip" id="panel-grip" title="拖拉調整寬度"></div>
+  <div class="panel-head"><div class="panel-tabs" id="panel-tabs" role="tablist" aria-label="面板分頁"></div>
+    <button type="button" class="icon-btn" id="panel-close" aria-label="關閉面板">
       <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
     </button>
   </div>
@@ -1049,11 +1096,12 @@ const PANEL_EVENTS = new Set(["step", "tool_done", "done", "error", "applied", "
 function connect() {
   if (es) es.close();
   const mine = conv;
+  pane.liveSeq = Infinity;  // 等 /api/state 告訴我們現在的事件編號,之前的都是重播
   es = new EventSource(`/api/events?token=${encodeURIComponent(TOKEN)}&c=${encodeURIComponent(conv)}`);
   es.onmessage = (m) => {
     if (mine !== conv) return;  // 已經切到別段對話了
     const e = JSON.parse(m.data); (handlers[e.kind] || (() => {}))(e);
-    if (PANEL_EVENTS.has(e.kind)) later("panel", loadPanel, 800);  // 右邊面板的用量、草稿跟著更新
+    panelEvent(e);  // 右邊面板跟著更新(HSUAN 用了瀏覽器就切到它的畫面)
   };
   // 伺服器重啟後 token 會換,舊頁面會一直用舊 token 重連、畫面默默卡住:確認是 403 就重新載入拿新的
   es.onerror = async () => {
@@ -1070,6 +1118,7 @@ function openConv(id) {
   sideMode = kindOf(convMeta()); store.set("mode", sideMode);
   bot = null; tools.length = 0; cards = {}; dirty.clear(); pendingImages = []; renderThumbs();
   closePage(); closeSide(); setPlanMode(false); setBusy(false); applyMode();
+  pane.file = pane.files = null; pane.openDirs.clear(); pane.dirsInit = false;  // 檔案分頁換成這段對話的專案
   showEmpty(); connect(); loadState(); renderSide(); loadPanel();
   input.focus();
 }
@@ -1085,6 +1134,7 @@ function applyMode() {
   document.querySelectorAll(".mode-switch button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === sideMode)));
   $("plan-mode").hidden = chat;
   $("split-mode").hidden = chat || !!state.guest;
+  $("changes-btn").hidden = $("files-btn").hidden = chat;  // 對話模式不綁專案,沒有檔案和變更(面板裡的分頁會說明)
   $("hint").textContent = (chat ? "可以貼上或拖進圖片" : "用 @檔名 附上專案裡的檔案,也可以貼上圖片")
     + " · Enter 送出、Shift+Enter 換行 · HSUAN 也會出錯,重要的結果請自己確認";
 }
@@ -1228,13 +1278,14 @@ async function loadState() {
   const r = await api("/api/state");
   if (!r.ok) return;
   state = r.data;
+  if (pane.liveSeq === Infinity && state.conv === conv) pane.liveSeq = state.seq ?? 0;
   $("trial-badge").hidden = state.company_ok !== false;
   $("term-btn").hidden = !state.terminal;  // 終端機:只有這台電腦自己看得到
   if (!state.terminal) $("term").hidden = true;
   else if (!term.restored) { term.restored = true; if (store.get("term", "") === "1") termOpen(true); }
   if (!panelRestored) {  // 上次開著就打開(手機上面板會蓋住對話,不自動開)
     panelRestored = true;
-    if (store.get("panel", "") === "1" && innerWidth > 768) panelOpen(true);
+    if (store.get("panel", "") === "1" && !phoneWidth()) panelOpen(true);
   }
   $("split-mode").hidden = sideMode === "chat" || !!state.guest;
   renderUsage();
@@ -1327,7 +1378,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/24", ["右上角多了「工作狀態」面板:這段對話在哪個專案和 git 分支、用了上下文的幾成(快滿時會自動整理成摘要)、HSUAN 還沒套用的修改(每個檔案 +/− 幾行,點開看差異,可以直接套用、捨棄、下載 patch)"]],
+  ["10/24", ["右邊面板多了「變更」「檔案」「瀏覽器」三個分頁(右上角各一個按鈕):變更看 HSUAN 還沒套用的修改和專案裡還沒 commit 的修改;檔案可以瀏覽專案、打開看內容、用 @ 附加到問題;瀏覽器可以預覽你開發中的網站,HSUAN 用瀏覽器時自動切到它看到的畫面。面板左邊緣可以拖拉調寬度",
+             "右上角多了「工作狀態」面板:這段對話在哪個專案和 git 分支、用了上下文的幾成(快滿時會自動整理成摘要)、HSUAN 還沒套用的修改(每個檔案 +/− 幾行,點開看差異,可以直接套用、捨棄、下載 patch)"]],
   ["10/23", ["右上角多了「終端機」:在這段對話的專案資料夾裡跑指令(只有這台電腦看得到);按「交給 HSUAN」把輸出放進輸入框,請它幫你看錯誤"]],
   ["10/16", ["回答中可以按「停止」(輸入框空的時候,送出鍵會變成方塊);也可以直接再傳訊息,HSUAN 下一步就會看到,來不及就接著當下一題回答",
              "回答更精簡:長度配合問題、不再結尾客套和表情符號、資訊不夠會先問你;你指定長度或格式就照做",
@@ -1905,24 +1957,68 @@ $("term-give").onclick = () => {  // 最後一個指令和輸出放進輸入框:
   autosize(); updateSend(); input.focus();
 };
 
-// ---------- 右邊的工作狀態面板(10/24 使用者要的,像 Claude 桌面版):環境、背景資訊、變更 ----------
+// ---------- 右邊的面板(10/24 使用者要的,像 Claude 桌面版):狀態 / 變更 / 檔案 / 瀏覽器 ----------
 const PANEL_ICONS = {
   project: '<rect x="2.5" y="4" width="15" height="10" rx="1.5"/><path d="M1.5 16.5h17"/>',
   folder: '<path d="M2.5 6V15a1.5 1.5 0 001.5 1.5h12A1.5 1.5 0 0017.5 15V8A1.5 1.5 0 0016 6.5h-6L8.5 4.5H4A1.5 1.5 0 002.5 6z"/>',
+  file: '<path d="M5.5 2.5h6l3.5 3.5v11.5h-9.5z"/><path d="M11.5 2.5V6H15"/>',
   branch: '<circle cx="6" cy="4.5" r="2"/><circle cx="6" cy="15.5" r="2"/><circle cx="14" cy="7" r="2"/><path d="M6 6.5v7M14 9c0 3-8 2-8 4.5"/>',
   chat: '<path d="M4 4.5h12A1.5 1.5 0 0117.5 6v7a1.5 1.5 0 01-1.5 1.5H9l-3.5 3v-3H4A1.5 1.5 0 012.5 13V6A1.5 1.5 0 014 4.5z"/>',
 };
+const PANEL_TABS = [["status", "狀態", "panel-btn"], ["changes", "變更", "changes-btn"], ["files", "檔案", "files-btn"],
+                    ["browser", "瀏覽器", "browser-btn"]];
+// liveSeq:連上事件串流時最新的事件編號,比它新的才是剛發生的(重播的不要自動切到瀏覽器畫面)
+const pane = { tab: PANEL_TABS.some(([t]) => t === store.get("panelTab", "")) ? store.get("panelTab", "") : "status",
+               liveSeq: Infinity, file: null, files: null, filter: "", openDirs: new Set(), dirsInit: false,
+               view: store.get("browserView", "") === "hsuan" ? "hsuan" : "mine", url: store.get("previewUrl", "") };
+// 手機寬度(面板會蓋住整個畫面);視窗縮到最小時寬度是 0,不算
+const phoneWidth = () => innerWidth > 0 && innerWidth <= 768;
 const kTokens = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
-function panelOpen(on) {
+const paneBox = (tab) => $("panel-body").querySelector(`.pane[data-tab="${tab}"]`);
+for (const [tab, label] of PANEL_TABS) {
+  const b = $("panel-tabs").appendChild(button(label, "", () => panelOpen(true, tab)));
+  b.dataset.tab = tab; b.setAttribute("role", "tab");
+  $("panel-body").appendChild(el("div", "pane")).dataset.tab = tab;
+  $(PANEL_TABS.find((x) => x[0] === tab)[2]).onclick = () => panelOpen($("panel").hidden || pane.tab !== tab, tab);
+}
+function panelOpen(on, tab = pane.tab) {
+  pane.tab = tab; store.set("panelTab", tab);
   $("panel").hidden = !on;
-  $("panel-btn").setAttribute("aria-pressed", String(on));
+  $("panel").classList.toggle("wide", tab !== "status");
+  for (const [t, , id] of PANEL_TABS) $(id).setAttribute("aria-pressed", String(on && t === tab));
+  for (const b of $("panel-tabs").children) b.setAttribute("aria-selected", String(b.dataset.tab === tab));
+  for (const p of $("panel-body").children) p.hidden = p.dataset.tab !== tab;
   store.set("panel", on ? "1" : "");
   if (on) loadPanel();
 }
+$("panel-close").onclick = () => panelOpen(false);
 async function loadPanel() {
   if ($("panel").hidden || !conv) return;
-  const x = await api("/api/panel");
-  if (x.ok) renderPanel(x.data);
+  const tab = pane.tab;
+  if (tab === "status") {
+    const x = await api("/api/panel");
+    if (x.ok) renderStatus(x.data);
+  } else if (tab === "changes") {
+    const [p, g] = await Promise.all([api("/api/panel"), api("/api/gitdiff")]);
+    renderChanges(p.ok ? p.data : null, g.ok ? g.data : null);
+  } else if (tab === "files") {
+    pane.file ? openFile(pane.file) : loadFiles();
+  } else {
+    loadBrowser();
+  }
+}
+// 事件來了:目前的分頁需要才重新整理;HSUAN 剛用了瀏覽器就切到它看到的畫面(手機上不自動打開,會蓋住對話)
+function panelEvent(e) {
+  const done = (name) => e.kind === "tool_done" && e.name === name;
+  if (done("browser") && e.seq > pane.liveSeq && (!$("panel").hidden || !phoneWidth())) {
+    setBrowserView("hsuan");
+    if ($("panel").hidden || pane.tab !== "browser") panelOpen(true, "browser");
+  }
+  const t = pane.tab;
+  if (t === "status" ? PANEL_EVENTS.has(e.kind)
+      : t === "browser" ? done("browser")
+      : ["applied", "clear", "done"].includes(e.kind) || done("propose_patch"))
+    later("panel", loadPanel, 800);
 }
 function pcard(box, title) {
   const card = box.appendChild(el("section", "pcard"));
@@ -1935,15 +2031,42 @@ function prow(box, iconName, text, title) {
   row.appendChild(el("span", "", text)).title = title || text;
   return row;
 }
-function renderPanel(d) {
-  const box = $("panel-body"), open = new Set([...box.querySelectorAll(".pfile[open]")].map((x) => x.dataset.path));
+const plusMinus = (added, removed) => [el("small", "n-add", `+${added}`), el("small", "n-del", `−${removed}`)];
+function fileDiff(box, f, key, openKeys, openDefault) {  // 一個檔案的差異:點開看 diff
+  const item = box.appendChild(el("details", "pfile"));
+  item.dataset.key = key + f.path;
+  item.open = openKeys ? openKeys.has(item.dataset.key) : openDefault;
+  const sum = item.appendChild(el("summary"));
+  sum.appendChild(el("span", "name", f.path)).title = f.path;
+  if (f.new) sum.appendChild(el("span", "tag ok", "新增"));
+  if (f.deleted) sum.appendChild(el("span", "tag warn", "刪除"));
+  sum.append(...plusMinus(f.added, f.removed));
+  item.appendChild(f.secret ? el("p", "pnote", "機密檔(金鑰、.env…),不顯示內容。")
+    : f.binary ? el("p", "pnote", "二進位檔,不顯示差異。") : diffView(f.diff.replace(/\n$/, "")));
+}
+function draftActions(card, ch) {  // 草稿:套用 / 捨棄 / 下載 patch(走對話裡卡片同一個 API)
+  if (ch.passed !== null) card.appendChild(el("p", "pnote", ch.passed ? "沙箱測試通過" : "沙箱測試沒有通過,套用前請先看清楚"));
+  const act = (action) => async () => {
+    const x = await api("/api/apply", { patch: -1, action });
+    if (x.data.text && !x.data.text.startsWith("已")) alert(x.data.text);  // 成功的結果對話裡的卡片會顯示
+    loadPanel(); refreshSoon();
+  };
+  cardButtons(card, [
+    ...(ch.team ? [] : [[ch.copy ? "套用到副本" : "套用到專案", "dark", act("apply")], ["捨棄", "", act("discard")]]),
+    ["下載 patch", "", () => { download(patchUrl(conv, -1)); return false; }],
+  ]);
+}
+
+// 狀態:環境、背景資訊、變更的摘要
+function renderStatus(d) {
+  const box = paneBox("status"), open = new Set([...box.querySelectorAll(".pfile[open]")].map((x) => x.dataset.key));
   box.innerHTML = "";
   const env = pcard(box, "環境").card;  // 這段對話在哪個專案、哪個分支
   if (!d.env) prow(env, "chat", "對話模式:不綁專案");
   else {
     prow(env, "project", d.env.project);
     if (d.env.path) prow(env, "folder", d.env.path);
-    prow(env, "branch", d.env.branch || "不是 git 專案");
+    prow(env, "branch", d.env.branch || (d.env.copy ? "副本(不看 git)" : "不是 git 專案"));
     if (d.env.copy) env.appendChild(el("p", "pnote", "這是拖進來的資料夾的副本:套用的修改改在副本,原本的資料夾不會動。"));
   }
   // 背景資訊:這段對話送給模型的內容佔上下文的幾成;超過 summarize_at,下一題開始前會先整理成摘要
@@ -1966,36 +2089,231 @@ function renderPanel(d) {
     loadPanel();
   }]]);
   if (!d.changes) return;
-  // 變更:HSUAN 草稿裡還沒套用的修改(按了套用才會改到專案)
-  const ch = d.changes, add = ch.files.reduce((s, f) => s + f.added, 0), del = ch.files.reduce((s, f) => s + f.removed, 0);
-  const chg = pcard(box, "變更");
+  const ch = d.changes, chg = pcard(box, "變更");
   if (!ch.files.length) {
     chg.card.appendChild(el("p", "pnote", "HSUAN 還沒有改任何檔案。它的修改會先放在草稿,你按「套用到專案」才會改到檔案。"));
     return;
   }
-  chg.right.append(el("span", "n-add", `+${add}`), el("span", "n-del", `−${del}`));
-  for (const f of ch.files) {
-    const item = chg.card.appendChild(el("details", "pfile"));
-    item.dataset.path = f.path; item.open = open.has(f.path);
-    const sum = item.appendChild(el("summary"));
-    sum.appendChild(el("span", "name", f.path)).title = f.path;
-    if (f.new) sum.appendChild(el("span", "tag ok", "新增"));
-    sum.append(el("small", "n-add", `+${f.added}`), el("small", "n-del", `−${f.removed}`));
-    item.appendChild(diffView(f.diff.replace(/\n$/, "")));
-  }
-  if (ch.passed !== null) chg.card.appendChild(el("p", "pnote", ch.passed ? "沙箱測試通過" : "沙箱測試沒有通過,套用前請先看清楚"));
-  const act = (action) => async () => {
-    const x = await api("/api/apply", { patch: -1, action });
-    if (x.data.text && !x.data.text.startsWith("已")) alert(x.data.text);  // 成功的結果對話裡的卡片會顯示
-    loadPanel(); refreshSoon();
-  };
-  cardButtons(chg.card, [
-    ...(ch.team ? [] : [[ch.copy ? "套用到副本" : "套用到專案", "dark", act("apply")], ["捨棄", "", act("discard")]]),
-    ["下載 patch", "", () => { download(patchUrl(conv, -1)); return false; }],
-  ]);
+  chg.right.append(...plusMinus(ch.files.reduce((s, f) => s + f.added, 0), ch.files.reduce((s, f) => s + f.removed, 0)));
+  for (const f of ch.files) fileDiff(chg.card, f, "d:", open, false);
+  draftActions(chg.card, ch);
 }
-$("panel-btn").onclick = () => panelOpen($("panel").hidden);
-$("panel-close").onclick = () => panelOpen(false);
+
+// 變更:HSUAN 草稿裡還沒套用的(上面)、專案裡還沒 commit 的(下面,git diff,只讀)
+function renderChanges(p, g) {
+  const box = paneBox("changes"), first = !box.childElementCount;
+  const open = first ? null : new Set([...box.querySelectorAll(".pfile[open]")].map((x) => x.dataset.key));
+  box.innerHTML = "";
+  if (!p || !p.changes) { box.appendChild(el("p", "pnote", "對話模式不綁專案,沒有檔案的變更。")); return; }
+  const ch = p.changes, draft = pcard(box, "HSUAN 的草稿(還沒套用)");
+  if (!ch.files.length) {
+    draft.card.appendChild(el("p", "pnote", "沒有還沒套用的修改。HSUAN 的修改會先放在這裡,你按「套用到專案」才會改到檔案。"));
+  } else {
+    draft.right.append(...plusMinus(ch.files.reduce((s, f) => s + f.added, 0), ch.files.reduce((s, f) => s + f.removed, 0)));
+    for (const f of ch.files) fileDiff(draft.card, f, "d:", open, ch.files.length <= 5);
+    draftActions(draft.card, ch);
+  }
+  const git = pcard(box, "專案裡還沒 commit 的修改");
+  const again = git.right.appendChild(button("", "icon-btn", () => loadPanel()));
+  again.title = "重新整理"; again.setAttribute("aria-label", "重新整理");
+  again.innerHTML = icon('<path d="M16 10a6 6 0 11-1.8-4.3M16 3.5v3h-3"/>');
+  if (!g || !g.git) {
+    git.card.appendChild(el("p", "pnote", p.env && p.env.copy ? "這是拖進來的資料夾的副本,不看 git。" : "這個專案不是 git 專案(或電腦上沒有 git)。"));
+    return;
+  }
+  if (g.branch) prow(git.card, "branch", g.branch);
+  if (g.error) { git.card.appendChild(el("p", "pnote error", g.error)); return; }
+  if (!g.files.length && !g.untracked.length) git.card.appendChild(el("p", "pnote", "沒有還沒 commit 的修改。"));
+  if (g.files.length) git.right.prepend(...plusMinus(g.files.reduce((s, f) => s + f.added, 0), g.files.reduce((s, f) => s + f.removed, 0)));
+  for (const f of g.files) fileDiff(git.card, f, "g:", open, false);
+  if (g.more) git.card.appendChild(el("p", "pnote", "檔案太多,只列前面的。"));
+  if (g.untracked.length) {
+    git.card.appendChild(el("h5", "", `還沒加入 git 的檔案(${g.untracked.length})`));
+    for (const u of g.untracked.slice(0, 50)) prow(git.card, "file", u);
+    if (g.untracked.length > 50) git.card.appendChild(el("p", "pnote", `…還有 ${g.untracked.length - 50} 個`));
+  }
+  if (state.terminal) git.card.appendChild(el("p", "pnote", "要 commit 可以用右上角的終端機(git add、git commit)。"));
+}
+
+// 檔案:專案的檔案樹(唯讀),點開看內容;草稿改過的看到的是草稿版本(跟 HSUAN 讀到的一樣)
+async function loadFiles() {
+  const x = await api("/api/files");
+  const box = paneBox("files");
+  if (!x.ok) { box.innerHTML = ""; box.appendChild(el("p", "pnote", x.data.error || "讀不到檔案清單")); return; }
+  pane.files = x.data;
+  if (!pane.dirsInit) {  // 小專案一打開就全部展開
+    pane.dirsInit = true;
+    if (x.data.files.length <= 80)
+      for (const f of x.data.files) { const parts = f.path.split("/"); for (let i = 1; i < parts.length; i++) pane.openDirs.add(parts.slice(0, i).join("/") + "/"); }
+  }
+  renderFiles();
+}
+function renderFiles() {
+  const box = paneBox("files"), d = pane.files;
+  if (!d) return;
+  box.innerHTML = "";
+  const bar = box.appendChild(el("div", "pbar"));
+  const q = bar.appendChild(el("input"));
+  q.placeholder = "找檔名…"; q.value = pane.filter; q.setAttribute("aria-label", "找檔名");
+  const again = bar.appendChild(button("", "icon-btn", loadFiles));
+  again.title = "重新整理"; again.setAttribute("aria-label", "重新整理");
+  again.innerHTML = icon('<path d="M16 10a6 6 0 11-1.8-4.3M16 3.5v3h-3"/>');
+  const list = box.appendChild(el("div", "flist"));
+  const fileBtn = (f, label) => {
+    const b = button("", "ffile", () => openFile(f.path));
+    b.innerHTML = icon(PANEL_ICONS.file); b.title = f.path;
+    b.appendChild(el("span", "name", label));
+    if (f.draft) b.appendChild(el("span", "tag " + (f.new ? "ok" : "warn"), f.new ? "新增" : "草稿"));
+    return b;
+  };
+  const draw = () => {
+    list.innerHTML = "";
+    const words = pane.filter.trim().toLowerCase();
+    if (words) {  // 有搜尋字:平平列出符合的
+      const hits = d.files.filter((f) => f.path.toLowerCase().includes(words));
+      for (const f of hits.slice(0, 300)) list.appendChild(fileBtn(f, f.path));
+      if (!hits.length) list.appendChild(el("p", "pnote", "沒有符合的檔案"));
+      return;
+    }
+    const root = { dirs: new Map(), files: [] };
+    for (const f of d.files) {
+      const parts = f.path.split("/");
+      let node = root;
+      for (const p of parts.slice(0, -1)) {
+        if (!node.dirs.has(p)) node.dirs.set(p, { dirs: new Map(), files: [] });
+        node = node.dirs.get(p);
+      }
+      node.files.push([f, parts.at(-1)]);
+    }
+    const tree = (into, node, prefix) => {
+      for (const name of [...node.dirs.keys()].sort()) {
+        const path = prefix + name + "/", det = into.appendChild(el("details", "fdir"));
+        det.open = pane.openDirs.has(path);
+        det.ontoggle = () => (det.open ? pane.openDirs.add(path) : pane.openDirs.delete(path));
+        const sum = det.appendChild(el("summary"));
+        sum.innerHTML = icon(PANEL_ICONS.folder); sum.append(name);
+        tree(det.appendChild(el("div", "fkids")), node.dirs.get(name), path);
+      }
+      for (const [f, name] of node.files) into.appendChild(fileBtn(f, name));
+    };
+    tree(list, root, "");
+    if (!d.files.length) list.appendChild(el("p", "pnote", "這個專案沒有看得到的檔案(機密檔、.git、node_modules 這類不會列出來)。"));
+    if (d.more) list.appendChild(el("p", "pnote", "檔案太多,只列前面的;用上面的搜尋找。"));
+  };
+  q.oninput = () => { pane.filter = q.value; draw(); };
+  draw();
+}
+async function openFile(path) {
+  pane.file = path;
+  const box = paneBox("files");
+  box.innerHTML = "";
+  const bar = box.appendChild(el("div", "pbar"));
+  bar.appendChild(button("← 檔案", "pill", () => { pane.file = null; pane.files ? renderFiles() : loadFiles(); }));
+  bar.appendChild(el("span", "spacer")).style.flex = "1";
+  const at = bar.appendChild(button("@ 附加到問題", "pill", () => {  // 跟自己打 @檔名 一樣:送出時 HSUAN 會讀這個檔案
+    input.value = input.value.replace(/\s*$/, input.value.trim() ? " " : "") + `@${path} `;
+    autosize(); updateSend(); input.focus();
+    if (phoneWidth()) panelOpen(false);
+  }));
+  at.disabled = /\s/.test(path);  // @ 後面的檔名不能有空白
+  if (at.disabled) at.title = "檔名有空白,不能用 @ 附加";
+  const head = box.appendChild(el("div", "fhead", path));
+  const x = await api(`/api/source?path=${encodeURIComponent(path)}`);
+  if (pane.file !== path || pane.tab !== "files") return;  // 等的時候已經換了
+  if (!x.ok) { box.appendChild(el("p", "pnote", x.data.error || "打不開這個檔案")); return; }
+  const d = x.data;
+  if (d.draft) { head.prepend(el("span", "tag warn", "草稿")); box.appendChild(el("p", "pnote", "這是 HSUAN 草稿裡的版本(還沒套用到專案)。")); }
+  if (d.binary) {
+    box.appendChild(el("p", "pnote", "二進位檔(圖片、PDF、Office 檔…),這裡不能顯示。可以用 @ 附加,HSUAN 讀得懂 PDF、Word、Excel 和圖片。"));
+    return;
+  }
+  const lines = d.text.split("\n"), w = String(lines.length).length;
+  const pre = box.appendChild(el("pre", "src"));
+  pre.innerHTML = lines.map((l, i) => `<span class="ln" style="width:${w}ch">${i + 1}</span>${esc(l)}`).join("\n");
+  if (d.truncated) box.appendChild(el("p", "pnote", `檔案很大(${fmtSize(d.size)}),只顯示前面的部分。`));
+}
+
+// 瀏覽器:「你的網站」在面板裡預覽開發中的網站(可以點、打字);「HSUAN 的畫面」是它用瀏覽器工具時每個動作後的截圖
+// 網址只收開發用的位址(跟 HSUAN 的瀏覽器工具同一套規則)
+function isDevUrl(u) {
+  try {
+    const x = new URL(u);
+    return /^https?:$/.test(x.protocol) && (["localhost", "127.0.0.1", "[::1]"].includes(x.hostname) || /\.(localhost|test)$/.test(x.hostname));
+  } catch (e) { return false; }
+}
+function buildBrowser() {  // 只建一次:iframe 重建就會重新載入,使用者在裡面的操作會不見
+  const box = paneBox("browser");
+  if (box.childElementCount) return;
+  const seg = box.appendChild(el("div", "seg"));
+  for (const [v, label] of [["mine", "你的網站"], ["hsuan", "HSUAN 的畫面"]]) seg.appendChild(button(label, "", () => setBrowserView(v))).dataset.view = v;
+  const mine = box.appendChild(el("div", "bview")); mine.dataset.view = "mine";
+  const form = mine.appendChild(el("form", "pbar"));
+  const url = form.appendChild(el("input")); url.id = "preview-url";
+  url.placeholder = "http://localhost:3000"; url.value = pane.url; url.setAttribute("aria-label", "網址");
+  form.appendChild(button("前往", "pill")).type = "submit";
+  const again = form.appendChild(button("", "icon-btn", () => { if (frame.src) frame.src = frame.src; }));
+  again.title = "重新載入"; again.setAttribute("aria-label", "重新載入");
+  again.innerHTML = icon('<path d="M16 10a6 6 0 11-1.8-4.3M16 3.5v3h-3"/>');
+  const out = form.appendChild(el("a", "icon-btn"));
+  out.target = "_blank"; out.rel = "noopener"; out.title = "在新分頁打開"; out.setAttribute("aria-label", "在新分頁打開");
+  out.innerHTML = icon('<path d="M11 3.5h5.5V9M16.5 3.5L9 11M14 12v4.5H3.5V6H8"/>');
+  const note = mine.appendChild(el("p", "pnote"));
+  const frame = mine.appendChild(el("iframe", "bframe")); frame.id = "preview-frame"; frame.title = "網站預覽";
+  // 預覽的網站跟 HSUAN 不同來源(port 不同),讀不到 HSUAN 的 token;不給 allow-top-navigation,不能把整頁換掉
+  frame.setAttribute("sandbox", "allow-scripts allow-forms allow-same-origin allow-popups allow-modals allow-downloads");
+  const go = (u) => {
+    u = u.trim();
+    if (u && !/^https?:\/\//i.test(u)) u = "http://" + u;
+    if (!u) { frame.removeAttribute("src"); frame.hidden = true; out.hidden = true; }
+    else if (!isDevUrl(u)) { alert("這裡只能開開發中的網站:localhost、127.0.0.1、*.localhost、*.test"); return; }
+    else { frame.hidden = false; out.hidden = false; frame.src = u; out.href = u; url.value = u; }
+    pane.url = u; store.set("previewUrl", u);
+    note.textContent = u ? "" : "輸入開發中網站的網址(例如 http://localhost:3000)。這裡可以直接點、打字,跟一般瀏覽器一樣。";
+    if (u && (state.can_logout || state.guest)) note.textContent = "你不是在這台電腦上:localhost 指的是你現在用的這台裝置。";
+  };
+  form.onsubmit = (ev) => { ev.preventDefault(); go(url.value); };
+  go(pane.url);
+  const hs = box.appendChild(el("div", "bview")); hs.dataset.view = "hsuan";
+  hs.appendChild(el("p", "pnote")).id = "shot-meta";
+  const img = hs.appendChild(el("img", "bshot")); img.id = "shot-img"; img.alt = "HSUAN 的瀏覽器畫面"; img.hidden = true;
+  hs.appendChild(el("p", "pnote", "HSUAN 用瀏覽器工具時會自動更新(每個動作後一張截圖,不能點)。要自己操作請切到「你的網站」。"));
+}
+function setBrowserView(v) {
+  pane.view = v; store.set("browserView", v);
+  buildBrowser();
+  const box = paneBox("browser");
+  for (const b of box.querySelectorAll(".seg button")) b.setAttribute("aria-pressed", String(b.dataset.view === v));
+  for (const x of box.querySelectorAll(".bview")) x.hidden = x.dataset.view !== v;
+}
+async function loadBrowser() {
+  setBrowserView(pane.view);
+  const x = await api("/api/panel");
+  const shot = x.ok && x.data.browser, img = $("shot-img");
+  img.hidden = !shot;
+  $("shot-meta").textContent = shot
+    ? `${shot.url} · ${new Date(shot.at * 1000).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
+    : "這段對話 HSUAN 還沒用過瀏覽器。在「設定」打開「操作瀏覽器」,再請它測你的網站。";
+  if (shot) img.src = `/api/browser/shot?token=${encodeURIComponent(TOKEN)}&c=${encodeURIComponent(conv)}&t=${shot.at}`;
+}
+
+// 變更、檔案、瀏覽器比較寬:左邊緣拖拉調寬度(記在這台電腦)
+function setPanelWidth(w) {
+  w = Math.round(Math.max(320, Math.min(w, innerWidth - 420)));
+  $("panel").style.setProperty("--panel-w", w + "px");
+  return w;
+}
+if (Number(store.get("panelW", 0))) setPanelWidth(Number(store.get("panelW", 0)));
+$("panel-grip").onpointerdown = (ev) => {
+  const grip = $("panel-grip"), frame = $("preview-frame");
+  ev.preventDefault(); grip.setPointerCapture(ev.pointerId); grip.classList.add("drag");
+  if (frame) frame.style.pointerEvents = "none";  // 不然滑鼠移到網頁上,拖拉就斷了
+  grip.onpointermove = (m) => setPanelWidth(innerWidth - m.clientX);
+  grip.onpointerup = (m) => {
+    grip.onpointermove = grip.onpointerup = null; grip.classList.remove("drag");
+    if (frame) frame.style.pointerEvents = "";
+    store.set("panelW", String(setPanelWidth(innerWidth - m.clientX)));
+  };
+};
 
 // ---------- 規劃模式、送出 ----------
 let planMode = false;
