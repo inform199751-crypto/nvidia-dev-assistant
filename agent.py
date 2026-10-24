@@ -751,7 +751,7 @@ class AgentSession:
                     else:
                         self._emit("tool", name=call["name"], args=call["args"])
                     try:
-                        out = tool.invoke(call["args"]) if tool else f"錯誤:沒有 {call['name']} 這個工具"
+                        out = tool.invoke(coerce_args(tool, call["args"])) if tool else f"錯誤:沒有 {call['name']} 這個工具"
                     except Exception as e:  # 錯誤回給模型自己修正,不讓整個流程掛掉
                         out = f"工具執行錯誤:{type(e).__name__}: {e}"
                     out = truncate_middle(str(out), limits["tool_output_max_tokens"])
@@ -810,6 +810,29 @@ class AgentSession:
         with ThreadPoolExecutor(max_workers=min(SUBAGENT_PARALLEL, len(tasks))) as pool:
             reports = list(pool.map(run, range(1, len(tasks) + 1), tasks))
         return "\n\n".join(reports)
+
+
+def coerce_args(tool, args: dict) -> dict:
+    """參數型別是陣列 / 物件、模型卻傳成 JSON 字串的,先轉回來再交給工具。
+    10/25 評測:Nemotron 3.5 Super VL 呼叫 propose_patch 常把 edits 整個傳成字串,工具一直回參數錯誤,
+    17 題有 2 題它最後放棄、叫使用者自己手動改。"""
+    try:
+        props = tool.args or {}
+    except Exception:  # 拿不到參數定義(怪的連接器):照原樣
+        return args
+    fixed = dict(args)
+    for name, value in args.items():
+        spec = props.get(name) or {}
+        kinds = {spec.get("type")} | {s.get("type") for s in spec.get("anyOf", []) if isinstance(s, dict)}
+        if not (isinstance(value, str) and kinds & {"array", "object"}):
+            continue
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            continue
+        if (isinstance(parsed, list) and "array" in kinds) or (isinstance(parsed, dict) and "object" in kinds):
+            fixed[name] = parsed
+    return fixed
 
 
 def task_list(tasks: list | str) -> list[str]:

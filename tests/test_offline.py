@@ -4049,3 +4049,20 @@ def test_notice_when_a_fallback_model_answered(workspace):
     events.clear()
     r = session.ask("再一題")
     assert r.models == ["my-onprem-name"] and not [d for k, d in events if k == "notice" and "備援" in d["text"]]
+
+
+def test_list_arguments_sent_as_json_strings_are_accepted(workspace, fake_sandbox):
+    """10/25 評測:Nemotron 3.5 Super VL 呼叫 propose_patch 時常把 edits 整個傳成 JSON 字串,工具一直回參數錯誤,
+    17 題有 2 題它最後放棄、叫使用者手動改。陣列 / 物件型別的參數收到字串就先轉回來;本來就是字串的參數不動。"""
+    from agent import coerce_args
+    (workspace / "calc.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    edits = json.dumps([{"path": "calc.py", "old_string": "    return a - b", "new_string": "    return a + b"}])
+    reg, seen = scripted_registry([
+        ai(tool_calls=[{"name": "propose_patch", "id": "c1",
+                        "args": {"edits": edits, "reason": "add 寫成減法", "test_target": "."}}]),
+        ai("改好了")])
+    r = AgentSession(reg, TokenQuota(10**6, 2)).ask("test_add 失敗了")
+    assert r.answer == "改好了" and "return a + b" in tools.DRAFT["calc.py"]
+    assert "已改在草稿上" in str(seen[1][1][-1].content)
+    assert coerce_args(tools.read_file, {"path": "[1]"}) == {"path": "[1]"}
+    assert coerce_args(tools.propose_patch, {"edits": "不是 JSON"}) == {"edits": "不是 JSON"}  # 轉不了就照原樣,讓工具回錯誤
