@@ -346,7 +346,7 @@ def _original(rel: str) -> str | None:
 @tool
 def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") -> str:
     """修改程式:改在你的草稿上(使用者真正的檔案不會動),在沙箱跑 test_target,存成 .patch 等使用者確認後套用。
-    edits(直接給陣列,不要包成字串):每一筆把 path 檔案裡的 old_string 換成 new_string。old_string 要從 read_file 的輸出逐字複製
+    edits:每一筆把 path 檔案裡的 old_string 換成 new_string。old_string 要從 read_file 的輸出逐字複製
     (不要帶「    12| 」行號前綴)、在檔案裡只出現一次,不夠唯一就多帶幾行上下文。可以一次改多處、多個檔案。
     修改會累積:之後 read_file、search_code、run_tests 看到的都是改過的版本,下一次修改也疊在上面。
     新增檔案(例如補回歸測試):path 用不存在的路徑、old_string 留空、new_string 放整個檔案內容。"""

@@ -751,8 +751,7 @@ class AgentSession:
                     else:
                         self._emit("tool", name=call["name"], args=call["args"])
                     try:
-                        args = coerce_args(tool, call["args"]) if tool else call["args"]
-                        out = (arg_problem(tool, args) or tool.invoke(args)) if tool else f"錯誤:沒有 {call['name']} 這個工具"
+                        out = tool.invoke(coerce_args(tool, call["args"])) if tool else f"錯誤:沒有 {call['name']} 這個工具"
                     except Exception as e:  # 錯誤回給模型自己修正,不讓整個流程掛掉
                         out = f"工具執行錯誤:{type(e).__name__}: {e}"
                     out = truncate_middle(str(out), limits["tool_output_max_tokens"])
@@ -825,39 +824,27 @@ def _tool_props(tool) -> dict:
         return {}
 
 
+_LENIENT = json.JSONDecoder(strict=False)  # 字串值裡直接換行(沒寫成 \n)也收
+
+
 def coerce_args(tool, args: dict) -> dict:
-    """參數型別是陣列 / 物件、模型卻傳成 JSON 字串的,先轉回來再交給工具。
+    """參數型別是陣列 / 物件、模型卻傳成字串的,讀得出來就先轉回來再交給工具。
     10/25 評測:Nemotron 3.5 Super VL 呼叫 propose_patch 常把 edits 整個傳成字串,工具一直回參數錯誤,
-    17 題有 2 題它最後放棄、叫使用者自己手動改。字串裡的換行沒跳脫(strict=False 收得下)也一樣轉;
-    引號沒跳脫、少了引號的就不猜(猜錯會改出錯的東西),交給 arg_problem 回一句清楚的錯誤。"""
+    17 題有 2 題它最後放棄、叫使用者自己手動改。10/26 看評測的對話紀錄:很多是完整的 JSON 陣列後面多黏一個逗號
+    (讀開頭那段就好,23 個救回 13 個),有的只是換行沒跳脫;值裡的引號沒跳脫的不猜(猜錯會改出錯的東西),
+    照原樣交給工具、讓它回原本的錯誤 —— 改成回中文錯誤加範例那次反而更糟(24 次壞 17 次,常常連續重送一樣的字串)。"""
     props, fixed = _tool_props(tool), dict(args)
     for name, value in args.items():
         kinds = _arg_kinds(props, name)
         if not (isinstance(value, str) and kinds & {"array", "object"}):
             continue
-        for strict in (True, False):
-            try:
-                parsed = json.loads(value, strict=strict)
-            except ValueError:
-                continue
-            if (isinstance(parsed, list) and "array" in kinds) or (isinstance(parsed, dict) and "object" in kinds):
-                fixed[name] = parsed
-            break
+        try:
+            parsed, _ = _LENIENT.raw_decode(value.strip())  # 開頭那段完整的 JSON;後面多黏的東西不管
+        except ValueError:
+            continue
+        if (isinstance(parsed, list) and "array" in kinds) or (isinstance(parsed, dict) and "object" in kinds):
+            fixed[name] = parsed
     return fixed
-
-
-def arg_problem(tool, args: dict) -> str | None:
-    """轉過之後陣列 / 物件參數還是字串:不呼叫工具,直接回一句模型看得懂的錯誤和正確格式。
-    10/25 評測的對話紀錄:4 題難題 18 次 propose_patch 有 8 次把 edits 寫成「假的 JSON 字串」(換行、引號沒跳脫,
-    有時漏了引號),工具回 pydantic 的英文錯誤,模型要多花一步、有時乾脆放棄。"""
-    props = _tool_props(tool)
-    bad = [n for n, v in args.items() if isinstance(v, str) and _arg_kinds(props, n) & {"array", "object"}]
-    if not bad:
-        return None
-    example = ('{"edits": [{"path": "a.py", "old_string": "原本的程式", "new_string": "改成的程式"}], "reason": "…"}'
-               if tool.name == "propose_patch" else "")
-    return (f"錯誤:參數 {'、'.join(bad)} 要直接給 JSON 陣列 / 物件,不要整個包成一個字串"
-            "(這次送來的字串也不是合法的 JSON,裡面的引號、換行沒有跳脫)。請照格式重送" + (f",例如:{example}" if example else "。"))
 
 
 def task_list(tasks: list | str) -> list[str]:

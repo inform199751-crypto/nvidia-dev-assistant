@@ -359,7 +359,7 @@ flowchart LR
         <li><span class="n">42</span><div><span class="what">想找比 DeepSeek 快的難題模型:GLM-5.3 Flash 冒煙測試快,實際修 bug 卻要 122 秒,還會逾時</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">不換;結果記在 models.yaml,下次不用重測</div></li>
         <li><span class="n">51</span><div><span class="what">使用者問問題,畫面上什麼都沒有:模型回了空白(答案只寫在思考裡),參數也擋不住</span><span class="how"><span class="tag">讀使用者的對話紀錄</span></span></div><div class="fix">空白就提醒一次、請它寫出來;實測遇到一次,提醒後就寫出來了</div></li>
         <li><span class="n">59</span><div><span class="what">主模型 Nemotron 3 Super 下架,備援默默換成 DeepSeek:看起來正常、其實慢 3–4 倍,一整天沒人發現</span><span class="how"><span class="tag">端到端評測</span></span></div><div class="fix">換成 Nemotron 3.5 Super VL;備援接手時畫面提醒、評測記實際回答的模型</div></li>
-        <li><span class="n">60</span><div><span class="what">新的 3.5 Super VL 呼叫工具時把修改清單寫成字串,常常連 JSON 都不合法(18 次有 8 次),每次白花一步,有時乾脆放棄</span><span class="how"><span class="tag">端到端評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">合法的字串轉回清單;壞掉的不猜,回一句清楚的錯誤加正確格式</div></li>
+        <li><span class="n">60</span><div><span class="what">新的 3.5 Super VL 呼叫工具時把修改清單寫成字串,常常連 JSON 都不合法(18 次有 8 次),每次白花一步,有時乾脆放棄</span><span class="how"><span class="tag">端到端評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">讀開頭那段完整的清單(壞掉的 23 個救回 13 個);改成中文錯誤加範例反而更糟,所以只做安全的讀回</div></li>
       </ol>
     </div>
 

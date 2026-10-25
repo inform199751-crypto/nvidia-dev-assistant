@@ -4068,31 +4068,32 @@ def test_list_arguments_sent_as_json_strings_are_accepted(workspace, fake_sandbo
     assert r.answer == "改好了" and "return a + b" in tools.DRAFT["calc.py"]
     assert "已改在草稿上" in str(seen[1][1][-1].content)
     assert coerce_args(tools.read_file, {"path": "[1]"}) == {"path": "[1]"}
-    assert coerce_args(tools.propose_patch, {"edits": "不是 JSON"}) == {"edits": "不是 JSON"}  # 轉不了就照原樣,不猜
+    assert coerce_args(tools.propose_patch, {"edits": "不是 JSON"}) == {"edits": "不是 JSON"}  # 轉不了就照原樣,讓工具回錯誤
 
 
-def test_malformed_list_arguments_get_a_clear_error(workspace, fake_sandbox):
-    """10/25 評測的對話紀錄:4 題難題 18 次 propose_patch 有 8 次把 edits 寫成「假的 JSON 字串」(換行、引號沒跳脫,
-    有時漏了引號),工具回 pydantic 的英文錯誤,模型多花一步、有時乾脆放棄。只有換行沒跳脫的收下(不會猜錯);
-    其他的不呼叫工具,回一句中文的錯誤加正確格式,模型下一步照著改。"""
-    from agent import arg_problem, coerce_args
+def test_malformed_list_arguments_parsed_when_safe(workspace, fake_sandbox):
+    """10/25–26 評測的對話紀錄:3.5 Super VL 常把 propose_patch 的 edits 寫成字串。很多是完整的 JSON 陣列後面
+    多黏一個逗號,有的只是換行沒跳脫:這兩種讀得回來(23 個救回 13 個),內容不會猜錯。值裡的引號沒跳脫的不猜,
+    照原樣交給工具、讓它回原本的錯誤 —— 改成回中文錯誤加範例那次反而更糟(24 次壞 17 次,常常連續重送一樣的字串)。"""
+    from agent import coerce_args
+    edit = {"path": "calc.py", "old_string": "    return a - b", "new_string": "    return a + b"}
+    trailing = json.dumps([edit]) + ","  # 評測裡看到的:陣列後面多一個逗號
+    for raw in (trailing, json.dumps([edit]) + ', "reason": "修正"'):
+        assert coerce_args(tools.propose_patch, {"edits": raw})["edits"] == [edit]
+    two_lines = {"path": "calc.py", "old_string": "def add(a, b):\n    return a - b", "new_string": "x"}
+    newline_raw = json.dumps([two_lines]).replace("\\n", "\n")  # 字串值裡直接換行:嚴格的 JSON 不收
+    assert "\n" in newline_raw and coerce_args(tools.propose_patch, {"edits": newline_raw})["edits"] == [two_lines]
     (workspace / "calc.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
-    # 字串值裡直接換行(沒寫成 \\n):嚴格的 JSON 不收,strict=False 收得下,內容不會猜錯
-    newline_raw = '[{"path": "calc.py", "old_string": "def add(a, b):\n    return a - b", ' \
-                  '"new_string": "def add(a, b):\n    return a + b"}]'
-    assert coerce_args(tools.propose_patch, {"edits": newline_raw})["edits"][0]["new_string"].endswith("a + b")
-    broken = '[{"path": "calc.py", "old_string":     return a - b, "new_string": "    return a + b"}]'
+    broken = '[{"path": "calc.py", "old_string": "    return a - b", "new_string": "d["x"]"}]'  # 引號沒跳脫:不猜
+    assert coerce_args(tools.propose_patch, {"edits": broken})["edits"] == broken
     reg, seen = scripted_registry([
         ai(tool_calls=[{"name": "propose_patch", "id": "c1", "args": {"edits": broken, "reason": "修正"}}]),
-        ai(tool_calls=[{"name": "propose_patch", "id": "c2", "args": {"edits": [
-            {"path": "calc.py", "old_string": "    return a - b", "new_string": "    return a + b"}], "reason": "修正",
-            "test_target": "."}}]),
+        ai(tool_calls=[{"name": "propose_patch", "id": "c2", "args": {"edits": trailing, "reason": "修正",
+                                                                       "test_target": "."}}]),
         ai("改好了")])
     AgentSession(reg, TokenQuota(10**6, 2)).ask("test_add 失敗了")
-    first = str(seen[1][1][-1].content)
-    assert first.startswith("錯誤:參數 edits 要直接給 JSON 陣列") and '"edits": [{"path"' in first
-    assert "ValidationError" not in first and "return a + b" in tools.DRAFT["calc.py"]
-    assert arg_problem(tools.read_file, {"path": "[1]"}) is None
+    assert "valid list" in str(seen[1][1][-1].content)  # 工具原本的錯誤(第一次評測時模型看得懂、下一步就改對)
+    assert "return a + b" in tools.DRAFT["calc.py"]
 
 
 def test_shipped_difficulty_routing_is_on_and_yaml_booleans_read_as_modes(monkeypatch):
