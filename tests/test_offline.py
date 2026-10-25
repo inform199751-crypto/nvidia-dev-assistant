@@ -3869,7 +3869,10 @@ def test_eval_runner_scores_with_hidden_tests_and_original_tests(tmp_path, monke
     reg, seen = scripted_registry(script)
     quota = TokenQuota(10**6, 2)
     cfg = run_evals.CONFIGS["super"]
-    rows = [run_evals.run_one(t, cfg, reg, quota, tmp_path / t.id, _host_pytest) for t in (good, cheat)]
+    rows = [run_evals.run_one(t, cfg, reg, quota, tmp_path / t.id, _host_pytest, transcript=tmp_path / f"{t.id}.json")
+            for t in (good, cheat)]
+    talk = json.loads((tmp_path / "retry.json").read_text(encoding="utf-8"))  # 整段對話留著,查失敗原因用
+    assert [m["type"] for m in talk] == ["system", "human", "ai", "tool", "ai"] and "已改在草稿上" in talk[3]["data"]["content"]
     assert rows[0]["passed"] and rows[0]["self_passed"] and rows[0]["error"] is None
     assert (rows[0]["files_changed"], rows[0]["steps"], rows[0]["tokens"]) == (1, 2, 200)
     assert rows[0]["lines_changed"] > 0 and rows[0]["roles"] == ["code"]
@@ -4065,7 +4068,31 @@ def test_list_arguments_sent_as_json_strings_are_accepted(workspace, fake_sandbo
     assert r.answer == "改好了" and "return a + b" in tools.DRAFT["calc.py"]
     assert "已改在草稿上" in str(seen[1][1][-1].content)
     assert coerce_args(tools.read_file, {"path": "[1]"}) == {"path": "[1]"}
-    assert coerce_args(tools.propose_patch, {"edits": "不是 JSON"}) == {"edits": "不是 JSON"}  # 轉不了就照原樣,讓工具回錯誤
+    assert coerce_args(tools.propose_patch, {"edits": "不是 JSON"}) == {"edits": "不是 JSON"}  # 轉不了就照原樣,不猜
+
+
+def test_malformed_list_arguments_get_a_clear_error(workspace, fake_sandbox):
+    """10/25 評測的對話紀錄:4 題難題 18 次 propose_patch 有 8 次把 edits 寫成「假的 JSON 字串」(換行、引號沒跳脫,
+    有時漏了引號),工具回 pydantic 的英文錯誤,模型多花一步、有時乾脆放棄。只有換行沒跳脫的收下(不會猜錯);
+    其他的不呼叫工具,回一句中文的錯誤加正確格式,模型下一步照著改。"""
+    from agent import arg_problem, coerce_args
+    (workspace / "calc.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    # 字串值裡直接換行(沒寫成 \\n):嚴格的 JSON 不收,strict=False 收得下,內容不會猜錯
+    newline_raw = '[{"path": "calc.py", "old_string": "def add(a, b):\n    return a - b", ' \
+                  '"new_string": "def add(a, b):\n    return a + b"}]'
+    assert coerce_args(tools.propose_patch, {"edits": newline_raw})["edits"][0]["new_string"].endswith("a + b")
+    broken = '[{"path": "calc.py", "old_string":     return a - b, "new_string": "    return a + b"}]'
+    reg, seen = scripted_registry([
+        ai(tool_calls=[{"name": "propose_patch", "id": "c1", "args": {"edits": broken, "reason": "修正"}}]),
+        ai(tool_calls=[{"name": "propose_patch", "id": "c2", "args": {"edits": [
+            {"path": "calc.py", "old_string": "    return a - b", "new_string": "    return a + b"}], "reason": "修正",
+            "test_target": "."}}]),
+        ai("改好了")])
+    AgentSession(reg, TokenQuota(10**6, 2)).ask("test_add 失敗了")
+    first = str(seen[1][1][-1].content)
+    assert first.startswith("錯誤:參數 edits 要直接給 JSON 陣列") and '"edits": [{"path"' in first
+    assert "ValidationError" not in first and "return a + b" in tools.DRAFT["calc.py"]
+    assert arg_problem(tools.read_file, {"path": "[1]"}) is None
 
 
 def test_shipped_difficulty_routing_is_on_and_yaml_booleans_read_as_modes(monkeypatch):

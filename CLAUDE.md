@@ -89,6 +89,7 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 - `run_tests` / `run_command` 測的永遠是**原始碼**:都經過 `_sandbox_copy()`(排除機密檔、大型目錄、指到外面的連結的暫存複本)→ `_docker()`(無網路、唯讀掛載、限資源、逾時 `docker kill`)。沒有 Docker 就回錯誤,絕不在主機上直接跑。沙箱映像裡沒有 git。
 - `git_log` / `git_blame` 在主機上跑唯讀的 git 指令,路徑一樣過 `_safe_path`。
 - `read_document` / 附檔用 `documents.extract_text`(pypdf / python-docx / openpyxl):PDF 分頁標記、沒文字層會說是掃描檔;Word 保留段落與表格順序、標題轉 `#`;Excel 每個工作表最多 `MAX_SHEET_ROWS` 列;舊版 .doc/.xls 直接報錯。長文件用 `split_parts` 分段(`DOC_PART_TOKENS`,要小於 `tool_output_max_tokens`)。
+- 工具參數:`_ask` 呼叫工具前 `coerce_args`(陣列 / 物件參數收到 JSON 字串就轉回來,換行沒跳脫的用 `strict=False`),轉不了就 `arg_problem` 回中文錯誤加格式範例、不呼叫工具 —— 10/25 評測的對話紀錄:3.5 Super VL 的 propose_patch 18 次有 8 次把 edits 寫成假的 JSON 字串。引號壞掉的不要猜(猜錯會改出錯的東西)。評測的 `transcripts/` 存每次的整段對話,查失敗原因先看它。
 - `agent.file_mentions`:`@路徑` 從最長往回試,取確實存在的最長檔名(中文檔名、後面不空格都認得)。
 - 工具定義現在約 2,000 tokens(`ALL_TOOLS`;實際執行再加 delegate 約 200、開上網再加兩個)、每步都送;新增工具前想清楚,說明文字盡量短。改了工具或系統提示後,`test_agent_escalates_mid_run_when_history_grows` 的上下文長度可能要重調。
 - 上網(`web.py`):`.env` 的 `ALLOW_WEB=true` 才把 `web.web_tools()` 加進工具(有 `TAVILY_API_KEY` 才有 `web_search`)。每次上網都經過 `web.CONFIRM`(`agent.main` 設成 `confirm_action`:y / a=之後都允許 / 預設拒絕;沒設定時一律拒絕)。`fetch_url` 自己跟轉址(`_get`)、每一跳都用 `_check_public` 擋非公開 IP。GitHub 的 PR / issue / blob 網址由 `_github_text` 改讀 API(說明、留言)、`.diff`、raw,不帶登入;API 讀不到的 issue 退回一般網頁。測試用 `fake_web` fixture 換掉 `web._client`,不連網。

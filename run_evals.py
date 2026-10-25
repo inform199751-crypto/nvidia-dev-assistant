@@ -9,7 +9,7 @@ escalate(Super 做到步數上限就換 DeepSeek 接著做,等於使用者每次
 用法:python run_evals.py [--configs super deepseek] [--tasks paging retry] [--repeat 2] [--budget 3000000]
      python run_evals.py --out output/evals/<之前那次>    # 接著跑沒跑完的(已經有結果的跳過,出錯的重跑)
      python run_evals.py --report output/evals/<那次>     # 只重新產生報表
-結果:output/evals/<時間>/results.jsonl(每次一行)和 report.md。
+結果:output/evals/<時間>/results.jsonl(每次一行)、report.md,transcripts/ 是每次的整段對話(查失敗原因用)。
 """
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Callable
 
 import yaml
+from langchain_core.messages import messages_to_dict
 
 import agent
 import guard
@@ -162,7 +163,8 @@ def routing(mode: str):
             os.environ["DIFFICULTY_ROUTING"] = old
 
 
-def run_one(task: Task, cfg: Config, registry, quota, work: Path, run: Callable[[Path], str] = docker_tests) -> dict:
+def run_one(task: Task, cfg: Config, registry, quota, work: Path, run: Callable[[Path], str] = docker_tests,
+            transcript: Path | None = None) -> dict:
     """跑一題、驗收,回傳一行結果。額度用完(QuotaExceeded)往外丟,其他錯誤記在 error。"""
     ws = make_workspace(task, work / "ws")
     wb = toolbox.Workbench(workspace=ws, patch_dir=work / "patches", output_dir=work / "docs")
@@ -189,6 +191,10 @@ def run_one(task: Task, cfg: Config, registry, quota, work: Path, run: Callable[
             row["judged"] = "hard" if d.result().pick == hard else "normal"
         row["seconds"] = round(time.monotonic() - began, 1)
         row["tokens"] = session.tokens_used if session else 0
+        if transcript and session:  # 整段對話(含模型送出的原始工具參數、工具回的錯誤):查失敗原因用
+            transcript.parent.mkdir(parents=True, exist_ok=True)
+            transcript.write_text(json.dumps(messages_to_dict(session.messages), ensure_ascii=False, indent=1),
+                                  encoding="utf-8")
         draft = dict(wb.draft)
         row.update(files_changed=len(draft), lines_changed=changed_lines(draft),
                    self_passed=wb.patches[-1][1] if wb.patches else None)
@@ -339,7 +345,8 @@ def main() -> None:
             quota = TokenQuota(max(args.budget - spent, 0), registry.limits["max_concurrent_per_user"])
             with tempfile.TemporaryDirectory(prefix=f"hsuan_eval_{task.id}_") as tmp:
                 try:
-                    row = run_one(task, cfg, registry, quota, Path(tmp))
+                    row = run_one(task, cfg, registry, quota, Path(tmp),
+                                  transcript=out / "transcripts" / f"{task.id}-{cfg.name}-{rep}.json")
                 except QuotaExceeded as e:
                     print(f"這次的 token 預算用完了,停止:{e}")
                     break

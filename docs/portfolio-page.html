@@ -321,7 +321,7 @@ flowchart LR
           <tr><td>操作瀏覽器</td><td>本機開發中網站埋兩個 bug,請它測登入流程</td><td class="num">6 步 · 28,008 tokens · 76 秒<small>抓到 API 500 和主控台錯誤,漏掉畫面文字錯誤</small></td><td><span class="pill warn">1/2</span></td></tr>
           <tr><td>停止 / 回答中送出</td><td>思考中、寫到一半、等確認時按停止;回答中再送一則訊息</td><td>停止 0.3 秒內生效、已寫的文字留著;中途的訊息答完自動接著回答</td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">182 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">183 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端 NIM</td><td>需要 GPU 伺服器</td><td>只對照過官方文件</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
       </table>
@@ -359,7 +359,7 @@ flowchart LR
         <li><span class="n">42</span><div><span class="what">想找比 DeepSeek 快的難題模型:GLM-5.3 Flash 冒煙測試快,實際修 bug 卻要 122 秒,還會逾時</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">不換;結果記在 models.yaml,下次不用重測</div></li>
         <li><span class="n">51</span><div><span class="what">使用者問問題,畫面上什麼都沒有:模型回了空白(答案只寫在思考裡),參數也擋不住</span><span class="how"><span class="tag">讀使用者的對話紀錄</span></span></div><div class="fix">空白就提醒一次、請它寫出來;實測遇到一次,提醒後就寫出來了</div></li>
         <li><span class="n">59</span><div><span class="what">主模型 Nemotron 3 Super 下架,備援默默換成 DeepSeek:看起來正常、其實慢 3–4 倍,一整天沒人發現</span><span class="how"><span class="tag">端到端評測</span></span></div><div class="fix">換成 Nemotron 3.5 Super VL;備援接手時畫面提醒、評測記實際回答的模型</div></li>
-        <li><span class="n">60</span><div><span class="what">新的 3.5 Super VL 呼叫工具時把修改清單傳成字串,工具一直報錯,17 題有 2 題它放棄、叫人手動改</span><span class="how"><span class="tag">端到端評測</span></span></div><div class="fix">清單 / 物件型的參數收到 JSON 字串就先轉回來</div></li>
+        <li><span class="n">60</span><div><span class="what">新的 3.5 Super VL 呼叫工具時把修改清單寫成字串,常常連 JSON 都不合法(18 次有 8 次),每次白花一步,有時乾脆放棄</span><span class="how"><span class="tag">端到端評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">合法的字串轉回清單;壞掉的不猜,回一句清楚的錯誤加正確格式</div></li>
       </ol>
     </div>
 
