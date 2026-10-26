@@ -218,7 +218,7 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
   <div class="margin">作品集<br>實測 10-06 – 10-10<br>更新 10-15</div>
   <div>
     <h1>對內研發助理<br>實測紀錄</h1>
-    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/15 邊做邊用真模型測試的過程,實測與審查一共抓到 61 個問題。</p>
+    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/26 邊做邊用真模型測試的過程,實測與審查一共抓到 61 個問題。</p>
     <div class="byline">
       <span><strong>HSUAN</strong></span>
       <span>Python · LangChain · NVIDIA NIM · Docker · Redis · scikit-learn</span>
@@ -300,7 +300,7 @@ flowchart LR
 <section>
   <div class="label">
     <h2>實測結果</h2>
-    <div class="note">NVIDIA API Catalog 免費層,10/6 – 10/15</div>
+    <div class="note">NVIDIA API Catalog 免費層,10/6 – 10/26</div>
   </div>
   <div class="body">
     <div class="table-scroll">
@@ -321,6 +321,7 @@ flowchart LR
           <tr><td>操作瀏覽器</td><td>本機開發中網站埋兩個 bug,請它測登入流程</td><td class="num">6 步 · 28,008 tokens · 76 秒<small>抓到 API 500 和主控台錯誤,漏掉畫面文字錯誤</small></td><td><span class="pill warn">1/2</span></td></tr>
           <tr><td>停止 / 回答中送出</td><td>思考中、寫到一半、等確認時按停止;回答中再送一則訊息</td><td>停止 0.3 秒內生效、已寫的文字留著;中途的訊息答完自動接著回答</td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
+          <tr><td>端到端評測</td><td>17 題自己寫的修 bug 題,驗收含 HSUAN 看不到的隱藏測試;10/25–26 主模型換成 3.5 Super VL 後,每種設定跑兩次</td><td class="num">依難度選模型 29/34(85%)· 平均約 52k tokens<small>只用 Super 24/34(71%)· 約 72k;同樣設定兩次差 3 題,起伏很大</small></td><td><span class="pill pass">選模型較好</span></td></tr>
           <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">183 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端 NIM</td><td>需要 GPU 伺服器</td><td>只對照過官方文件</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
