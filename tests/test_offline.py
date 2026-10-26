@@ -4184,3 +4184,75 @@ def test_memory_on_the_web(workspace, tmp_path_factory):
     assert guest.memory is None and not guest.memory_on
     with pytest.raises(PermissionError):
         guest.set_memory(True)
+
+
+# ---------- 深度研究(agent._research,10/26) ----------
+
+def _fake_research_tools(seen_urls):
+    """假的上網工具(名字跟真的一樣):照真的一樣先問 web._confirm,記下查了什麼。"""
+    from langchain_core.tools import tool as make_tool
+
+    @make_tool
+    def web_search(query: str) -> str:
+        """上網搜尋。"""
+        if not web._confirm("上網搜尋", query):
+            return "使用者不同意"
+        seen_urls.append(("search", query))
+        return f"搜尋結果:{query} https://example.com/{len(seen_urls)}"
+
+    @make_tool
+    def fetch_url(url: str) -> str:
+        """讀網頁。"""
+        if not web._confirm("讀取網頁", url):
+            return "使用者不同意"
+        seen_urls.append(("fetch", url))
+        return "網頁內容"
+
+    return [web_search, fetch_url]
+
+
+def test_deep_research_plans_asks_once_runs_subagents_and_saves_report(workspace, monkeypatch):
+    """深度研究:列子問題 → 只問使用者一次 → 子助理同時上網查(這次研究裡的搜尋、讀網頁不再一次一次問)→
+    寫附出處的報告、存成文件;結束後上網確認恢復原狀。不同意就不上網、不留在對話裡。"""
+    import agent
+    monkeypatch.setattr(agent, "SUBAGENT_PARALLEL", 1)  # 照順序跑,劇本才對得上
+    tools.bench().output_dir = workspace / "docs"
+    seen_urls, asked = [], []
+    original = lambda action, detail: asked.append((action, detail)) or action == "深度研究"  # noqa: E731
+    tools.bench().confirm = original
+    reg, _ = scripted_registry([
+        ai('["RAG 是什麼", "RAG 的缺點"]', tokens=300),
+        ai(tool_calls=[{"name": "web_search", "id": "s1", "args": {"query": "RAG 是什麼"}}]), ai("先檢索再生成 (https://example.com/1)"),
+        ai(tool_calls=[{"name": "fetch_url", "id": "f1", "args": {"url": "https://example.com/x"}}]), ai("會檢索錯 (https://example.com/x)"),
+        ai("## 結論\nRAG 先檢索再生成 [1],但可能檢索錯 [2]。\n## 來源\n1. https://example.com/1\n2. https://example.com/x", tokens=900)])
+    events = []
+    session = AgentSession(reg, TokenQuota(10**6, 2), tools=_fake_research_tools(seen_urls),
+                           on_event=lambda kind, data: events.append((kind, data)))
+    r = session.ask("RAG 適合企業用嗎", mode="research")
+    assert r.answer.startswith("## 結論") and not r.stopped
+    assert [a for a, _ in asked] == ["深度研究"] and "RAG 的缺點" in asked[0][1]  # 只問一次,列出子問題
+    assert seen_urls == [("search", "RAG 是什麼"), ("fetch", "https://example.com/x")]
+    assert tools.bench().confirm is original  # 研究結束:上網又要一次一次問
+    kinds = [(k, d.get("name")) for k, d in events if k in ("tool", "tool_done")]
+    assert kinds == [("tool", "delegate"), ("tool_done", "delegate"), ("tool", "save_document"), ("tool_done", "save_document")]
+    assert next(d for k, d in events if k == "tool")["args"]["tasks"] == ["RAG 是什麼", "RAG 的缺點"]
+    assert len([1 for k, _ in events if k == "sub_done"]) == 2
+    saved = workspace / "docs" / "研究報告-RAG適合企業用嗎.md"
+    assert saved.read_text(encoding="utf-8").startswith("# RAG 適合企業用嗎\n\n## 結論")
+    assert [m.type for m in session.messages] == ["system", "human", "ai"]
+    assert "<research_topic>" in session.messages[1].content and "先檢索再生成" in session.messages[1].content
+    assert r.tokens_used >= 1200  # 計畫、子助理、報告都算進這一輪
+
+    asked.clear()
+    tools.bench().confirm = lambda action, detail: asked.append(action) and False  # 這次不同意
+    reg2, _ = scripted_registry([ai('["A", "B"]')])
+    no = AgentSession(reg2, TokenQuota(10**6, 2), tools=_fake_research_tools(seen_urls))
+    r = no.ask("再查一個", mode="research")
+    assert r.answer == "好,沒有開始研究。" and asked == ["深度研究"] and len(no.messages) == 1
+
+
+def test_deep_research_needs_web_tools(workspace):
+    """沒開上網(.env 的 ALLOW_WEB、TAVILY_API_KEY)就不能深度研究,也不會呼叫模型。"""
+    reg, seen = scripted_registry([])
+    r = AgentSession(reg, TokenQuota(10**6, 2)).ask("研究一下", mode="research")
+    assert "ALLOW_WEB" in r.answer and seen == []

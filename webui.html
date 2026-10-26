@@ -613,6 +613,10 @@
           <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h5M8 10l4-5h5M8 10h9M8 10l4 5h5"/></svg>
           分工
         </button>
+        <button type="button" class="mode-btn" id="research-mode" aria-pressed="false" hidden title="開啟後,HSUAN 先把問題拆成幾個子問題,問你一次要不要上網,再讓子助理同時上網查、整理成附出處的報告(會花比較多 tokens)">
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5L17 17M6 8.5h5M8.5 6v5"/></svg>
+          深度研究
+        </button>
         <span class="spacer"></span>
         <button type="button" class="model-pick" id="model-pick" aria-label="選擇模型和努力程度" title="這段對話用的模型和努力程度">
           <span id="model-name">自動</span>
@@ -923,7 +927,7 @@ const handlers = {
     // 前面還在跑的工具結果也要接得上
     if (!e.queued) { bot = null; tools.length = 0; }
     const m = el("div", "msg user");
-    const tags = [e.mode === "plan" && "先規劃", e.split && "分工", e.queued && "回答中送出"].filter(Boolean);
+    const tags = [e.mode === "plan" && "先規劃", e.mode === "research" && "深度研究", e.split && "分工", e.queued && "回答中送出"].filter(Boolean);
     if (tags.length) m.appendChild(el("span", "mode-tag", tags.join(" · ")));
     if (e.queued) heardWaiting.push(m);
     if (e.images?.length) {  // 附上的圖片(伺服器只留縮圖)
@@ -1294,6 +1298,7 @@ async function loadState() {
     if (store.get("panel", "") === "1" && !phoneWidth()) panelOpen(true);
   }
   $("split-mode").hidden = sideMode === "chat" || !!state.guest;
+  $("research-mode").hidden = !state.research;  // 要能上網搜尋(.env 的 ALLOW_WEB、TAVILY_API_KEY)
   renderUsage();
   renderModel();
   setBusy(state.busy);
@@ -1384,7 +1389,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/26", ["HSUAN 會記住你說過、以後都適用的事(跨對話的記憶):跟它說「記住…」或「以後都…」就會記,新對話自動帶上;在「設定 → 記憶」可以看、加、刪,也可以整個關掉",
+  ["10/26", ["輸入框多了「深度研究」(有開上網才有):HSUAN 先把問題拆成幾個子問題、問你一次要不要上網,子助理同時上網查,最後整理成附出處的報告、存成文件",
+             "HSUAN 會記住你說過、以後都適用的事(跨對話的記憶):跟它說「記住…」或「以後都…」就會記,新對話自動帶上;在「設定 → 記憶」可以看、加、刪,也可以整個關掉",
              "視窗比較窄的時候,右邊加寬的面板(變更、檔案、瀏覽器)改成蓋在畫面右邊,不會把對話擠到看不見"]],
   ["10/25", ["日常的模型換成 Nemotron 3.5 Super VL(原本的 Nemotron 3 Super 在 NVIDIA 平台下架了)",
              "難的問題會自動交給 DeepSeek(依難度選模型):17 題修 bug 的評測,這樣做對 16 題,只用 Super 是 12 題",
@@ -2373,6 +2379,13 @@ function setPlanMode(on) {
   $("plan-mode").setAttribute("aria-pressed", String(on));
   input.placeholder = on ? "要規劃什麼任務?" : "請輸入訊息…";
 }
+let researchMode = false;  // 「深度研究」(10/26):這一題走 agent._research,送出後自動關掉;跟先規劃、分工不能同時開
+function setResearchMode(on) {
+  researchMode = on;
+  $("research-mode").setAttribute("aria-pressed", String(on));
+  if (on) { setPlanMode(false); setSplitMode(false); }
+  input.placeholder = on ? "要研究什麼?例如:2026 年企業導入 AI 程式助理的資安風險" : planMode ? "要規劃什麼任務?" : "請輸入訊息…";
+}
 let splitMode = false;  // 「分工」:這一題請 HSUAN 分給子助理(agent.SPLIT_NOTE),送出後自動關掉
 function setSplitMode(on) {
   splitMode = on;
@@ -2586,8 +2599,9 @@ $("model-pick").onclick = () => popup($("model-pick"), [{ node: effortPanel() },
     if (!x.ok) return alert(x.data.error || "換模型失敗");
     state.role = x.data.role; renderModel();
   }])]);
-$("plan-mode").onclick = () => { setPlanMode(!planMode); input.focus(); };
-$("split-mode").onclick = () => { setSplitMode(!splitMode); input.focus(); };
+$("plan-mode").onclick = () => { setPlanMode(!planMode); if (planMode) setResearchMode(false); input.focus(); };
+$("split-mode").onclick = () => { setSplitMode(!splitMode); if (splitMode) setResearchMode(false); input.focus(); };
+$("research-mode").onclick = () => { setResearchMode(!researchMode); input.focus(); };
 async function submit(clicked = false) {
   const text = input.value.trim(), images = pendingImages;
   if (!conv) return;
@@ -2596,13 +2610,15 @@ async function submit(clicked = false) {
     return;
   }
   if (!text && !images.length) return;
-  const mode = planMode ? "plan" : "normal", split = splitMode && !$("split-mode").hidden;
+  const research = researchMode && !$("research-mode").hidden;
+  const mode = research ? "research" : planMode ? "plan" : "normal", split = !research && splitMode && !$("split-mode").hidden;
   input.value = ""; pendingImages = []; renderThumbs(); autosize(); updateSend(); setPlanMode(false); setSplitMode(false);
+  setResearchMode(false);
   const r = await api("/api/ask", { text, mode, images, split });
   if (!r.ok) {  // 沒送出去:文字和圖片都放回去
     alert(r.data.error || "送出失敗");
     input.value = text; pendingImages = images; renderThumbs(); autosize(); updateSend(); setPlanMode(mode === "plan");
-    setSplitMode(split);
+    setSplitMode(split); setResearchMode(research);
   }
 }
 $("form").onsubmit = (ev) => { ev.preventDefault(); submit(ev.submitter === send); };

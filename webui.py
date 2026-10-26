@@ -541,6 +541,11 @@ class Hub:
         with toolbox.using(self.bench):
             self.session.to_chat()
 
+    @property
+    def can_research(self) -> bool:
+        """能不能「深度研究」:這段對話有上網搜尋和讀網頁的工具(.env 的 ALLOW_WEB、TAVILY_API_KEY),不是整檔模式。"""
+        return agent.RESEARCH_TOOLS <= {t.name for t in self.session.tools}
+
     def use_memory(self, mem) -> None:
         """跨對話的記憶(Desk 的;None = 關掉或訪客):系統提示跟著換,save_memory 工具下一輪才綁(_sync_tools)。"""
         self.bench.memory = mem
@@ -1935,6 +1940,7 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                              "browser": {"on": desk.browser_on, "can": desk.can_browse and not team and not guest},
                              "terminal": self._term_ok(),  # 右上角的終端機按鈕:只有這台電腦自己看得到
                              "memory": desk.memory_on,  # 設定頁的「記憶」
+                             "research": hub.can_research,  # 輸入框的「深度研究」:要能上網搜尋
                              "seq": len(hub.events),  # 最新的事件編號:頁面分得出哪些是重播、哪些是剛發生的
                              "company_paths": [str(x) for x in guard.COMPANY_PATHS] if self._local() and not guest else []}
                     if lan and self._local():  # 手機連線方式只給這台電腦看
@@ -2268,8 +2274,10 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 if not text and not images:
                     return self._json(400, {"error": "問題是空的"})
                 text = text or "請說明這張圖。"
-                ok = hub.ask(text, "plan" if body.get("mode") == "plan" and not hub.chat else "normal", images=images,
-                             split=bool(body.get("split")) and not hub.chat)
+                mode = body.get("mode")  # 先規劃(程式模式才有)/ 深度研究(要能上網)/ 一般
+                mode = ("plan" if mode == "plan" and not hub.chat else
+                        "research" if mode == "research" and hub.can_research else "normal")
+                ok = hub.ask(text, mode, images=images, split=bool(body.get("split")) and not hub.chat and mode != "research")
                 self._json(202 if ok else 409, {} if ok else
                            {"error": "回答中只能再傳文字訊息;先規劃、分工、附圖片要等這一輪結束(或先按停止)"})
             elif path == "/api/stop":  # 輸入框的「停止」
