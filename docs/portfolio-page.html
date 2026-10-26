@@ -218,7 +218,7 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
   <div class="margin">作品集<br>實測 10-06 – 10-27<br>更新 10-27</div>
   <div>
     <h1>對內研發助理<br>實測紀錄</h1>
-    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/27 邊做邊用真模型測試的過程,實測與審查一共抓到 67 個問題。</p>
+    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/27 邊做邊用真模型測試的過程,實測與審查一共抓到 68 個問題。</p>
     <div class="byline">
       <span><strong>HSUAN</strong></span>
       <span>Python · LangChain · NVIDIA NIM · Docker · Redis · scikit-learn</span>
@@ -341,7 +341,7 @@ flowchart LR
 
 <section>
   <div class="label">
-    <h2>抓到的 67 個問題</h2>
+    <h2>抓到的 68 個問題</h2>
     <div class="note">依類別分組,編號照發現順序,跟 README 一致。每一條都寫了怎麼發現的</div>
   </div>
   <div class="body">
@@ -371,6 +371,7 @@ flowchart LR
         <li><span class="n">59</span><div><span class="what">主模型 Nemotron 3 Super 在 catalog 上回 404(清單上還在),備援默默換成 DeepSeek:看起來正常、其實慢 3–4 倍,一整天沒人發現</span><span class="how"><span class="tag">端到端評測</span></span></div><div class="fix">換成 Nemotron 3.5 Super VL;備援接手時畫面提醒、評測記實際回答的模型</div></li>
         <li><span class="n">60</span><div><span class="what">新的 3.5 Super VL 呼叫工具時把修改清單寫成字串,常常連 JSON 都不合法(18 次有 8 次),每次白花一步,有時乾脆放棄</span><span class="how"><span class="tag">端到端評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">讀開頭那段完整的清單(壞掉的 23 個救回 13 個);改成中文錯誤加範例反而更糟,所以只做安全的讀回</div></li>
         <li><span class="n">62</span><div><span class="what">新的 Super 在免費平台上時好時壞:常回 500、偶爾卡住 180 秒,14% 的步數被換成 DeepSeek</span><span class="how"><span class="tag">對話紀錄</span> <span class="tag">直接呼叫</span></span></div><div class="fix">遇到忙線同一顆先自動重試 2 次再換備援(連續 20 次成功 9 → 14 次);逾時 180 → 90 秒</div></li>
+        <li><span class="n">68</span><div><span class="what">做語音對話(像 ChatGPT 的語音模式)時:表格轉成唸的文字吃掉換行,清單的「-」被唸出來;剛打開就按,聲音清單還沒載入,誤報沒有中文語音</span><span class="how"><span class="tag">網頁實測</span></span></div><div class="fix">聽寫用瀏覽器的辨識(先問、同意才開),唸用電腦內建的聲音;只在同一行轉換、補停頓;聲音清單等 1.5 秒再判斷</div></li>
       </ol>
     </div>
 
