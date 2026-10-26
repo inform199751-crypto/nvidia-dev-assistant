@@ -74,7 +74,7 @@ def report(entries: list[dict], hard_role: str = "code_deep", examples: int = 10
     picks = Counter(e["pick"] or "分類失敗" for e in classified)
     lines.append("分類器判斷:" + " · ".join(f"{k} {_share(n, len(classified))}" for k, n in picks.most_common())
                  + f"(另有手動指定 {by['manual']} 輪、照計畫執行沿用 {by['plan']} 輪、"
-                   f"做到上限後換模型 {by['escalate']} 輪)")
+                   f"做到上限後換模型 {by['escalate']} 輪、語音模式不判斷 {by['voice']} 輪)")
     if classified:
         spent = sum(e["classify_tokens"] for e in classified)
         total = sum(e["tokens"] or 0 for e in entries)

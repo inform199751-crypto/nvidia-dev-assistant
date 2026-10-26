@@ -658,11 +658,12 @@ class Hub:
     # ---------- 對話 ----------
 
     def ask(self, text: str, mode: str = "normal", shown: str | None = None, role: str | None = None,
-            images: list[dict] | None = None, split: bool = False) -> bool:
+            images: list[dict] | None = None, split: bool = False, voice: bool = False) -> bool:
         """shown:畫面上顯示的問題(照計畫執行時,送給模型的是 EXECUTE_TASK,畫面只顯示「照計畫執行」)。
         role:只有這一輪換模型(做到步數上限後的「換模型接著做」)。
         images:上傳的圖片 [{"name","data","thumb"}](parse_images 檢查過);畫面和存檔只留縮圖,原圖只送給看圖模型。
         split:輸入框的「分工」開關(agent.SPLIT_NOTE)。
+        voice:語音模式說的話(agent.VOICE_NOTE:回答要短、口語,會被唸出來)。
         回答到一半又送來的一般文字訊息(10/16):不擋,交給這一輪(下一步就看到,像 Claude);規劃、圖片、換模型還是要等。"""
         with self.cond:
             if self.busy:
@@ -686,9 +687,11 @@ class Hub:
             event["images"] = [im["thumb"] for im in images]
         if split:
             event["split"] = True
+        if voice:
+            event["voice"] = True
         self.publish("user", event)
         pictures = [(im["name"], im["data"]) for im in images or []]
-        threading.Thread(target=self._run, args=(text, mode, role, pictures, split), daemon=True).start()
+        threading.Thread(target=self._run, args=(text, mode, role, pictures, split, voice), daemon=True).start()
         return True
 
     def stop(self) -> bool:
@@ -722,7 +725,7 @@ class Hub:
         return ""
 
     def _run(self, text: str, mode: str = "normal", role: str | None = None, images: list | None = None,
-             split: bool = False) -> None:
+             split: bool = False, voice: bool = False) -> None:
         patches = self.bench.patches
         before, planned, offer = len(patches), False, None
         try:
@@ -738,7 +741,7 @@ class Hub:
                 if self.bench.memory is not None:  # 記憶可能剛在別段對話、設定頁改過:這一輪的系統提示用最新的
                     self.session.refresh_system_prompt()
                 files = [] if self.chat else agent.file_mentions(text)  # 對話模式讀不到電腦上的檔案
-                r = self.session.ask(self.note + text, files, mode, role, images or [], split)
+                r = self.session.ask(self.note + text, files, mode, role, images or [], split, voice)
             self.note = ""
             self.publish("done", {"role": r.role, "steps": r.steps, "tokens": r.tokens_used,
                                   "total": self.session.tokens_used, "answer": r.answer, "stopped": r.stopped})
@@ -2344,7 +2347,8 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 mode = body.get("mode")  # 先規劃(程式模式才有)/ 深度研究(要能上網)/ 一般
                 mode = ("plan" if mode == "plan" and not hub.chat else
                         "research" if mode == "research" and hub.can_research else "normal")
-                ok = hub.ask(text, mode, images=images, split=bool(body.get("split")) and not hub.chat and mode != "research")
+                ok = hub.ask(text, mode, images=images, split=bool(body.get("split")) and not hub.chat and mode != "research",
+                             voice=bool(body.get("voice")) and mode == "normal")
                 self._json(202 if ok else 409, {} if ok else
                            {"error": "回答中只能再傳文字訊息;先規劃、分工、附圖片要等這一輪結束(或先按停止)"})
             elif path == "/api/stop":  # 輸入框的「停止」

@@ -3236,6 +3236,36 @@ def test_web_split_switch_reaches_the_model(webui_app):
     assert "<split>" in app.seen[0][1][-1].content
 
 
+def test_voice_mode_turn_is_short_fast_and_not_routed(webui_app, routing_log, monkeypatch):
+    """10/27 語音模式(像 ChatGPT 手機版):/api/ask 帶 voice → 問題後面接 VOICE_NOTE(短、口語、不要表格和程式碼),
+    畫面的問題標「語音」、顯示的還是原本說的話。使用者在等它開口,所以努力程度選高也不接「要仔細」、不開思考,
+    依難度選模型開著也不問分類器(劇本只有一則回答:問了分類器,回答就會變成分類器的 JSON)。"""
+    import agent
+    app = webui_app([ai("兩點半。"), ai('{"level": "normal"}'), ai("1. 先看 calc.py")], difficulty_config("on"))
+    reg, asked = app.hub.session.registry, []
+    real = reg.agent_model
+
+    def agent_model(role, tools, *, thinking=None):
+        asked.append(thinking)
+        return real(role, tools, thinking=thinking)
+
+    monkeypatch.setattr(reg, "agent_model", agent_model)
+    app.hub.session.effort = "high"
+    assert app.post("/api/ask", {"text": "現在幾點", "voice": True}).status_code == 202
+    events = app.events_until("done")
+    user = next(e for e in events if e["kind"] == "user")
+    assert user["voice"] is True and user["text"] == "現在幾點" and events[-1]["answer"] == "兩點半。"
+    question = app.seen[0][1][-1].content
+    assert agent.VOICE_NOTE in question and "Effort" not in question and asked == [False]
+    assert [e["by"] for e in log_entries(routing_log)] == ["voice"]
+    # 先規劃不會是語音的:照常問分類器、接努力程度的提示
+    since = len(app.hub.events)
+    assert app.post("/api/ask", {"text": "規劃", "mode": "plan", "voice": True}).status_code == 202
+    assert "voice" not in app.events_until("done", since=since)[0]
+    assert "Effort: high" in app.seen[-1][1][-1].content and asked[-1] is True
+    assert [e["by"] for e in log_entries(routing_log)] == ["voice", "classifier"]
+
+
 # ---------- MCP 連接器(mcp_client.py) ----------
 
 def test_mcp_config_formats():

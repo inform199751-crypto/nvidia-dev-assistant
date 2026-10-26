@@ -475,6 +475,32 @@
   .voice-btn[aria-pressed="true"] { color: var(--accent-text, var(--accent)); background: color-mix(in srgb, var(--accent) 14%, transparent); }
   .voice-btn.listening { animation: listening 1.4s ease-in-out infinite; }
   @keyframes listening { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
+  /* 語音模式(像 ChatGPT 手機版):全螢幕,中間一顆球;--lvl 是聽到字 / 唸到詞時跳一下(0–1) */
+  .vm { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; flex-direction: column; align-items: center;
+        justify-content: center; gap: 20px; padding: max(56px, env(safe-area-inset-top)) 16px max(32px, env(safe-area-inset-bottom)); }
+  .vm[hidden] { display: none; }
+  .vm-top { position: absolute; top: max(16px, env(safe-area-inset-top)); left: 16px; right: 16px; text-align: center;
+            color: var(--faint); font-size: 12.5px; }
+  .vm-orb { --lvl: 0; width: min(52vw, 220px); aspect-ratio: 1; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
+            background: radial-gradient(circle at 34% 28%, color-mix(in srgb, var(--accent) 30%, #fff) 0%, var(--accent) 52%,
+                        color-mix(in srgb, var(--accent) 55%, #000) 100%);
+            box-shadow: 0 0 calc(24px + var(--lvl) * 48px) color-mix(in srgb, var(--accent) 45%, transparent);
+            transform: scale(calc(1 + var(--lvl) * .07)); transition: transform .14s ease-out, box-shadow .14s ease-out, filter .3s; }
+  .vm[data-phase="listen"] .vm-orb { animation: vm-breathe 2.4s ease-in-out infinite; }
+  .vm[data-phase="wait"] .vm-orb { animation: vm-think 1.1s ease-in-out infinite; }
+  .vm[data-phase="idle"] .vm-orb { filter: grayscale(.85) brightness(.55); }
+  @keyframes vm-breathe { 0%, 100% { scale: 1; } 50% { scale: 1.045; } }
+  @keyframes vm-think { 0%, 100% { scale: .9; opacity: .7; } 50% { scale: 1; opacity: 1; } }
+  .vm-state { font-size: 17px; min-height: 1.5em; text-align: center; max-width: 560px; }
+  .vm-cap { font-size: 15px; line-height: 1.6; color: var(--muted); text-align: center; max-width: 560px; min-height: 4.8em;
+            display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .vm-cap.mine { color: var(--text); }
+  .vm-bar { display: flex; gap: 32px; margin-top: 4px; }
+  .vm-btn { width: 60px; height: 60px; border-radius: 50%; border: 1px solid var(--line); background: var(--hover); color: var(--text);
+            display: grid; place-items: center; }
+  .vm-btn[aria-pressed="true"] { color: var(--error); border-color: var(--error); }
+  .vm-btn.end { background: var(--btn); color: var(--btn-ink); border-color: transparent; }
+  @media (prefers-reduced-motion: reduce) { .vm-orb { animation: none !important; transition: none; } }
   .send { width: 36px; height: 36px; border-radius: 50%; border: 0; flex-shrink: 0; background: var(--btn); color: var(--btn-ink);
           display: grid; place-items: center; }
   .send:disabled { background: var(--btn-off); }
@@ -631,7 +657,7 @@
           <span id="model-name">自動</span>
           <svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l5 5 5-5"/></svg>
         </button>
-        <button type="button" class="round-btn voice-btn" id="voice" hidden aria-pressed="false" aria-label="語音對話">
+        <button type="button" class="round-btn voice-btn" id="voice" hidden aria-pressed="false" aria-label="聽寫" title="聽寫:用說的輸入文字,看過再送出">
           <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="6" height="10" rx="3"/><path d="M4 9.5a6 6 0 0 0 12 0M10 15.5V18"/></svg>
         </button>
         <button type="submit" class="send" id="send" aria-label="送出" disabled>
@@ -642,6 +668,18 @@
     <div class="hint" id="hint">用 @檔名 附上專案裡的檔案 · Enter 送出、Shift+Enter 換行 · HSUAN 也會出錯,重要的結果請自己確認</div>
   </footer>
 </div>
+<section class="vm" id="vm" hidden aria-label="語音模式">
+  <div class="vm-top" id="vm-top">語音模式</div>
+  <button type="button" class="vm-orb" id="vm-orb" aria-label="語音模式"></button>
+  <div class="vm-state" id="vm-state" aria-live="polite"></div>
+  <div class="vm-cap" id="vm-cap"></div>
+  <div class="vm-bar">
+    <button type="button" class="vm-btn" id="vm-mute" aria-pressed="false" aria-label="關麥克風"></button>
+    <button type="button" class="vm-btn end" id="vm-end" aria-label="結束語音模式" title="結束(Esc)">
+      <svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
+    </button>
+  </div>
+</section>
 <section class="panel" id="panel" hidden aria-label="工作狀態"><!-- 不用 aside:左側欄的 aside 樣式(手機上的抽屜)會套上來 -->
   <div class="panel-grip" id="panel-grip" title="拖拉調整寬度"></div>
   <div class="panel-head"><div class="panel-tabs" id="panel-tabs" role="tablist" aria-label="面板分頁"></div>
@@ -669,6 +707,9 @@ let page = null;          // 打開中的側邊欄頁面
 const term = { since: 0, timer: null, conv: null, history: [], hi: 0, last: "", restored: false };
 const SEND_ICON = send.innerHTML;
 const STOP_ICON = '<svg width="14" height="14" viewBox="0 0 20 20"><rect x="3" y="3" width="14" height="14" rx="2.5" fill="currentColor"/></svg>';
+const TALK_ICON = '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 8.5v3M6.5 6v8M10 3.5v13M13.5 6v8M17 8.5v3"/></svg>';
+const MIC_ICON = '<svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="6" height="10" rx="3"/><path d="M4 9.5a6 6 0 0 0 12 0M10 15.5V18"/></svg>';
+const MIC_OFF_ICON = '<svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="6" height="10" rx="3"/><path d="M4 9.5a6 6 0 0 0 12 0M10 15.5V18M3 3l14 14"/></svg>';
 const store = {
   get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* 無痕視窗等不能存,沒關係 */ } },
@@ -867,13 +908,14 @@ function dock() {  // 開始對話:輸入框回到最下面
 
 // ---------- 送出 / 狀態 ----------
 // 回答中(10/16 使用者要的,像 Claude):輸入框空的 → 按鈕是「停止」;打了字 → 一樣是「送出」,HSUAN 下一步就看到
+// 沒在回答、輸入框空的(10/27,像 ChatGPT):按鈕是「語音模式」(有麥克風可用才有)
 function updateSend() {
-  const has = !!input.value.trim() || pendingImages.length > 0, stop = busy && !has;
+  const has = !!input.value.trim() || pendingImages.length > 0, stop = busy && !has, talk = !busy && !has && canTalk();
   send.classList.toggle("stop", stop);
-  send.innerHTML = stop ? STOP_ICON : SEND_ICON;
-  send.setAttribute("aria-label", stop ? "停止回答" : busy ? "送出(HSUAN 下一步就會看到)" : "送出");
-  send.title = stop ? "停止回答" : busy ? "回答到一半也可以送出:HSUAN 下一步就會看到" : "";
-  send.disabled = !busy && !has;
+  send.innerHTML = stop ? STOP_ICON : talk ? TALK_ICON : SEND_ICON;
+  send.setAttribute("aria-label", stop ? "停止回答" : talk ? "語音模式" : busy ? "送出(HSUAN 下一步就會看到)" : "送出");
+  send.title = stop ? "停止回答" : talk ? "語音模式:用說的跟 HSUAN 對話,回答會唸出來" : busy ? "回答到一半也可以送出:HSUAN 下一步就會看到" : "";
+  send.disabled = !busy && !has && !talk;
 }
 function setBusy(b) {
   busy = b;
@@ -1032,7 +1074,7 @@ const handlers = {
   },
   error(e) {
     stopThinking(); flush(); ensureBot().appendChild(el("div", "error", `錯誤:${e.text}`)); bot = null; setBusy(false); refreshSoon();
-    if (voice.on && e.seq > pane.liveSeq) voiceOff("HSUAN 出錯了,語音對話先結束");
+    voiceError(e);  // 語音模式中:麥克風先關,畫面說出錯了
   },
   confirm(e) {
     stopThinking();
@@ -1150,7 +1192,7 @@ function connect() {
 // ---------- 對話 / 專案(側邊欄) ----------
 const convMeta = () => desk.conversations.find((c) => c.id === conv);
 function openConv(id) {
-  conv = id; store.set("conv", id); voiceOff(); stopSpeaking();  // 換對話:語音對話結束、正在唸的停掉
+  conv = id; store.set("conv", id); voiceOff(); stopDictation(false); stopSpeaking();  // 換對話:語音模式、聽寫結束,正在唸的停掉
   sideMode = kindOf(convMeta()); store.set("mode", sideMode);
   bot = null; tools.length = 0; cards = {}; dirty.clear(); pendingImages = []; renderThumbs();
   closePage(); closeSide(); setPlanMode(false); setBusy(false); applyMode();
@@ -1416,7 +1458,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/26", ["可以用說的跟 HSUAN 對話了(像 ChatGPT 的語音模式):按輸入框右下角的麥克風,說完停一下就送出,回答會唸出來、唸完再換你說;唸的時候按麥克風打斷,Esc 結束。每則回答下面也有「朗讀」,在「設定 → 朗讀」選聲音和語速",
+  ["10/27", ["語音模式(像 ChatGPT 手機版):輸入框空的時候按右下角的按鈕,全螢幕一顆球,用說的問,說完停一下就送出;回答短、口語,唸出來之後再換你說。點球打斷、可以關麥克風,Esc 或 × 結束。輸入框的麥克風改成聽寫:說的話變成文字,看過再送"]],
+  ["10/26", ["每則回答下面有「朗讀」,用這台裝置的聲音唸出來;在「設定 → 朗讀」選聲音和語速",
              "可以請 HSUAN 畫圖了(NVIDIA 的 FLUX):說「幫我畫一張…」,畫好直接顯示在對話裡,也能從「成品」下載",
              "側邊欄多了「排程」:設定時間(每天 / 平日 / 週末),時間到了 HSUAN 自動開一段新對話去做,例如每天早上跑測試、整理失敗原因;HSUAN 要開著才會跑,錯過的今天打開時補跑一次",
              "輸入框多了「深度研究」(有開上網才有):HSUAN 先把問題拆成幾個子問題、問你一次要不要上網,子助理同時上網查,最後整理成附出處的報告、存成文件",
@@ -2160,7 +2203,9 @@ function stopSpeaking() {
   if (speech.btn) { speech.btn.setAttribute("aria-pressed", "false"); speech.btn.textContent = "朗讀"; speech.btn = null; }
 }
 const NO_VOICE = "這台裝置沒有這個語言的本機語音。Windows 可以到「設定 → 時間與語言 → 語音」加中文(台灣)的語音,或到 HSUAN 的「設定 → 朗讀」選一個線上的聲音。";
-function speak(text, btn = null, after = null) {  // 回傳有沒有開始唸;after:整則自然唸完才呼叫(中途停掉不會)
+// 回傳有沒有開始唸。btn:回答下面的「朗讀」(唸的時候變「停止朗讀」);after:整則自然唸完才呼叫(中途停掉不會);
+// onPart / onWord:語音模式的字幕和球(開始唸某一段、唸到一個詞)
+function speak(text, { btn = null, after = null, onPart = null, onWord = null } = {}) {
   const again = btn && speech.btn === btn;
   stopSpeaking();
   if (again) return false;  // 唸到一半再按:停止
@@ -2174,6 +2219,8 @@ function speak(text, btn = null, after = null) {  // 回傳有沒有開始唸;af
   speech.queue = parts.map((p, i) => {
     const u = new SpeechSynthesisUtterance(p);
     u.voice = voice; u.lang = voice.lang; u.rate = speech.rate;
+    if (onPart) u.onstart = () => { if (speech.run === run) onPart(p); };
+    if (onWord) u.onboundary = () => { if (speech.run === run) onWord(); };
     if (i === parts.length - 1) u.onend = u.onerror = () => { if (speech.run !== run) return; stopSpeaking(); after?.(); };
     speechSynthesis.speak(u);
     return u;
@@ -2181,106 +2228,170 @@ function speak(text, btn = null, after = null) {  // 回傳有沒有開始唸;af
   return true;
 }
 function speakButton(text) {
-  const b = button("朗讀", "speak", () => {
-    if (voice.on) { if (speech.btn === b) return interrupt(); voiceOff(); }  // 語音對話中按正在唸的那則 = 打斷、換你說
-    speak(text, b);
-  });
+  const b = button("朗讀", "speak", () => speak(text, { btn: b }));
   b.setAttribute("aria-pressed", "false"); b.title = "用這台裝置的語音唸出這則回答(文字不會送到雲端)";
   return b;
 }
 
-// ---------- 語音對話(10/26 使用者要的,像 ChatGPT 的語音模式):你說 → 停一下自動送出 → 回答唸出來 → 再換你說 ----------
+// ---------- 語音(10/26–27 使用者要的,像 ChatGPT):輸入框的麥克風 = 聽寫;輸入框空的時候右下角 = 語音模式 ----------
 // NVIDIA 平台沒有聽得懂中文的語音模型(10/10 試過 Nano Omni,錯字太多),所以聽寫用瀏覽器的語音辨識:
 // Edge 把聲音送到微軟、Chrome 送到 Google 的雲端,第一次用先說清楚、同意才開。
-// 麥克風只給安全連線(這台電腦的 127.0.0.1);手機走區域網路的 http 拿不到,所以不顯示按鈕
+// 麥克風只給安全連線(這台電腦的 127.0.0.1、https);手機走 http 拿不到,所以不顯示按鈕
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const RECOG_LANG = { "zh-TW": "zh-TW", en: "en-US", ja: "ja-JP" };
-const QUIET_ROUNDS = 4;  // 連續幾次沒聽到聲音就結束(瀏覽器大約 5–8 秒沒聲音算一次)
-// phase:listen 在聽、wait 等 HSUAN 回答、speak 在唸;spoken:唸過的 done 事件編號(重播的不唸)
-const voice = { on: false, phase: "", rec: null, heard: "", error: "", quiet: 0, spoken: 0 };
-const canTalk = () => !!Recognition && window.isSecureContext && canSpeak();
+// 用 function 宣告:updateSend 在頁面程式跑到這裡之前就會呼叫它
+function canTalk() {
+  return !!(window.SpeechRecognition || window.webkitSpeechRecognition) && window.isSecureContext && "speechSynthesis" in window;
+}
+async function consentVoice() {  // 第一次用麥克風:說清楚聲音會送到哪裡,同意才開(存在這台裝置)
+  if (store.get("voiceOk", "") === "1") return true;
+  const where = /Edg\//.test(navigator.userAgent) ? "微軟" : "瀏覽器廠商(Chrome 是 Google、Safari 是 Apple)";
+  if (!confirm(`用說的:你說的話由瀏覽器轉成文字,聲音會送到${where}的雲端辨識,轉好的文字跟打字一樣送給 HSUAN。`
+    + "不要用它講公司機密或客戶資料。")) return false;
+  store.set("voiceOk", "1");
+  return true;
+}
+function micError(err) {  // 瀏覽器語音辨識的錯誤 → 給人看的原因;沒聽到聲音、被我們中止的不算
+  if (err === "not-allowed" || err === "service-not-allowed")
+    return "拿不到麥克風:請允許 HSUAN 使用麥克風(網址列或視窗上方的權限圖示;Windows 的「設定 → 隱私權與安全性 → 麥克風」也要允許)";
+  if (err === "audio-capture") return "找不到麥克風";
+  if (err === "network") return "語音辨識要連網路(瀏覽器的雲端服務),現在連不上";
+  return "";
+}
+
+// 聽寫:說的話接在輸入框後面,自己看過再送;再按一次、或送出就停
+const dictation = { rec: null, keep: null };
+function stopDictation(keep = true) {  // keep:停止後才到的最後一段字照樣寫進輸入框(送出時不要)
+  const rec = dictation.rec;
+  if (!rec) return;
+  dictation.rec = null; dictation.keep = keep ? rec : null;
+  keep ? rec.stop() : rec.abort();
+  $("voice").setAttribute("aria-pressed", "false"); $("voice").classList.remove("listening");
+}
+async function dictate() {
+  if (dictation.rec) return stopDictation();
+  if (!await consentVoice()) return;
+  const rec = dictation.rec = new Recognition(), base = input.value;
+  rec.lang = RECOG_LANG[state.lang] || "zh-TW"; rec.interimResults = true; rec.continuous = true;
+  rec.onresult = (ev) => {
+    if (dictation.rec !== rec && dictation.keep !== rec) return;
+    input.value = base + [...ev.results].map((r) => r[0].transcript).join(""); autosize(); updateSend();
+  };
+  rec.onerror = (ev) => { const why = micError(ev.error); if (why) alert(why); };
+  rec.onend = () => { if (dictation.rec === rec) stopDictation(); input.focus(); };
+  $("voice").setAttribute("aria-pressed", "true"); $("voice").classList.add("listening");
+  try { rec.start(); } catch (e) { stopDictation(false); alert(`語音辨識開不起來:${e.message}`); }
+}
+
+// 語音模式:全螢幕、中間一顆球。你說 → 停一下自動送出(voice: true,回答會短、口語)→ 回答唸出來 → 再換你說
+// phase:listen 在聽、wait 等 HSUAN 回答、speak 在唸、idle 麥克風關著;muted:使用者關了麥克風(唸完不會再聽)
+// spoken:唸過的 done 事件編號(重播的不唸)
+const QUIET_ROUNDS = 4;  // 連續幾次沒聽到聲音就先關麥克風(瀏覽器大約 5–8 秒沒聲音算一次)
+const voice = { on: false, phase: "", muted: false, rec: null, heard: "", error: "", quiet: 0, spoken: 0, note: "" };
+const VM_STATE = { listen: "正在聽…", wait: "想一下…", speak: "正在說 · 點球打斷", idle: "麥克風關著 · 按麥克風繼續" };
 function voiceUi() {
-  const b = $("voice"), tips = { listen: "正在聽,說完停一下就會送出", wait: "HSUAN 回答中", speak: "正在唸回答,按麥克風打斷、換你說" };
-  b.setAttribute("aria-pressed", String(voice.on));
-  b.classList.toggle("listening", voice.on && voice.phase === "listen");
-  b.title = !voice.on ? "語音對話:用說的問,HSUAN 回答完會唸出來,再換你說"
-    : voice.phase === "speak" ? "打斷,換你說" : "結束語音對話";
-  if (voice.on) $("hint").textContent = `語音對話中 · ${tips[voice.phase] || ""} · Esc 結束`;
+  const vm = $("vm"), mute = $("vm-mute");
+  vm.hidden = !voice.on; vm.dataset.phase = voice.phase;
+  $("vm-state").textContent = voice.note || VM_STATE[voice.phase] || "";
+  mute.setAttribute("aria-pressed", String(voice.muted));
+  mute.setAttribute("aria-label", voice.muted ? "打開麥克風" : "關麥克風");
+  mute.title = voice.muted ? "打開麥克風" : "關麥克風(HSUAN 說完不會再聽)";
+  mute.innerHTML = voice.muted ? MIC_OFF_ICON : MIC_ICON;
+  $("vm-orb").setAttribute("aria-label", voice.phase === "speak" ? "打斷,換你說" : voice.phase === "idle" ? "打開麥克風" : "語音模式");
+}
+function caption(text, mine = false) {  // 球下面的字幕:你說的話(亮)/ 正在唸的那一段(暗)
+  const c = $("vm-cap");
+  c.textContent = text; c.classList.toggle("mine", mine);
+}
+let orbTimer = 0;
+function orbPulse(level = 1) {  // 聽到字、唸到一個詞:球跳一下
+  const orb = $("vm-orb");
+  orb.style.setProperty("--lvl", String(level));
+  clearTimeout(orbTimer); orbTimer = setTimeout(() => orb.style.setProperty("--lvl", "0"), 160);
 }
 // 聲音清單是頁面打開後才慢慢載入的:剛打開就按,getVoices() 還是空的(10/26 實測),等一下再判斷有沒有
 const voicesReady = () => speechSynthesis.getVoices().length ? Promise.resolve()
   : new Promise((ok) => { speechSynthesis.addEventListener("voiceschanged", ok, { once: true }); setTimeout(ok, 1500); });
 async function voiceOn() {
-  if (store.get("voiceOk", "") !== "1") {
-    const where = /Edg\//.test(navigator.userAgent) ? "微軟" : "瀏覽器廠商(Chrome 是 Google)";
-    if (!confirm(`語音對話:你說的話由瀏覽器轉成文字,聲音會送到${where}的雲端辨識,轉好的文字跟打字一樣送給 HSUAN。`
-      + "不要用它講公司機密或客戶資料。\n\n說完停一下就會自動送出;回答用這台裝置的聲音唸出來,唸完再換你說。"
-      + "唸的時候按麥克風可以打斷,按 Esc 結束。")) return;
-    store.set("voiceOk", "1");
-  }
+  if (!await consentVoice()) return;
   await voicesReady();
   if (!pickVoice()) return alert(NO_VOICE);
-  stopSpeaking();
-  voice.on = true; voice.quiet = 0; voice.spoken = 0;  // 事件編號是每段對話各自的
+  stopDictation(false); stopSpeaking();
+  $("vm-top").textContent = `語音模式 · 聲音由${/Edg\//.test(navigator.userAgent) ? "微軟" : "瀏覽器"}的雲端辨識,回答用這台裝置的聲音唸`;
+  Object.assign(voice, { on: true, muted: false, quiet: 0, spoken: 0, note: "" });  // 事件編號是每段對話各自的
+  caption("");
   if (busy) { voice.phase = "wait"; voiceUi(); } else listen();  // 正在回答:等它答完、唸完再聽
 }
 function stopListening() {  // 先把 voice.rec 清掉再 abort:onend 看到不是自己就不會接著做
   const rec = voice.rec;
   voice.rec = null; rec?.abort();
 }
-function voiceOff(note = "") {
+function voiceOff() {
   const was = voice.on;
   voice.on = false; voice.phase = ""; stopListening();
   if (!was) return;
-  stopSpeaking(); voiceUi(); applyMode();
-  if (note) { $("hint").textContent = note; later("voice-note", applyMode, 8000); }
+  stopSpeaking(); voiceUi(); input.focus();
 }
+function micOff(note = "") {  // 關麥克風(使用者按的、太久沒聲音、出錯):畫面留著,按麥克風繼續
+  voice.muted = true; voice.note = note;
+  if (voice.phase === "listen" || voice.phase === "idle" || !voice.phase) { stopListening(); voice.phase = "idle"; }
+  voiceUi();
+}
+function micOn() { voice.muted = false; voice.quiet = 0; voice.note = ""; if (voice.phase === "idle") listen(); else voiceUi(); }
 function listen() {
   if (!voice.on) return;
   stopListening();
-  voice.phase = "listen"; voice.heard = ""; voice.error = ""; voiceUi();
+  if (voice.muted) { voice.phase = "idle"; return voiceUi(); }
+  if (voice.phase !== "listen") caption("");  // 換你說:上一則的字幕清掉
+  voice.phase = "listen"; voice.heard = ""; voice.error = ""; voice.note = ""; voiceUi();
   const rec = voice.rec = new Recognition();
   rec.lang = RECOG_LANG[state.lang] || "zh-TW"; rec.interimResults = true; rec.continuous = false;
-  rec.onresult = (ev) => {  // 邊說邊顯示在輸入框
+  rec.onresult = (ev) => {  // 邊說邊出字幕,球跟著跳
     voice.heard = [...ev.results].map((r) => r[0].transcript).join("");
-    input.value = voice.heard; autosize(); updateSend();
+    caption(voice.heard, true); orbPulse();
   };
   rec.onerror = (ev) => { voice.error = ev.error; };
   rec.onend = async () => {  // 停一下瀏覽器就會結束這次辨識
-    if (voice.rec !== rec) return;  // 已經結束語音對話(或重新開始聽了)
+    if (voice.rec !== rec) return;  // 已經結束語音模式(或重新開始聽了)
     voice.rec = null;
-    const err = voice.error;
-    if (err === "not-allowed" || err === "service-not-allowed") return voiceOff("拿不到麥克風:請允許 HSUAN 使用麥克風(視窗上方的權限圖示;Windows 的「設定 → 隱私權與安全性 → 麥克風」也要允許)");
-    if (err === "audio-capture") return voiceOff("找不到麥克風");
-    if (err === "network") return voiceOff("語音辨識要連網路(瀏覽器的雲端服務),現在連不上");
-    if (!voice.heard.trim()) {  // 沒聽到聲音:再聽,太久沒聲音就結束
-      if (++voice.quiet >= QUIET_ROUNDS) return voiceOff("一陣子沒聽到聲音,語音對話先結束");
+    const why = micError(voice.error), text = voice.heard.trim();
+    if (why) return micOff(why);
+    if (!text) {  // 沒聽到聲音:再聽,太久沒聲音就先關麥克風
+      if (++voice.quiet >= QUIET_ROUNDS) return micOff("一陣子沒聽到聲音,麥克風先關了 · 按麥克風繼續");
       return listen();
     }
     voice.quiet = 0; voice.phase = "wait"; voiceUi();
-    if (!await submit()) voiceOff();  // 沒送出去(submit 會說原因):結束
+    const r = await api("/api/ask", { text, mode: "normal", voice: true });
+    if (!r.ok && voice.on) { voice.phase = "idle"; micOff(r.data.error || "送出失敗"); }
   };
-  try { rec.start(); } catch (e) { voiceOff(`語音辨識開不起來:${e.message}`); }
+  try { rec.start(); } catch (e) { micOff(`語音辨識開不起來:${e.message}`); }
 }
-function interrupt() { stopSpeaking(); listen(); }
-function voiceAnswer(e, btn) {  // 一輪答完(handlers.done):語音對話中就唸出來,唸完再聽
+function interrupt() { stopSpeaking(); voice.muted = false; listen(); }  // 唸的時候點球:停下來、換你說
+function voiceAnswer(e, btn) {  // 一輪答完(handlers.done):語音模式中就唸出來,唸完再聽(麥克風關著就不聽)
   if (!voice.on || !(e.seq > pane.liveSeq) || e.seq <= voice.spoken) return;  // 重播的不唸
   voice.spoken = e.seq;
-  stopListening();  // 還在聽(例如聽的時候用打字送出了一題):先停,不然邊唸邊聽
+  stopListening();  // 還在聽(例如聽的時候在別處送出了一題):先停,不然邊唸邊聽
   if (!btn) return listen();  // 停止的、空白的回答:直接換你說
   voice.phase = "speak"; voiceUi();
-  if (!speak(e.answer, btn, listen)) listen();
+  if (!speak(e.answer, { btn, after: listen, onPart: (p) => caption(p), onWord: () => orbPulse(0.6) })) listen();
+}
+function voiceError(e) {  // handlers.error:麥克風先關,畫面說出錯了
+  if (voice.on && e.seq > pane.liveSeq) { voice.phase = "idle"; micOff("HSUAN 出錯了 · 按麥克風再說一次"); }
 }
 $("voice").hidden = !canTalk();
-$("voice").onclick = () => !voice.on ? voiceOn() : voice.phase === "speak" ? interrupt() : voiceOff();
-voiceUi();
+$("voice").onclick = dictate;
+$("vm-end").onclick = voiceOff;
+$("vm-mute").onclick = () => voice.muted ? micOn() : micOff();
+$("vm-orb").onclick = () => voice.phase === "speak" ? interrupt() : voice.phase === "idle" ? micOn() : null;
+updateSend();
 if (canSpeak()) speechSynthesis.onvoiceschanged = () => { if (page === "settings") renderPage(); };  // 聲音清單是慢慢載入的
 function renderVoice(box) {  // 設定頁的「朗讀」
   if (!canSpeak()) return;
   section(box, "朗讀");
   box.appendChild(el("p", "lead", "每則回答下面有「朗讀」按鈕。預設用這台裝置內建的聲音(本機),文字不會送到雲端;"
     + "選了標「線上」的聲音,要唸的文字會送到瀏覽器廠商的伺服器。"
-    + (canTalk() ? "輸入框右下角的麥克風是語音對話:用說的問,回答唸完再換你說(聽寫用瀏覽器的雲端辨識)。" : "")));
+    + (canTalk() ? "輸入框的麥克風是聽寫(說的話變成文字,看過再送);輸入框空的時候,右下角的按鈕是語音模式:用說的對話,回答唸完再換你說。"
+      + "聽你說話用的是瀏覽器的雲端辨識。" : "")));
   const vs = speechVoices();
   if (!vs.length) { box.appendChild(el("div", "none", "這台裝置沒有這個語言的語音(Windows:設定 → 時間與語言 → 語音,加中文(台灣))。")); return; }
   const f = box.appendChild(el("div", "field"));
@@ -2890,7 +3001,11 @@ async function submit(clicked = false) {
     if (clicked) { send.disabled = true; await api("/api/stop", {}); }
     return;
   }
-  if (!text && !images.length) return;
+  if (!text && !images.length) {  // 輸入框空的:按鈕是「語音模式」(按 Enter 不會誤開)
+    if (clicked && !busy && canTalk()) voiceOn();
+    return;
+  }
+  stopDictation(false);  // 聽寫中按送出:後面才辨識出來的字不要再寫回清空的輸入框
   const research = researchMode && !$("research-mode").hidden;
   const mode = research ? "research" : planMode ? "plan" : "normal", split = !research && splitMode && !$("split-mode").hidden;
   input.value = ""; pendingImages = []; renderThumbs(); autosize(); updateSend(); setPlanMode(false); setSplitMode(false);
@@ -2901,7 +3016,6 @@ async function submit(clicked = false) {
     input.value = text; pendingImages = images; renderThumbs(); autosize(); updateSend(); setPlanMode(mode === "plan");
     setSplitMode(split); setResearchMode(research);
   }
-  return r.ok;  // 語音對話看這個:沒送出去就結束
 }
 $("form").onsubmit = (ev) => { ev.preventDefault(); submit(ev.submitter === send); };
 input.addEventListener("keydown", (ev) => {

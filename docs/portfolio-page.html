@@ -218,7 +218,7 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
   <div class="margin">作品集<br>實測 10-06 – 10-27<br>更新 10-27</div>
   <div>
     <h1>對內研發助理<br>實測紀錄</h1>
-    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/27 邊做邊用真模型測試的過程,實測與審查一共抓到 68 個問題。</p>
+    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/27 邊做邊用真模型測試的過程,實測與審查一共抓到 69 個問題。</p>
     <div class="byline">
       <span><strong>HSUAN</strong></span>
       <span>Python · LangChain · NVIDIA NIM · Docker · Redis · scikit-learn</span>
@@ -330,7 +330,7 @@ flowchart LR
           <tr><td>畫圖</td><td>先探測 catalog,再請它畫雨夜的台北 101</td><td class="num">FLUX.1-dev 約 5 秒 · 2 步 · 4,227 tokens<small>自己把描述寫成英文、選橫幅;Stable Diffusion 3 / 3.5 / SDXL 都 404</small></td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
           <tr><td>端到端評測</td><td>17 題自己寫的修 bug 題,驗收含 HSUAN 看不到的隱藏測試;10/25–26 主模型換成 3.5 Super VL 後,每種設定跑兩次</td><td class="num">依難度選模型 29/34(85%)· 平均約 52k tokens<small>只用 Super 24/34(71%)· 約 72k;同樣設定兩次差 3 題,起伏很大</small></td><td><span class="pill pass">選模型較好</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">199 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">200 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端相容性</td><td>沒有 GPU:CPU 版 llama.cpp + Llama 3.2 3B 假裝成地端伺服器,只把模型網址指過去</td><td>程式一行都不用改就切得過去;回話、思考開關、tool calling 都通,上下文自動換成地端的 256K<small>抓到 5 個只有切到地端才會出現的問題(第 63–67 個)</small></td><td><span class="pill pass">切換通過</span></td></tr>
           <tr><td>地端 NIM 本身</td><td>需要 GPU 伺服器</td><td>NIM 容器、顯存、速度、大模型的回答品質</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
@@ -341,7 +341,7 @@ flowchart LR
 
 <section>
   <div class="label">
-    <h2>抓到的 68 個問題</h2>
+    <h2>抓到的 69 個問題</h2>
     <div class="note">依類別分組,編號照發現順序,跟 README 一致。每一條都寫了怎麼發現的</div>
   </div>
   <div class="body">
@@ -372,6 +372,7 @@ flowchart LR
         <li><span class="n">60</span><div><span class="what">新的 3.5 Super VL 呼叫工具時把修改清單寫成字串,常常連 JSON 都不合法(18 次有 8 次),每次白花一步,有時乾脆放棄</span><span class="how"><span class="tag">端到端評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">讀開頭那段完整的清單(壞掉的 23 個救回 13 個);改成中文錯誤加範例反而更糟,所以只做安全的讀回</div></li>
         <li><span class="n">62</span><div><span class="what">新的 Super 在免費平台上時好時壞:常回 500、偶爾卡住 180 秒,14% 的步數被換成 DeepSeek</span><span class="how"><span class="tag">對話紀錄</span> <span class="tag">直接呼叫</span></span></div><div class="fix">遇到忙線同一顆先自動重試 2 次再換備援(連續 20 次成功 9 → 14 次);逾時 180 → 90 秒</div></li>
         <li><span class="n">68</span><div><span class="what">做語音對話(像 ChatGPT 的語音模式)時:表格轉成唸的文字吃掉換行,清單的「-」被唸出來;剛打開就按,聲音清單還沒載入,誤報沒有中文語音</span><span class="how"><span class="tag">網頁實測</span></span></div><div class="fix">聽寫用瀏覽器的辨識(先問、同意才開),唸用電腦內建的聲音;只在同一行轉換、補停頓;聲音清單等 1.5 秒再判斷</div></li>
+        <li><span class="n">69</span><div><span class="what">語音對話照一般問題回答:又長又有表格,還可能交給慢的 DeepSeek,第一次等了 3 分鐘</span><span class="how"><span class="tag">網頁實測</span> <span class="tag">使用者回饋</span></span></div><div class="fix">做成全螢幕語音模式;問題接「口語、一到三句」的提示、關思考、不問分類器,從說完到開口 3.1 秒</div></li>
       </ol>
     </div>
 
