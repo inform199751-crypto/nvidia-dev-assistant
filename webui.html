@@ -267,6 +267,10 @@
   .panel-tabs button { border: 0; background: none; color: var(--faint); padding: 4px 10px; border-radius: 8px; font-size: 13.5px; white-space: nowrap; }
   .panel-tabs button:hover { color: var(--text); }
   .panel-tabs button[aria-selected="true"] { background: var(--active); color: var(--text); }
+  /* 視窗不夠寬時(側邊欄 + 加寬的面板會把對話擠到看不見):加寬的面板改成蓋在右邊,不擠中間 */
+  @media (max-width: 1100px) {
+    .panel.wide { position: fixed; inset: 0 0 0 auto; z-index: 20; width: min(var(--panel-w, 560px), 92vw); box-shadow: var(--shadow); }
+  }
   .pane { display: flex; flex-direction: column; gap: 12px; }
   .pane[data-tab="browser"] { flex: 1; min-height: 0; }
   .pbar { display: flex; gap: 6px; align-items: center; }
@@ -951,6 +955,8 @@ const handlers = {
         li.now = li.appendChild(el("small", "", "準備中…"));
         return li;
       });
+    } else if (e.name === "save_memory") {  // 跨對話的記憶:寫成「記住:…」,點一下到設定頁看全部
+      summary.append(el("span", "", "記住"), el("code", "", String(e.args?.fact || "")));
     } else summary.append(el("span", "", e.name), el("code", "", args.length > 100 ? args.slice(0, 100) + "…" : args));
     d.out = d.appendChild(el("pre", "", "執行中…"));
     d.toolName = e.name;
@@ -1378,6 +1384,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
+  ["10/26", ["HSUAN 會記住你說過、以後都適用的事(跨對話的記憶):跟它說「記住…」或「以後都…」就會記,新對話自動帶上;在「設定 → 記憶」可以看、加、刪,也可以整個關掉",
+             "視窗比較窄的時候,右邊加寬的面板(變更、檔案、瀏覽器)改成蓋在畫面右邊,不會把對話擠到看不見"]],
   ["10/25", ["日常的模型換成 Nemotron 3.5 Super VL(原本的 Nemotron 3 Super 在 NVIDIA 平台下架了)",
              "難的問題會自動交給 DeepSeek(依難度選模型):17 題修 bug 的評測,這樣做對 16 題,只用 Super 是 12 題",
              "主模型沒回應、改由備援模型回答時,畫面上會提醒"]],
@@ -1424,6 +1432,45 @@ const CHANGELOG = [
 ];
 
 function section(box, title) { box.appendChild(el("h3", "", title)); return box; }
+// 「設定 → 記憶」(10/26,像 ChatGPT 的記憶):HSUAN 跨對話記得的事,每段對話都會帶上;可以看、加、刪、整個關掉
+async function renderMemory(box) {
+  const x = await api("/api/memory");
+  box.innerHTML = "";
+  if (!x.ok || !x.data.can) return;  // 訪客沒有記憶
+  const d = x.data;
+  section(box, "記憶");
+  box.appendChild(el("p", "lead", "HSUAN 會記住你說過、以後都適用的事(例如回答風格、常用的語言和工具),每段對話都會帶上,"
+    + "不用每次重講。對話裡跟它說「記住…」就會記;存在這台電腦,記憶也會跟著每一題送給模型,所以密碼、金鑰不會記。"));
+  const set = async (body) => {
+    const y = await api("/api/memory", body);
+    if (!y.ok) return alert(y.data.error || "設定失敗");
+    renderMemory(box);
+  };
+  box.appendChild(el("div", "actions")).appendChild(button(d.on ? "關閉記憶" : "打開記憶", "pill" + (d.on ? "" : " dark"),
+    () => set({ on: !d.on })));
+  if (!d.on) box.appendChild(el("p", "lead", "記憶關著:新的一輪不會帶上記得的事,HSUAN 也不會再記新的(記過的留著,打開又會用)。"));
+  if (!d.items.length) box.appendChild(el("div", "none", "還沒有記得的事。"));
+  else {
+    const rows = box.appendChild(el("div", "rows"));
+    for (const it of [...d.items].reverse()) {  // 新的在上面
+      const row = rows.appendChild(el("div", "row"));
+      const g = row.appendChild(el("div", "grow"));
+      g.appendChild(el("div", "", it.text));
+      g.appendChild(el("small", "", `${fmtTime(it.at)}${it.source ? " · " + it.source : ""}`));
+      row.appendChild(el("div", "actions")).appendChild(button("刪除", "pill", () => set({ remove: it.id })));
+    }
+    box.appendChild(el("p", "lead", `${d.items.length} / ${d.max} 條`));
+  }
+  const f = box.appendChild(el("div", "field"));
+  const inp = f.appendChild(el("input"));
+  inp.placeholder = "自己加一條,例如:回答盡量附上面試時可以怎麼講"; inp.maxLength = 200;
+  const add = () => inp.value.trim() && set({ add: inp.value });
+  inp.onkeydown = (ev) => { if (ev.key === "Enter" && !ev.isComposing) add(); };
+  f.appendChild(button("加入", "pill dark", add));
+  if (d.items.length) box.appendChild(el("div", "actions")).appendChild(button("全部清除", "pill", () =>
+    confirm("確定清除全部記憶?清掉就找不回來了。") && set({ clear: true })));
+}
+
 function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 QR code、網址、PIN 和加到主畫面的步驟
   section(box, "手機與訪客").lastChild.id = "sec-phone";  // 帳號選單的「手機與訪客」捲到這裡
   const act = (body, path = "/api/phone") => async () => {
@@ -1804,6 +1851,7 @@ async function renderPage() {
     box.appendChild(el("p", "lead", "HSUAN 回答用的語言(介面文字不變)。改了之後,打開中的對話也馬上換。"));
     const langs = box.appendChild(el("div", "actions"));
     for (const [code, label] of LANGS) langs.appendChild(button(label, "pill" + (state.lang === code ? " dark" : ""), () => setLang(code)));
+    renderMemory(box.appendChild(el("div")));  // 跨對話的記憶(訪客沒有:裡面會自己藏起來)
     if (r.ok) renderPhone(box, r.data);  // 只有桌面版、而且是電腦自己看才有(手機上看不到 PIN)
     section(box, "模型");
     box.appendChild(el("p", "lead", `預設 ${state.model || ""}。每段對話可以在輸入框右下角換模型;要改有哪些模型,改 models.yaml。`));

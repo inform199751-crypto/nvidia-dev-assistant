@@ -2313,7 +2313,8 @@ def test_chat_mode_has_no_project_files_or_code_tools(workspace, tmp_path_factor
         server.shutdown()
         server.server_close()
     (_, chat_msgs, chat_tools), (_, code_msgs, code_tools) = seen
-    assert sorted(chat_tools) == ["fetch_url", "save_document"] and "propose_patch" in code_tools
+    # 10/26 起對話模式也有跨對話的記憶(save_memory)
+    assert sorted(chat_tools) == ["fetch_url", "save_document", "save_memory"] and "propose_patch" in code_tools
     assert chat_msgs[0].content.startswith(agent.CHAT_PROMPT) and "pytest" not in chat_msgs[0].content
     assert "SECRET_CODE" not in chat_msgs[-1].content  # @檔案沒有附上
     assert "pytest" in code_msgs[0].content and "SECRET_CODE" in code_msgs[-1].content
@@ -4105,3 +4106,81 @@ def test_shipped_difficulty_routing_is_on_and_yaml_booleans_read_as_modes(monkey
     assert difficulty.settings(ModelRegistry.from_yaml().routing)[0] == "on"
     assert [difficulty.settings({"difficulty": {"mode": m}})[0] for m in (True, False, "shadow", "亂寫")] == [
         "on", "off", "shadow", "off"]
+
+
+# ---------- 跨對話的記憶(memory.py,10/26) ----------
+
+def test_memory_store_rules(tmp_path):
+    """記一條一句話:一樣的不重複記、太長的不記、看起來像密碼金鑰的不記(記憶會跟著每一題送給模型);
+    存在檔案裡,另一個行程(桌面版 / VS Code 外掛)重讀看得到;放進系統提示有上限,超過只放最新的。"""
+    import memory
+    m = memory.Memory(tmp_path / "memory.json")
+    first = m.add("  回答盡量附上面試時可以怎麼講  ")
+    assert first["text"] == "回答盡量附上面試時可以怎麼講" and m.add("回答盡量附上面試時可以怎麼講")["id"] == first["id"]
+    for bad in ["", "x" * (memory.MAX_CHARS + 1), "我的 API key: nvapi-abcdef", "密碼是 hunter2", "token = abc"]:
+        with pytest.raises(ValueError):
+            m.add(bad)
+    m.add("常用 Python 和 FastAPI")
+    other = memory.Memory(tmp_path / "memory.json")  # 另一個行程
+    assert [it["text"] for it in other.list()] == ["回答盡量附上面試時可以怎麼講", "常用 Python 和 FastAPI"]
+    assert other.remove(first["id"]) and not other.remove("nope")
+    assert [it["text"] for it in m.list()] == ["常用 Python 和 FastAPI"]
+    for n in range(40):
+        m.add(f"第 {n} 件事:" + "很長的說明" * 6)
+    block = m.prompt_block()
+    assert "第 39 件事" in block and "常用 Python" not in block  # 超過上限:只放最新的
+    m.clear()
+    assert m.list() == [] and m.prompt_block() == ""
+
+
+def test_memory_tool_and_system_prompt(workspace):
+    """記憶打開時:系統提示有「什麼時候該記」和記得的事;save_memory 記下來,新的對話就帶上。沒開就什麼都不加。"""
+    import memory
+    from agent import SYSTEM_PROMPT
+    reg, _ = scripted_registry([
+        ai(tool_calls=[{"name": "save_memory", "id": "m1", "args": {"fact": "使用者在準備 AI 應用整合工程師的面試"}}]),
+        ai("好,記住了。")])
+    plain = AgentSession(reg, TokenQuota(10**6, 2))
+    assert "save_memory" not in str(plain.messages[0].content)
+    tools.bench().memory = memory.Memory(None)
+    session = AgentSession(reg, TokenQuota(10**6, 2), tools=tools.ALL_TOOLS + [memory.save_memory])
+    assert "call save_memory" in str(session.messages[0].content) and "What you remember" not in str(session.messages[0].content)
+    session.ask("記住:我在準備 AI 應用整合工程師的面試")
+    assert [it["text"] for it in tools.bench().memory.list()] == ["使用者在準備 AI 應用整合工程師的面試"]
+    fresh = AgentSession(reg, TokenQuota(10**6, 2))
+    assert "- 使用者在準備 AI 應用整合工程師的面試" in str(fresh.messages[0].content)
+    assert str(fresh.messages[0].content).startswith(SYSTEM_PROMPT)
+    assert memory.save_memory.invoke({"fact": "密碼是 1234"}).startswith("錯誤:看起來是密碼")
+
+
+def test_memory_on_the_web(workspace, tmp_path_factory):
+    """設定頁的「記憶」:看、加、刪、關掉(關掉後這一輪不綁 save_memory、系統提示不帶);訪客沒有記憶。"""
+    import httpx
+    import memory
+    import webui
+    reg, _ = scripted_registry([ai("好"), ai("好")])
+    make = lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event), workspace=ws)  # noqa: E731
+    desk = webui.Desk(make, workspace, store=tmp_path_factory.mktemp("state"))
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    try:
+        assert httpx.get(base + "/api/memory", headers=h).json() == {"can": True, "on": True, "items": [], "max": memory.MAX_ITEMS}
+        items = httpx.post(base + "/api/memory", json={"add": "回答用條列"}, headers=h).json()["items"]
+        assert [it["text"] for it in items] == ["回答用條列"]
+        assert httpx.post(base + "/api/memory", json={"add": "api key: sk-12345678abc"}, headers=h).status_code == 400
+        hub = desk.hub(None)
+        hub._sync_tools()
+        assert "save_memory" in [t.name for t in hub.session.tools] and "回答用條列" in str(hub.session.messages[0].content)
+        assert httpx.post(base + "/api/memory", json={"on": False}, headers=h).json()["on"] is False
+        hub._sync_tools()
+        assert "save_memory" not in [t.name for t in hub.session.tools] and "回答用條列" not in str(hub.session.messages[0].content)
+        assert httpx.get(base + "/api/state", headers=h).json()["memory"] is False
+        httpx.post(base + "/api/memory", json={"on": True}, headers=h)
+        assert httpx.post(base + "/api/memory", json={"remove": items[0]["id"]}, headers=h).json()["items"] == []
+    finally:
+        server.shutdown()
+        server.server_close()
+    guest = webui.Desk(make, workspace, store=tmp_path_factory.mktemp("guest"), can_add_projects=False, memory=False)
+    assert guest.memory is None and not guest.memory_on
+    with pytest.raises(PermissionError):
+        guest.set_memory(True)

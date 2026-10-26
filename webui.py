@@ -43,6 +43,7 @@ import browser
 import guard
 import knowledge
 import mcp_client
+import memory as memory_mod
 import qr
 import terminal
 import tools as toolbox
@@ -508,8 +509,11 @@ class Hub:
                     self.publish("notice", {"text": f"連接器「{names[cid]}」沒有接上,這一輪先不用它:{err}"})
         if self.browser_on and not self.chat:
             extra.append(browser.browser)
+        if self.bench.memory is not None:  # 跨對話的記憶(關掉、訪客沒有)
+            extra.append(memory_mod.save_memory)
         self.session.tools = [t for t in self.session.tools
-                              if not (t.metadata or {}).get("mcp") and t.name != browser.browser.name] + extra
+                              if not (t.metadata or {}).get("mcp")
+                              and t.name not in (browser.browser.name, memory_mod.save_memory.name)] + extra
 
     def use_knowledge(self, kbs: list) -> None:
         """Desk 的知識庫變了(加了、拿掉、更新完):工具和系統提示裡的知識庫清單跟著換,下一輪生效。"""
@@ -536,6 +540,12 @@ class Hub:
         self.chat = True
         with toolbox.using(self.bench):
             self.session.to_chat()
+
+    def use_memory(self, mem) -> None:
+        """跨對話的記憶(Desk 的;None = 關掉或訪客):系統提示跟著換,save_memory 工具下一輪才綁(_sync_tools)。"""
+        self.bench.memory = mem
+        with toolbox.using(self.bench):
+            self.session.refresh_system_prompt()
 
     def use_lang(self, lang: str | None) -> None:
         """帳號選單的「回答語言」:改了馬上生效(下一步送出的系統提示就換了)。"""
@@ -716,6 +726,8 @@ class Hub:
                     raise guard.Blocked(str(e)) from None
             with self.gate.turn(self.publish) if self.gate else nullcontext(), toolbox.using(self.bench):
                 self._sync_tools()
+                if self.bench.memory is not None:  # 記憶可能剛在別段對話、設定頁改過:這一輪的系統提示用最新的
+                    self.session.refresh_system_prompt()
                 files = [] if self.chat else agent.file_mentions(text)  # 對話模式讀不到電腦上的檔案
                 r = self.session.ask(self.note + text, files, mode, role, images or [], split)
             self.note = ""
@@ -1225,8 +1237,10 @@ class Desk:
 
     def __init__(self, make_hub: Callable[[Path], Hub], default_workspace: Path, store: Path | None = None,
                  can_add_projects: bool = True, docs_dir: Path | None = None, repos_dir: Path | None = None,
-                 embed: knowledge.Embedder | None = None, uploads_dir: Path | None = None):
+                 embed: knowledge.Embedder | None = None, uploads_dir: Path | None = None, memory: bool = True):
         self.make_hub = make_hub
+        # 跨對話的記憶:存在這個人自己的 store;訪客(memory=False)、沒有存檔的地方沒有
+        self.memory = memory_mod.Memory(store / "memory.json") if store and memory else None
         self.store = store
         self.can_add_projects = can_add_projects
         self.docs_dir = docs_dir  # 這個人的文件放哪;None = OUTPUT_DIR
@@ -1318,6 +1332,20 @@ class Desk:
             self._save_settings()
             for hub in self.hubs.values():
                 hub.use_lang(lang)
+
+    @property
+    def memory_on(self) -> bool:
+        return self.memory is not None and self.settings.get("memory", True) is not False
+
+    def set_memory(self, on: bool) -> None:
+        """「設定 → 記憶」的開關:關掉後新的一輪就不帶記憶、也不能記(記過的留著,打開又會用)。"""
+        if self.memory is None:
+            raise PermissionError("這裡沒有記憶功能(訪客)")
+        with self.lock:
+            self.settings["memory"] = bool(on)
+            self._save_settings()
+            for hub in self.hubs.values():
+                hub.use_memory(self.memory if self.memory_on else None)
 
     def _save_settings(self) -> None:
         if self.store:
@@ -1512,6 +1540,8 @@ class Desk:
         if self.store:
             self._read_settings()
         hub.browser_on = self.browser_on
+        if self.memory_on:
+            hub.use_memory(self.memory)
         if self.lang != "zh-TW":
             hub.use_lang(self.lang)
         if kbs := self.ready_knowledge():
@@ -1904,6 +1934,7 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                              # 設定頁的「操作瀏覽器」:開了沒、這裡能不能開(訪客、多人模式、沒有 Edge / Chrome 不行)
                              "browser": {"on": desk.browser_on, "can": desk.can_browse and not team and not guest},
                              "terminal": self._term_ok(),  # 右上角的終端機按鈕:只有這台電腦自己看得到
+                             "memory": desk.memory_on,  # 設定頁的「記憶」
                              "seq": len(hub.events),  # 最新的事件編號:頁面分得出哪些是重播、哪些是剛發生的
                              "company_paths": [str(x) for x in guard.COMPANY_PATHS] if self._local() and not guest else []}
                     if lan and self._local():  # 手機連線方式只給這台電腦看
@@ -1912,6 +1943,12 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             elif url.path == "/api/panel":  # 右邊的工作狀態面板:環境、背景資訊、變更
                 if self._token_ok(self.headers.get("X-Token")):
                     self._json(200, self._hub().panel(paths=not self._guest()))
+            elif url.path == "/api/memory":  # 設定頁的「記憶」:記得哪些事、開關
+                if self._token_ok(self.headers.get("X-Token")):
+                    desk = self._desk()
+                    self._json(200, {"can": desk.memory is not None, "on": desk.memory_on,
+                                     "items": desk.memory.list() if desk.memory else [],
+                                     "max": memory_mod.MAX_ITEMS})
             elif url.path == "/api/files":  # 右邊面板的「檔案」分頁:專案的檔案清單
                 if self._token_ok(self.headers.get("X-Token")):
                     hub = self._hub()
@@ -2134,6 +2171,22 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 except (ValueError, PermissionError) as e:
                     return self._json(400, {"error": str(e)})
                 return self._json(200, {"lang": desk.lang, "browser": desk.browser_on})
+            if path == "/api/memory":  # 設定頁的「記憶」:{on} 開關、{add} 加一條、{remove} 刪一條、{clear} 全部清掉
+                mem = desk.memory
+                if mem is None:
+                    return self._json(403, {"error": "這裡沒有記憶功能(訪客)"})
+                try:
+                    if "on" in body:
+                        desk.set_memory(bool(body["on"]))
+                    if body.get("add"):
+                        mem.add(str(body["add"]), source="設定頁")
+                    if body.get("remove"):
+                        mem.remove(str(body["remove"]))
+                    if body.get("clear"):
+                        mem.clear()
+                except (ValueError, PermissionError) as e:
+                    return self._json(400, {"error": str(e)})
+                return self._json(200, {"on": desk.memory_on, "items": mem.list()})
             if path == "/api/conv/new":  # 側邊欄的「新增」、專案旁邊的「+」;kind=chat 是「對話」模式
                 kind = "chat" if body.get("kind") == "chat" else "code"
                 return self._json(200, {"id": desk.new_conversation(body.get("project"), kind)})
@@ -2306,7 +2359,7 @@ def local_desk(registry, quota, tools: list, status: str, model: str, role: str 
 GUEST_DAILY_TOKENS = 200_000  # 每支訪客手機每天的額度(用的是主人的 API 金鑰)
 # 訪客用不到的工具:空資料夾沒有程式可以測、可以改、可以看 git;也不讓訪客在主人電腦上跑沙箱;
 # 子 agent 會同時打好幾個請求,用的是主人的金鑰和速率限制
-GUEST_BLOCKED_TOOLS = {"run_tests", "run_command", "propose_patch", "git_log", "git_blame", "delegate"}
+GUEST_BLOCKED_TOOLS = {"run_tests", "run_command", "propose_patch", "git_log", "git_blame", "delegate", "save_memory"}
 
 
 def guest_desks(registry, tools: list, status: str, model: str, base: Path | None = None) -> Callable[[str], Desk]:
@@ -2330,7 +2383,8 @@ def guest_desks(registry, tools: list, status: str, model: str, base: Path | Non
                 desks[gid] = Desk(lambda ws: Hub(lambda on_event: agent.AgentSession(
                     registry, quota, user=f"guest-{gid}", tools=allowed, on_event=on_event),
                     status=status, model=model, team=True, patch_dir=home / "patches", output_dir=home / "docs",
-                    workspace=ws, screen=True), space, store=home / "state", can_add_projects=False, docs_dir=home / "docs")
+                    workspace=ws, screen=True), space, store=home / "state", can_add_projects=False, docs_dir=home / "docs",
+                    memory=False)  # 訪客沒有記憶:用的是主人的電腦和金鑰
             return desks[gid]
 
     get.desks = desks  # PhoneLink.guest_listeners 用
