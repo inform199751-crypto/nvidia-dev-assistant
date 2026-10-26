@@ -96,7 +96,9 @@ roles:
     nim_base_url: http://nim-nemotron-super:8000/v1
     context_window: 131072                  # 模型支援 1M,刻意限制在 128K 控成本與延遲
     max_output: 8192
-    timeout_s: 180
+    # 10/26 實測:成功的呼叫中位數 1.1 秒、最慢 33 秒;免費層偶爾卡住不回,以前要等滿 180 秒才換備援。
+    # 串流(網頁、CLI)時這是「多久沒收到東西」,不是整個回答的時間;沒串流的(子 agent、評測)回答都短
+    timeout_s: 90
     temperature: 1.0                        # Nemotron 3 模型卡建議值
     top_p: 0.95
     extra_body: {chat_template_kwargs: {force_nonempty_content: true}}  # 模型卡:思考 + tool call 時要加

@@ -51,11 +51,32 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
+BUSY_RETRIES = 2  # 伺服器回 429 / 500 / 502 / 503 時,同一顆模型先重試幾次再換備援(每次多等 1、2 秒)
+
+
+def retrying_session(verify: bool = True):
+    """會自己重試忙線的 requests.Session(換掉套件的 get_session_fn)。
+    10/26 實測 3.5 Super VL:連續呼叫 20 次,前 9 次成功、之後 0.3 秒就回「500 Failed to generate completions」;
+    隔幾秒再送大多就成功。以前一失敗 with_fallbacks 馬上換 DeepSeek(每步慢 3–4 倍),Super 該答的步數有 14% 被換掉。
+    逾時(卡住不回)不重試:一次就是 timeout_s 秒,重試只會再卡一次,交給備援。"""
+    import requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+
+    session = requests.Session()
+    session.verify = verify
+    retry = Retry(total=BUSY_RETRIES, connect=BUSY_RETRIES, read=0, status=BUSY_RETRIES, backoff_factor=1,
+                  status_forcelist=(429, 500, 502, 503), allowed_methods=None, raise_on_status=False)
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+    session.mount("http://", HTTPAdapter(max_retries=retry))
+    return session
+
+
 def nvidia_chat_factory(spec: ModelSpec, *, base_url: str, api_key: str | None,
                         model_kwargs: dict[str, Any]) -> BaseChatModel:
     from langchain_nvidia_ai_endpoints import ChatNVIDIA
 
-    return ChatNVIDIA(
+    chat = ChatNVIDIA(
         model=spec.model,
         base_url=base_url,
         api_key=api_key,
@@ -66,6 +87,10 @@ def nvidia_chat_factory(spec: ModelSpec, *, base_url: str, api_key: str | None,
         timeout=spec.timeout_s,
         model_kwargs=model_kwargs,
     )
+    # 套件內部的 client(requirements.txt 鎖版本;升版要確認還在):一般呼叫和串流都從 get_session_fn 拿 Session
+    client = chat._client
+    client.get_session_fn = lambda: retrying_session(client.verify_ssl)
+    return chat
 
 
 class ModelRegistry:

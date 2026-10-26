@@ -4404,3 +4404,17 @@ def test_generate_image_tool_saves_and_web_shows_it(workspace, tmp_path_factory,
         server.server_close()
     assert "generate_image" in webui.GUEST_BLOCKED_TOOLS
     assert tools.save_document.invoke({"filename": "x.jpg", "content": "x"}).startswith("錯誤")  # 存文件不能存成圖片
+
+
+def test_chat_models_retry_busy_servers_before_falling_back():
+    """10/26:3.5 Super VL 在免費層常回「500 Failed to generate completions」,隔幾秒再送大多就成功;以前一失敗
+    with_fallbacks 馬上換 DeepSeek(每步慢 3–4 倍),Super 該答的步數有 14% 被換掉。現在套件的 Session 換成會自己重試
+    429 / 500 / 502 / 503 的(一般呼叫和串流都一樣),逾時(卡住不回)不重試、交給備援。"""
+    import llm_registry
+    spec = ModelRegistry.from_yaml().spec("code")
+    chat = llm_registry.nvidia_chat_factory(spec, base_url="https://integrate.api.nvidia.com/v1", api_key="nvapi-test",
+                                            model_kwargs={})
+    retry = chat._client.get_session_fn().get_adapter("https://integrate.api.nvidia.com").max_retries
+    assert set(retry.status_forcelist) == {429, 500, 502, 503} and retry.total == llm_registry.BUSY_RETRIES
+    assert retry.read == 0 and retry.allowed_methods is None  # POST 也重試;讀取逾時不重試
+    assert spec.timeout_s == 90
