@@ -2102,6 +2102,11 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                     p = self._desk().doc_file((qs.get("name") or [""])[0])
                     if not p:
                         return self._json(404, {"error": "找不到這個檔案"})
+                    if (qs.get("view") or [""])[0] == "1" and p.suffix.lower() in toolbox.IMAGE_SUFFIXES:
+                        # 畫好的圖直接顯示在對話裡(<img> 帶不了標頭,token 放網址);只有圖片能這樣看,網頁要走沙箱的 /api/page
+                        ctype = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
+                        return self._send(200, p.read_bytes(), ctype, {"Cache-Control": "private, max-age=3600",
+                                                                        "X-Content-Type-Options": "nosniff"})
                     self._send(200, p.read_bytes(), "application/octet-stream",
                                {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(p.name)}"})
             else:
@@ -2431,7 +2436,8 @@ def local_desk(registry, quota, tools: list, status: str, model: str, role: str 
 GUEST_DAILY_TOKENS = 200_000  # 每支訪客手機每天的額度(用的是主人的 API 金鑰)
 # 訪客用不到的工具:空資料夾沒有程式可以測、可以改、可以看 git;也不讓訪客在主人電腦上跑沙箱;
 # 子 agent 會同時打好幾個請求,用的是主人的金鑰和速率限制
-GUEST_BLOCKED_TOOLS = {"run_tests", "run_command", "propose_patch", "git_log", "git_blame", "delegate", "save_memory"}
+GUEST_BLOCKED_TOOLS = {"run_tests", "run_command", "propose_patch", "git_log", "git_blame", "delegate", "save_memory",
+                       "generate_image"}  # 畫圖用的是主人的金鑰
 
 
 def guest_desks(registry, tools: list, status: str, model: str, base: Path | None = None) -> Callable[[str], Desk]:

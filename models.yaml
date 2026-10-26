@@ -63,6 +63,18 @@ safety:
   nim_base_url: http://nim-content-safety:8000/v1
   timeout_s: 10
 
+# 畫圖(imagegen.py 的 generate_image,10/26):catalog 的畫圖模型在另一組網址(base_url/<模型>),不在上面的 /v1/chat。
+# 2026-10-26 實測(「白色桌上的紅蘋果」1024×1024):FLUX.1-dev 4.8 秒、品質好;FLUX.1-schnell 這次逾時;
+#   Stable Diffusion 3 Medium、3.5 Large、SDXL、SDXL Turbo 都 404 → 主力 FLUX.1-dev,schnell 當備援
+# 地端要另外部署 FLUX 的 NIM,部署好再把 nim 加進 available_on、填 nim_base_url
+image:
+  base_url: https://ai.api.nvidia.com/v1/genai
+  available_on: [catalog]
+  timeout_s: 120
+  models:
+    - {model: black-forest-labs/flux.1-dev, params: {mode: base, cfg_scale: 3.5, steps: 30}}
+    - {model: black-forest-labs/flux.1-schnell, params: {steps: 4}}
+
 limits:
   max_agent_steps: 15
   max_execute_steps: 25             # 照計畫執行(/plan 同意後)的步數上限:要做的事比一般問答多

@@ -348,6 +348,7 @@
               padding: 10px 12px; margin: 6px 0 0; font: 12.5px/1.55 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
   /* 網頁成品:對話裡的「預覽 / 分享」、成品頁的分享連結和 QR code */
   .page-actions { display: flex; gap: 8px; margin: 2px 0 8px; }
+  .drawn img { display: block; max-width: min(100%, 420px); height: auto; border-radius: 12px; border: 1px solid var(--line); margin: 6px 0; }
   a.pill { display: inline-flex; align-items: center; text-decoration: none; color: inherit; }
   .row a.share-link { display: block; font-size: 13px; overflow-wrap: anywhere; color: var(--accent-text, var(--accent)); }
   .share-qr { padding: 10px; background: #fff; border-radius: 8px; }
@@ -962,6 +963,8 @@ const handlers = {
         li.now = li.appendChild(el("small", "", "準備中…"));
         return li;
       });
+    } else if (e.name === "generate_image") {  // 畫圖:描述是英文的(模型寫的),圖畫好會顯示在下面
+      summary.append(el("span", "", "畫圖"), el("code", "", String(e.args?.prompt || "").slice(0, 100)));
     } else if (e.name === "save_memory") {  // 跨對話的記憶:寫成「記住:…」,點一下到設定頁看全部
       summary.append(el("span", "", "記住"), el("code", "", String(e.args?.fact || "")));
     } else summary.append(el("span", "", e.name), el("code", "", args.length > 100 ? args.slice(0, 100) + "…" : args));
@@ -972,6 +975,13 @@ const handlers = {
   tool_done(e) {
     const d = tools.shift(); if (!d) return;
     d.out.textContent = e.output;
+    const drawn = d.toolName === "generate_image" && /^已畫好 (.+)$/m.exec(e.output || "");
+    if (drawn) {  // 畫好的圖:直接顯示,附「下載」
+      const name = drawn[1].trim(), url = `/api/file?token=${encodeURIComponent(TOKEN)}&name=${encodeURIComponent(name)}`;
+      const fig = d.parentElement.insertBefore(el("div", "drawn"), d.nextSibling);
+      const img = fig.appendChild(el("img")); img.src = url + "&view=1"; img.alt = name; img.loading = "lazy";
+      fig.appendChild(el("div", "page-actions")).append(button("下載", "pill", () => download(url)));
+    }
     const saved = d.toolName === "save_document" && /^已存成 (.+)$/m.exec(e.output || "");
     if (saved) {  // 存好的文件:直接給「下載」;網頁另外有「預覽」和「分享」(預覽連結的鑰匙跟「成品」要)
       const name = saved[1].trim().split(/[\\/]/).pop();
@@ -1393,7 +1403,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/26", ["側邊欄多了「排程」:設定時間(每天 / 平日 / 週末),時間到了 HSUAN 自動開一段新對話去做,例如每天早上跑測試、整理失敗原因;HSUAN 要開著才會跑,錯過的今天打開時補跑一次",
+  ["10/26", ["可以請 HSUAN 畫圖了(NVIDIA 的 FLUX):說「幫我畫一張…」,畫好直接顯示在對話裡,也能從「成品」下載",
+             "側邊欄多了「排程」:設定時間(每天 / 平日 / 週末),時間到了 HSUAN 自動開一段新對話去做,例如每天早上跑測試、整理失敗原因;HSUAN 要開著才會跑,錯過的今天打開時補跑一次",
              "輸入框多了「深度研究」(有開上網才有):HSUAN 先把問題拆成幾個子問題、問你一次要不要上網,子助理同時上網查,最後整理成附出處的報告、存成文件",
              "HSUAN 會記住你說過、以後都適用的事(跨對話的記憶):跟它說「記住…」或「以後都…」就會記,新對話自動帶上;在「設定 → 記憶」可以看、加、刪,也可以整個關掉",
              "視窗比較窄的時候,右邊加寬的面板(變更、檔案、瀏覽器)改成蓋在畫面右邊,不會把對話擠到看不見"]],
@@ -1817,6 +1828,9 @@ async function renderPage() {
       const list = rows(box);
       for (const d of r.data.docs) {
         const acts = [button("下載", "pill", () => download(`/api/file?token=${encodeURIComponent(TOKEN)}&name=${encodeURIComponent(d.name)}`))];
+        if (/\.(jpe?g|png)$/i.test(d.name))  // 畫的圖:新分頁打開看
+          acts.unshift(Object.assign(el("a", "pill", "預覽"), { target: "_blank", rel: "noopener",
+            href: `/api/file?token=${encodeURIComponent(TOKEN)}&name=${encodeURIComponent(d.name)}&view=1` }));
         if (isPage(d.name)) {  // 網頁:預覽、分享給同一個 Wi-Fi 的人(沙箱打開,連結不用登入)
           acts.unshift(previewLink(d.preview, "預覽"));
           if (r.data.can_share) acts.push(button(d.share ? "停止分享" : "分享", d.share ? "pill" : "pill dark", async () => {

@@ -413,7 +413,8 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
 
 
 _DOC_SUFFIXES = {".md", ".txt", ".csv", ".json", ".html", ".yaml", ".yml"}
-DOC_SUFFIXES = _DOC_SUFFIXES  # 網頁的「成品」頁面只列這些
+IMAGE_SUFFIXES = {".jpg", ".png"}  # generate_image 畫的圖(save_document 不能存這些)
+DOC_SUFFIXES = _DOC_SUFFIXES | IMAGE_SUFFIXES  # 網頁的「成品」頁面只列這些
 
 
 @tool

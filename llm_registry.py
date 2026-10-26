@@ -77,6 +77,7 @@ class ModelRegistry:
         self.limits: dict = config["limits"]
         self.embedding: dict | None = config.get("embedding")  # 知識庫用的 embedding 模型(knowledge.py)
         self.safety: dict | None = config.get("safety")  # 安全把關的模型(guard.py)
+        self.image: dict | None = config.get("image")  # 畫圖的模型(imagegen.py)
         self.company_data_ok = bool(self._backend_cfg.get("company_data"))  # 這個後端能不能放公司資料(models.yaml)
         self.specs = {}
         for role, cfg in config["roles"].items():
@@ -173,6 +174,45 @@ class ModelRegistry:
 
         embed.model = cfg["model"]  # 換了模型,知識庫要全部重算
         return embed
+
+    def image_generator(self) -> Callable[[str, int, int], tuple[bytes, str]] | None:
+        """畫圖用(imagegen.py):draw(英文描述, 寬, 高) → (圖片, 用的模型);models.yaml 沒有 image、這個環境沒有就回 None。
+        catalog 的畫圖模型不在 /v1/chat 那組網址,直接打 base_url/<模型>;逾時、忙線、404 換下一顆,
+        被內容過濾擋下的不換(換了也一樣),丟 ValueError 讓模型跟使用者說。"""
+        cfg = self.image
+        if not cfg or self.backend not in cfg.get("available_on", ["catalog"]):
+            return None
+        base = (cfg.get("nim_base_url") or cfg["base_url"]) if self.backend == "nim" else cfg["base_url"]
+        key_env = self._backend_cfg.get("api_key_env")
+
+        def draw(prompt: str, width: int, height: int) -> tuple[bytes, str]:
+            import base64
+            import secrets
+
+            import httpx
+
+            api_key = os.getenv(key_env) if key_env else None
+            headers = {"Accept": "application/json", **({"Authorization": f"Bearer {api_key}"} if api_key else {})}
+            errors = []
+            for m in cfg["models"]:
+                body = {"prompt": prompt, "width": width, "height": height, "seed": secrets.randbelow(2**31), **m.get("params", {})}
+                try:
+                    r = httpx.post(f"{base.rstrip('/')}/{m['model']}", json=body, headers=headers, timeout=cfg.get("timeout_s", 120))
+                except httpx.HTTPError as e:
+                    errors.append(f"{m['model']}:{type(e).__name__}")
+                    continue
+                if r.status_code != 200:
+                    errors.append(f"{m['model']}:[{r.status_code}]")
+                    continue
+                art = (r.json().get("artifacts") or [{}])[0]
+                if art.get("finishReason") not in (None, "SUCCESS"):
+                    raise ValueError(f"被 {m['model']} 的內容過濾擋下了({art.get('finishReason')}),請換個描述")
+                if art.get("base64"):
+                    return base64.b64decode(art["base64"]), m["model"]
+                errors.append(f"{m['model']}:沒有回傳圖片")
+            raise RuntimeError("畫圖的模型都沒有成功:" + ";".join(errors))
+
+        return draw
 
     def safety_checker(self) -> Callable[[str], tuple[str, str]] | None:
         """安全把關用(guard.py):check(文字) → ("safe" | "unsafe", 類別);models.yaml 沒有 safety 就回 None。

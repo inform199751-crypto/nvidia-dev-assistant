@@ -4343,3 +4343,64 @@ def test_scheduled_run_opens_a_conversation_and_never_waits_for_confirmation(wor
         server.server_close()
     team = webui.Desk(make, workspace, store=tmp_path_factory.mktemp("team"), can_add_projects=False)
     assert team.schedules is None and team.start_scheduler() is None
+
+
+# ---------- 畫圖(imagegen.py,10/26) ----------
+
+def test_image_generator_falls_back_and_reports_filtering(monkeypatch):
+    """畫圖:第一顆逾時 / 忙線就換下一顆;被內容過濾擋下的不換(換了也一樣),丟 ValueError 讓模型跟使用者說;
+    地端沒有部署畫圖模型就沒有這個功能。"""
+    import base64
+    import httpx
+    calls = []
+
+    def post(url, json=None, headers=None, timeout=None):
+        calls.append(url.rsplit("/", 2)[-1])
+        if "flux.1-dev" in url and len(calls) == 1:
+            raise httpx.ReadTimeout("slow")
+        if json["prompt"] == "blocked":
+            return httpx.Response(200, json={"artifacts": [{"finishReason": "CONTENT_FILTERED", "base64": ""}]})
+        return httpx.Response(200, json={"artifacts": [{"finishReason": "SUCCESS", "base64": base64.b64encode(b"JPEG").decode()}]})
+
+    monkeypatch.setattr(httpx, "post", post)
+    draw = ModelRegistry.from_yaml(backend="catalog").image_generator()
+    assert draw("a red apple", 1024, 1024) == (b"JPEG", "black-forest-labs/flux.1-schnell")
+    assert calls == ["flux.1-dev", "flux.1-schnell"]
+    with pytest.raises(ValueError, match="內容過濾"):
+        draw("blocked", 1024, 1024)
+    assert ModelRegistry.from_yaml(backend="nim").image_generator() is None
+
+
+def test_generate_image_tool_saves_and_web_shows_it(workspace, tmp_path_factory, monkeypatch):
+    """generate_image 存成「圖片-描述.jpg」(同名加編號),對話裡用 /api/file?view=1 直接顯示(只有圖片能這樣看,
+    網頁還是下載);成品頁列得出來;沒有畫圖模型就說沒有;訪客不能畫。"""
+    import httpx
+    import imagegen
+    import webui
+    docs = tmp_path_factory.mktemp("docs")
+    monkeypatch.setattr(tools, "OUTPUT_DIR", docs)
+    monkeypatch.setattr(imagegen, "GENERATE", None)
+    assert imagegen.generate_image.invoke({"prompt": "cat"}).startswith("錯誤:這裡沒有畫圖的模型")
+    sizes = []
+    monkeypatch.setattr(imagegen, "GENERATE", lambda prompt, w, h: sizes.append((w, h)) or (b"\xff\xd8JPEG", "black-forest-labs/flux.1-dev"))
+    out = imagegen.generate_image.invoke({"prompt": "a red apple on a white table", "size": "landscape"})
+    again = imagegen.generate_image.invoke({"prompt": "a red apple on a white table"})
+    assert out.startswith("已畫好 圖片-a-red-apple-on-a-white-table.jpg") and "flux.1-dev" in out
+    assert again.startswith("已畫好 圖片-a-red-apple-on-a-white-table_2.jpg") and sizes == [(1344, 768), (1024, 1024)]
+    (docs / "page.html").write_text("<p>x</p>", encoding="utf-8")
+    reg, _ = scripted_registry([])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=tmp_path_factory.mktemp("state"))
+    server, base = _serve(desk)
+    try:
+        img = httpx.get(base + "/api/file", params={"token": "t0k", "name": "圖片-a-red-apple-on-a-white-table.jpg", "view": "1"})
+        assert img.content == b"\xff\xd8JPEG" and img.headers["content-type"] == "image/jpeg"
+        page = httpx.get(base + "/api/file", params={"token": "t0k", "name": "page.html", "view": "1"})
+        assert page.headers["content-type"] == "application/octet-stream" and "attachment" in page.headers["content-disposition"]
+        names = [d["name"] for d in httpx.get(base + "/api/outputs", headers={"X-Token": "t0k"}).json()["docs"]]
+        assert "圖片-a-red-apple-on-a-white-table.jpg" in names
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert "generate_image" in webui.GUEST_BLOCKED_TOOLS
+    assert tools.save_document.invoke({"filename": "x.jpg", "content": "x"}).startswith("錯誤")  # 存文件不能存成圖片
