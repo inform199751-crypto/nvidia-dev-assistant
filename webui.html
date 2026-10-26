@@ -522,6 +522,9 @@
       <button type="button" class="nav-btn" data-page="pending">
         <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13.5V9a5 5 0 0110 0v4.5l1.5 1.5h-13z"/><path d="M8.5 17.5a1.6 1.6 0 003 0"/></svg>待命<span class="badge" id="pending-badge" hidden></span>
       </button>
+      <button type="button" class="nav-btn" data-page="schedules" id="nav-schedules" hidden>
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10.5" r="6.5"/><path d="M10 7v3.5l2.5 1.5M7 2.5h6"/></svg>排程
+      </button>
       <button type="button" class="nav-btn" data-page="knowledge">
         <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3.5h9.5A2.5 2.5 0 0116 6v10.5H6.5A2.5 2.5 0 014 14z"/><path d="M4 14a2.5 2.5 0 012.5-2.5H16M8 7h5"/></svg>知識庫
       </button>
@@ -1298,6 +1301,7 @@ async function loadState() {
     if (store.get("panel", "") === "1" && !phoneWidth()) panelOpen(true);
   }
   $("split-mode").hidden = sideMode === "chat" || !!state.guest;
+  $("nav-schedules").hidden = !state.schedules;  // 排程:只有自己的電腦(訪客、多人模式沒有)
   $("research-mode").hidden = !state.research;  // 要能上網搜尋(.env 的 ALLOW_WEB、TAVILY_API_KEY)
   renderUsage();
   renderModel();
@@ -1316,7 +1320,7 @@ async function loadPending() {
 }
 
 // ---------- 側邊欄的頁面 ----------
-const PAGE_TITLES = { outputs: "成品", pending: "待命", knowledge: "知識庫", connectors: "連接器", custom: "自訂", more: "更多", settings: "設定",
+const PAGE_TITLES = { outputs: "成品", pending: "待命", schedules: "排程", knowledge: "知識庫", connectors: "連接器", custom: "自訂", more: "更多", settings: "設定",
                       help: "取得協助", changelog: "更新紀錄", about: "了解更多" };
 function openPage(name, focus) {  // focus:打開後捲到這個元素(例如設定頁的「手機」)
   page = name; closeSide();
@@ -1389,7 +1393,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/26", ["輸入框多了「深度研究」(有開上網才有):HSUAN 先把問題拆成幾個子問題、問你一次要不要上網,子助理同時上網查,最後整理成附出處的報告、存成文件",
+  ["10/26", ["側邊欄多了「排程」:設定時間(每天 / 平日 / 週末),時間到了 HSUAN 自動開一段新對話去做,例如每天早上跑測試、整理失敗原因;HSUAN 要開著才會跑,錯過的今天打開時補跑一次",
+             "輸入框多了「深度研究」(有開上網才有):HSUAN 先把問題拆成幾個子問題、問你一次要不要上網,子助理同時上網查,最後整理成附出處的報告、存成文件",
              "HSUAN 會記住你說過、以後都適用的事(跨對話的記憶):跟它說「記住…」或「以後都…」就會記,新對話自動帶上;在「設定 → 記憶」可以看、加、刪,也可以整個關掉",
              "視窗比較窄的時候,右邊加寬的面板(變更、檔案、瀏覽器)改成蓋在畫面右邊,不會把對話擠到看不見"]],
   ["10/25", ["日常的模型換成 Nemotron 3.5 Super VL(原本的 Nemotron 3 Super 在 NVIDIA 平台下架了)",
@@ -1438,6 +1443,70 @@ const CHANGELOG = [
 ];
 
 function section(box, title) { box.appendChild(el("h3", "", title)); return box; }
+// 「排程」頁(10/26,像 ChatGPT 的排程):時間到了自動開一段新對話讓 HSUAN 去做
+function renderSchedules(box, d) {
+  box.appendChild(el("p", "lead", "時間到了,HSUAN 會自動開一段新對話去做,做完出現在側邊欄最上面。HSUAN 要開著才會跑;"
+    + "錯過的話,今天打開時補跑一次。排程沒有人在旁邊按確認,所以不會上網,改程式也只會留在草稿,要你自己看過按套用。"));
+  if (!d.can) { box.appendChild(el("div", "none", "訪客和多人模式不能設排程。")); return; }
+  const projName = (id) => d.projects.find((p) => p.id === id)?.name;
+  const save = async (item) => {
+    const x = await api("/api/schedules", { action: "save", item });
+    if (!x.ok) { alert(x.data.error || "存檔失敗"); return false; }
+    renderPage();
+  };
+  section(box, "我的排程");
+  if (!d.items.length) box.appendChild(el("div", "none", "還沒有排程。用下面的表單加一個,例如「每天 09:00 跑一次測試,有失敗就整理原因」。"));
+  else {
+    const list = rows(box);
+    for (const it of d.items) {
+      const row = list.appendChild(el("div", "row"));
+      const g = row.appendChild(el("div", "grow"));
+      g.appendChild(el("div", "name", it.name));
+      const where = it.kind === "chat" ? "對話模式" : `專案 ${projName(it.project) || "預設"}`;
+      const when = `${d.repeats[it.repeat] || it.repeat} ${it.time} · ${where}`;
+      const next = it.enabled ? (it.next ? `下次 ${fmtTime(it.next)}` : "") : "已暫停";
+      g.appendChild(el("small", "", [when, next].filter(Boolean).join(" · ")));
+      g.appendChild(el("small", "", it.prompt.length > 90 ? it.prompt.slice(0, 90) + "…" : it.prompt));
+      if (it.last_conv) g.appendChild(el("small", "", `上次:${it.last_result || "跑完了"}`.slice(0, 120)));
+      const acts = row.appendChild(el("div", "actions"));
+      if (it.last_conv) acts.appendChild(button("打開上次的對話", "pill", () => { closePage(); openConv(it.last_conv); }));
+      acts.appendChild(button("立刻跑一次", "pill", async () => {
+        const x = await api("/api/schedules", { action: "run", id: it.id });
+        if (!x.ok) return alert(x.data.error || "沒有開始");
+        await loadDesk(); closePage(); openConv(x.data.conv);
+      }));
+      acts.appendChild(button(it.enabled ? "暫停" : "恢復", "pill", () => save({ ...it, enabled: !it.enabled })));
+      acts.appendChild(button("刪除", "pill", async () => {
+        if (!confirm(`刪除排程「${it.name}」?`)) return;
+        await api("/api/schedules", { action: "remove", id: it.id }); renderPage();
+      }));
+    }
+  }
+  section(box, "加一個排程");
+  const form = box.appendChild(el("div", "rows"));
+  const field = (label, input) => {
+    const row = form.appendChild(el("div", "row"));
+    row.appendChild(el("div", "", label)).style.width = "6em";
+    row.appendChild(input).style.flex = "1";
+    return input;
+  };
+  const styled = (tag) => { const e = el(tag); e.className = "config"; e.style.minHeight = "auto"; return e; };
+  const name = field("名稱", styled("input")); name.placeholder = "例如:早上跑測試"; name.maxLength = 40;
+  const prompt = field("要做的事", styled("textarea")); prompt.rows = 3;
+  prompt.placeholder = "例如:跑一次全部的測試;有失敗的話找出原因,整理成清單(不用改程式)";
+  const where = field("在哪裡", styled("select"));
+  where.appendChild(new Option("對話模式(不綁專案)", "chat"));
+  for (const p of d.projects) where.appendChild(new Option(`專案:${p.name}`, p.id));
+  where.value = d.projects[0]?.id || "chat";
+  const when = field("時間", styled("input")); when.type = "time"; when.value = "09:00";
+  const repeat = field("重複", styled("select"));
+  for (const [k, v] of Object.entries(d.repeats)) repeat.appendChild(new Option(v, k));
+  box.appendChild(el("div", "actions")).appendChild(button("加入排程", "pill dark", () => save({
+    name: name.value, prompt: prompt.value, time: when.value, repeat: repeat.value,
+    kind: where.value === "chat" ? "chat" : "code", project: where.value === "chat" ? null : where.value,
+  })));
+}
+
 // 「設定 → 記憶」(10/26,像 ChatGPT 的記憶):HSUAN 跨對話記得的事,每段對話都會帶上;可以看、加、刪、整個關掉
 async function renderMemory(box) {
   const x = await api("/api/memory");
@@ -1736,7 +1805,7 @@ async function renderPage() {
   const box = $("page-in"), name = page;
   const r = name === "outputs" ? await api("/api/outputs") : name === "custom" ? await api("/api/instructions")
     : name === "settings" ? await api("/api/phone") : name === "knowledge" ? await api("/api/knowledge")
-    : name === "connectors" ? await api("/api/connectors") : null;
+    : name === "connectors" ? await api("/api/connectors") : name === "schedules" ? await api("/api/schedules") : null;
   if (page !== name) return;
   box.innerHTML = "";
   box.appendChild(el("h2", "", PAGE_TITLES[name]));
@@ -1813,6 +1882,8 @@ async function renderPage() {
     renderKnowledge(box, r.data);
   } else if (name === "connectors") {
     renderConnectors(box, r.data);
+  } else if (name === "schedules") {
+    renderSchedules(box, r.data);
   } else if (name === "custom") {
     box.appendChild(el("p", "lead", "讓 HSUAN 照你的習慣做事。"));
     if (r.data.chat) {

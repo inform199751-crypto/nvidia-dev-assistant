@@ -7,7 +7,8 @@ import logging
 import os
 import subprocess
 import sys
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -4256,3 +4257,89 @@ def test_deep_research_needs_web_tools(workspace):
     reg, seen = scripted_registry([])
     r = AgentSession(reg, TokenQuota(10**6, 2)).ask("研究一下", mode="research")
     assert "ALLOW_WEB" in r.answer and seen == []
+
+
+# ---------- 排程任務(scheduler.py,10/26) ----------
+
+def _at(day, hh, mm=0):
+    return datetime(2026, 10, day, hh, mm, tzinfo=TAIPEI)
+
+
+def test_schedule_due_rules_and_single_claim(tmp_path):
+    """排程:時間到、今天是要跑的日子、今天這個時間之後還沒跑過才跑;HSUAN 關著錯過的,今天打開補跑一次、不會跑兩次;
+    週末的排程平日不跑;新加的排程今天時間已過就從下一次開始。桌面版和 VS Code 外掛同時開著(兩份 Schedules 同一個檔案)
+    只有先認領的那個跑。"""
+    import scheduler
+    item = {"id": "a", "time": "09:00", "repeat": "weekdays", "enabled": True, "last_run": _at(23, 9).timestamp()}
+    assert not scheduler.is_due(item, _at(26, 8, 59)) and scheduler.is_due(item, _at(26, 9)) and scheduler.is_due(item, _at(26, 15))
+    assert not scheduler.is_due({**item, "last_run": _at(26, 9, 1).timestamp()}, _at(26, 15))  # 今天跑過了
+    assert not scheduler.is_due({**item, "enabled": False}, _at(26, 10))
+    assert not scheduler.is_due(item, _at(31, 10)) and scheduler.is_due({**item, "repeat": "weekends"}, _at(31, 10))
+    assert scheduler.next_run({**item, "last_run": _at(26, 9, 1).timestamp()}, _at(26, 10)) == _at(27, 9).timestamp()
+
+    s = scheduler.Schedules(tmp_path / "schedules.json")
+    for bad in [{"name": "", "prompt": "x", "time": "09:00"}, {"name": "a", "prompt": "x", "time": "9點"},
+                {"name": "a", "prompt": "x", "time": "09:00", "repeat": "monthly"}]:
+        with pytest.raises(ValueError):
+            s.save(bad)
+    saved = s.save({"name": "早上跑測試", "prompt": "跑全部的測試", "time": "00:00", "repeat": "daily"})
+    assert not scheduler.is_due(saved, datetime.now(TAIPEI))  # 今天 00:00 已經過了:從明天開始
+    s.save({**saved, "time": "09:00"})
+    tomorrow = datetime.now(TAIPEI).replace(hour=9, minute=5) + timedelta(days=1)
+    other = scheduler.Schedules(tmp_path / "schedules.json")  # 另一個行程
+    assert s.claim(saved["id"], tomorrow)["id"] == saved["id"]
+    assert other.claim(saved["id"], tomorrow) is None  # 已經被認領、記了 last_run
+    assert other.claim(saved["id"], tomorrow, force=True)["id"] == saved["id"]  # 「立刻跑一次」不管時間
+
+    ran = []
+    runner = scheduler.Scheduler(s, lambda it: ran.append(it["id"]))
+    later = tomorrow + timedelta(days=1)
+    assert runner.tick(later) == [saved["id"]] and runner.tick(later) == [] and ran == [saved["id"]]
+
+
+def test_scheduled_run_opens_a_conversation_and_never_waits_for_confirmation(workspace, tmp_path_factory, monkeypatch):
+    """排程時間到了:開一段新對話(標題「名稱 · 時間」)讓 HSUAN 去做,跑完記下結果和對話;排程跑的時候沒有人能按確認,
+    要上網的動作直接拒絕(不會卡 5 分鐘);跑完之後使用者在這段對話接著問,確認又會跳出來。訪客、多人模式不能設。"""
+    import httpx
+    import webui
+    asked = []
+    from langchain_core.tools import tool as make_tool
+
+    @make_tool
+    def fetch_url(url: str) -> str:
+        """讀網頁。"""
+        asked.append(url)
+        return "讀到了" if web._confirm("讀取網頁", url) else "使用者不同意"
+
+    reg, _ = scripted_registry([ai(tool_calls=[{"name": "fetch_url", "id": "f1", "args": {"url": "https://example.com"}}]),
+                                ai("測試全部通過")])
+    make = lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event,  # noqa: E731
+                                                               tools=tools.ALL_TOOLS + [fetch_url]), workspace=ws)
+    desk = webui.Desk(make, workspace, store=tmp_path_factory.mktemp("state"))
+    server, base = _serve(desk)
+    h = {"X-Token": "t0k"}
+    try:
+        assert httpx.get(base + "/api/state", headers=h).json()["schedules"] is True
+        item = httpx.post(base + "/api/schedules", json={"action": "save", "item": {
+            "name": "早上跑測試", "prompt": "跑全部的測試", "time": "09:00", "repeat": "daily", "project": desk.default_pid}},
+            headers=h).json()
+        listing = httpx.get(base + "/api/schedules", headers=h).json()
+        assert listing["can"] and [it["name"] for it in listing["items"]] == ["早上跑測試"] and listing["items"][0]["next"]
+        cid = httpx.post(base + "/api/schedules", json={"action": "run", "id": item["id"]}, headers=h).json()["conv"]
+        hub = desk.hub(cid)
+        for _ in range(100):
+            if (desk.schedules.get(item["id"]) or {}).get("last_conv"):
+                break
+            time.sleep(0.05)
+        done = desk.schedules.get(item["id"])
+        assert done["last_conv"] == cid and done["last_result"] == "測試全部通過" and not hub.unattended
+        assert desk.meta[cid]["title"].startswith("早上跑測試 · ")
+        notices = [e["text"] for e in hub.events if e["kind"] == "notice"]
+        assert asked == ["https://example.com"] and any("排程任務不能讀取網頁" in n for n in notices)
+        assert not any(e["kind"] == "confirm" for e in hub.events)  # 沒有跳確認卡片等人
+        assert httpx.post(base + "/api/schedules", json={"action": "remove", "id": item["id"]}, headers=h).json()["ok"]
+    finally:
+        server.shutdown()
+        server.server_close()
+    team = webui.Desk(make, workspace, store=tmp_path_factory.mktemp("team"), can_add_projects=False)
+    assert team.schedules is None and team.start_scheduler() is None

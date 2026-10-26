@@ -29,6 +29,7 @@ import re
 import webbrowser
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import cache
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -45,9 +46,11 @@ import knowledge
 import mcp_client
 import memory as memory_mod
 import qr
+import scheduler
 import terminal
 import tools as toolbox
 import web
+from token_guard import TAIPEI
 
 PAGE = Path(__file__).with_name("webui.html")
 CONFIRM_TIMEOUT = 300  # 秒;沒人回答就當作不允許
@@ -468,6 +471,7 @@ class Hub:
         self.connectors: mcp_client.Connectors | None = None  # 這個人的 MCP 連接器(Desk._attach 設定)
         self.browser_on = False  # 「設定」裡打開了操作瀏覽器(Desk._attach / set_browser 設定)
         self.terminal: terminal.Terminal | None = None  # 終端機面板(使用者自己用的,第一次打開才建)
+        self.unattended = False  # 排程任務正在跑:沒有人在旁邊按確認,要確認的動作直接拒絕(不等 CONFIRM_TIMEOUT)
         self.session = self._new_session()
 
     def term(self) -> terminal.Terminal:
@@ -813,6 +817,9 @@ class Hub:
 
     def confirm(self, action: str, detail: str) -> bool:
         """給 web.CONFIRM 用:在網頁上跳出確認卡片,等使用者按按鈕(agent 執行緒會在這裡等)。"""
+        if self.unattended:  # 排程任務:沒有人能按,直接拒絕並說明(上網、連接器、瀏覽器都要人同意)
+            self.publish("notice", {"text": f"排程任務不能{action}(沒有人在旁邊按確認):{detail[:80]}"})
+            return False
         if action in self.always:
             self.publish("notice", {"text": f"已允許{action}:{detail}"})
             return True
@@ -1246,6 +1253,8 @@ class Desk:
         self.make_hub = make_hub
         # 跨對話的記憶:存在這個人自己的 store;訪客(memory=False)、沒有存檔的地方沒有
         self.memory = memory_mod.Memory(store / "memory.json") if store and memory else None
+        # 排程任務:只有自己的桌面(會在這台電腦上自動跑);訪客、多人模式沒有
+        self.schedules = scheduler.Schedules(store / "schedules.json") if store and can_add_projects else None
         self.store = store
         self.can_add_projects = can_add_projects
         self.docs_dir = docs_dir  # 這個人的文件放哪;None = OUTPUT_DIR
@@ -1677,6 +1686,34 @@ class Desk:
     def cid_of(self, hub: Hub) -> str | None:
         return next((c for c, h in self.hubs.items() if h is hub), None)
 
+    def run_schedule(self, item: dict) -> str:
+        """排程時間到了(或按了「立刻跑」):開一段新對話,標題「名稱 · 時間」,讓 HSUAN 去做;跑完記下結果。回傳對話 id。"""
+        pid = item.get("project") if self.project(item.get("project") or "") else None
+        cid = self.new_conversation(pid, item.get("kind", "code"))
+        self.rename(cid, f"{item['name']} · {time.strftime('%m/%d %H:%M')}")
+        hub = self.hub(cid)
+        hub.unattended = True
+        if not hub.ask(item["prompt"], shown=f"(排程「{item['name']}」)\n{item['prompt']}"):
+            hub.unattended = False
+            self.schedules.finished(item["id"], cid, "沒有開始(這段對話忙著)")
+            return cid
+
+        def wait() -> None:  # 這一輪結束:記下結果,之後使用者在這段對話接著問,確認又會跳出來
+            with hub.cond:
+                while hub.busy:
+                    hub.cond.wait(5)
+            hub.unattended = False
+            last = next((e for e in reversed(hub.events) if e["kind"] in ("done", "error")), {})
+            result = ("出錯:" + last.get("text", "")) if last.get("kind") == "error" else (last.get("answer") or "")
+            self.schedules.finished(item["id"], cid, " ".join(result.split()))
+
+        threading.Thread(target=wait, daemon=True).start()
+        return cid
+
+    def start_scheduler(self) -> scheduler.Scheduler | None:
+        """自己的桌面打開時呼叫(local_desk):背景每 30 秒看一次有沒有到時間的排程。"""
+        return scheduler.Scheduler(self.schedules, self.run_schedule).start() if self.schedules else None
+
     def rename(self, cid: str, title: str) -> None:
         with self.lock:
             if cid in self.meta and title.strip():
@@ -1941,6 +1978,7 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                              "terminal": self._term_ok(),  # 右上角的終端機按鈕:只有這台電腦自己看得到
                              "memory": desk.memory_on,  # 設定頁的「記憶」
                              "research": hub.can_research,  # 輸入框的「深度研究」:要能上網搜尋
+                             "schedules": desk.schedules is not None and not guest and not team,  # 側邊欄的「排程」
                              "seq": len(hub.events),  # 最新的事件編號:頁面分得出哪些是重播、哪些是剛發生的
                              "company_paths": [str(x) for x in guard.COMPANY_PATHS] if self._local() and not guest else []}
                     if lan and self._local():  # 手機連線方式只給這台電腦看
@@ -1949,6 +1987,13 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
             elif url.path == "/api/panel":  # 右邊的工作狀態面板:環境、背景資訊、變更
                 if self._token_ok(self.headers.get("X-Token")):
                     self._json(200, self._hub().panel(paths=not self._guest()))
+            elif url.path == "/api/schedules":  # 側邊欄的「排程」:有哪些、下次什麼時候跑
+                if self._token_ok(self.headers.get("X-Token")):
+                    desk, now = self._desk(), datetime.now(TAIPEI)
+                    can = desk.schedules is not None and not self._guest() and not team
+                    items = [{**it, "next": scheduler.next_run(it, now)} for it in desk.schedules.list()] if can else []
+                    self._json(200, {"can": can, "items": items, "repeats": scheduler.REPEAT_NAMES,
+                                     "projects": [{"id": p["id"], "name": p["name"]} for p in desk.projects]})
             elif url.path == "/api/memory":  # 設定頁的「記憶」:記得哪些事、開關
                 if self._token_ok(self.headers.get("X-Token")):
                     desk = self._desk()
@@ -2177,6 +2222,23 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 except (ValueError, PermissionError) as e:
                     return self._json(400, {"error": str(e)})
                 return self._json(200, {"lang": desk.lang, "browser": desk.browser_on})
+            if path == "/api/schedules":  # 排程:{action: save, item} / {action: remove, id} / {action: run, id}(立刻跑一次)
+                if desk.schedules is None or self._guest() or team:
+                    return self._json(403, {"error": "訪客和多人模式不能設排程(排程會在這台電腦上自動跑)"})
+                action = body.get("action")
+                try:
+                    if action == "save":
+                        return self._json(200, desk.schedules.save(dict(body.get("item") or {})))
+                    if action == "remove":
+                        return self._json(200, {"ok": desk.schedules.remove(str(body.get("id")))})
+                    if action == "run":
+                        item = desk.schedules.claim(str(body.get("id")), datetime.now(TAIPEI), force=True)
+                        if not item:
+                            return self._json(409, {"error": "找不到這個排程,或它正在開始跑"})
+                        return self._json(200, {"conv": desk.run_schedule(item)})
+                except ValueError as e:
+                    return self._json(400, {"error": str(e)})
+                return self._json(400, {"error": "不認得的動作"})
             if path == "/api/memory":  # 設定頁的「記憶」:{on} 開關、{add} 加一條、{remove} 刪一條、{clear} 全部清掉
                 mem = desk.memory
                 if mem is None:
@@ -2360,8 +2422,10 @@ def local_desk(registry, quota, tools: list, status: str, model: str, role: str 
         return Hub(lambda on_event: agent.AgentSession(registry, quota, role=role, thinking=thinking, tools=tools,
                                                        on_event=on_event),
                    status=status, model=model, workspace=workspace)
-    return Desk(make_hub, toolbox.WORKSPACE, store=toolbox.OUTPUT_DIR / "state", repos_dir=toolbox.OUTPUT_DIR / "repos",
+    desk = Desk(make_hub, toolbox.WORKSPACE, store=toolbox.OUTPUT_DIR / "state", repos_dir=toolbox.OUTPUT_DIR / "repos",
                 embed=registry.embedder(), uploads_dir=toolbox.OUTPUT_DIR / "uploads")
+    desk.start_scheduler()  # 排程任務:HSUAN 開著才會跑(桌面版和 VS Code 外掛都開著也只會跑一份,見 Schedules.claim)
+    return desk
 
 
 GUEST_DAILY_TOKENS = 200_000  # 每支訪客手機每天的額度(用的是主人的 API 金鑰)
