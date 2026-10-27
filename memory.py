@@ -17,6 +17,7 @@ from pathlib import Path
 from langchain_core.tools import tool
 
 import tools as toolbox
+import web
 from token_guard import estimate_tokens
 
 MAX_ITEMS = 50          # 最多記幾條(每一步都會送,太多就吃 token)
@@ -25,6 +26,19 @@ MAX_PROMPT_TOKENS = 600  # 放進系統提示的上限:超過就只放最新的
 # 金鑰、密碼的樣子:記憶會跟著每一題送給模型,不能記
 SECRET_LIKE = re.compile(r"nvapi-|sk-[A-Za-z0-9]{8}|ghp_[A-Za-z0-9]|AKIA[0-9A-Z]{12}|-----BEGIN|tvly-|"
                          r"(密碼|password|passwd|api[ _-]?key|token)\s*(是|[:：=])", re.I)
+DECLINED = "使用者沒有同意記住這件事,沒有寫進記憶。不要再用 save_memory 存同一件事,照常回答就好。"
+
+
+def clean(text: str) -> str:
+    """整理成一句話並檢查規則;不合格丟 ValueError(訊息會回給模型或畫面)。"""
+    text = " ".join(str(text).split())
+    if not text:
+        raise ValueError("要記的內容是空的")
+    if len(text) > MAX_CHARS:
+        raise ValueError(f"一條最多 {MAX_CHARS} 個字,請寫短一點(一條記一件事)")
+    if SECRET_LIKE.search(text):
+        raise ValueError("看起來是密碼或金鑰,不能記(記憶會跟著每一題送給模型)")
+    return text
 
 
 class Memory:
@@ -58,13 +72,7 @@ class Memory:
 
     def add(self, text: str, source: str = "") -> dict:
         """加一條;一樣的(不分大小寫、空白)就回傳原本那條。不合格丟 ValueError(訊息會回給模型或畫面)。"""
-        text = " ".join(str(text).split())
-        if not text:
-            raise ValueError("要記的內容是空的")
-        if len(text) > MAX_CHARS:
-            raise ValueError(f"一條最多 {MAX_CHARS} 個字,請寫短一點(一條記一件事)")
-        if SECRET_LIKE.search(text):
-            raise ValueError("看起來是密碼或金鑰,不能記(記憶會跟著每一題送給模型)")
+        text = clean(text)
         with self.lock:
             self.items = self._read()
             same = next((it for it in self.items if it["text"].casefold() == text.casefold()), None)
@@ -125,7 +133,15 @@ def save_memory(fact: str) -> str:
     if mem is None:
         return "錯誤:這裡沒有開記憶功能"
     try:
-        item = mem.add(fact)
+        text = clean(fact)
+    except ValueError as e:
+        return f"錯誤:{e}"
+    # 10/27 地端測試:3B 小模型修 bug 時自己編了兩條「使用者偏好」;記憶會進之後每段對話的系統提示,
+    # 檔案、網頁裡藏的指令也能這樣留下來 → 寫進去前先問(網頁跳確認卡片、CLI 問 y/N;排程沒人能按,一律不記)
+    if not web._confirm("記住這件事", text):
+        return DECLINED
+    try:
+        item = mem.add(text)
     except ValueError as e:
         return f"錯誤:{e}"
     return f"已記住:{item['text']}(使用者可以在「設定 → 記憶」看到、刪掉)"

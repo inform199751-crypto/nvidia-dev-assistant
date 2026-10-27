@@ -82,13 +82,14 @@ class StreamingChat(ScriptedChat):
             yield ChatGenerationChunk(message=chunk)
 
 
-def scripted_registry(script: list[AIMessage], config: dict = CONFIG, chat_cls: type = ScriptedChat):
+def scripted_registry(script: list[AIMessage], config: dict = CONFIG, chat_cls: type = ScriptedChat,
+                      backend: str = "nim"):
     shared = {"script": script, "seen": []}
 
     def factory(spec, **_):
         return chat_cls(role=spec.role, script=shared["script"], seen=shared["seen"])
 
-    return ModelRegistry(copy.deepcopy(config), backend="nim", chat_factory=factory), shared["seen"]
+    return ModelRegistry(copy.deepcopy(config), backend=backend, chat_factory=factory), shared["seen"]
 
 
 def ai(content="", tool_calls=(), tokens=100, reasoning=None):
@@ -1027,6 +1028,17 @@ def test_difficulty_shadow_logs_but_keeps_default_model(workspace, routing_log):
     assert {k: entry[k] for k in ("mode", "by", "pick", "reason", "used", "steps", "tokens", "outcome", "task")} == {
         "mode": "shadow", "by": "classifier", "pick": "code_deep", "reason": "跨檔除錯", "used": "code",
         "steps": 1, "tokens": 140, "outcome": "done", "task": "找出 race condition"}
+
+
+def test_routing_log_says_which_backend_answered(workspace, routing_log, monkeypatch):
+    """10/27 地端相容性測試:CPU 上 3B 小模型跑的那一輪寫進路由紀錄,跟 catalog 的正式紀錄混在一起分不出來 ——
+    report_routing.py、train_models.py 會把它當成真實使用的資料。每一行要記是哪個後端答的。"""
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test-dummy")
+    for backend in ("catalog", "nim"):
+        reg, _ = scripted_registry([ai('{"level": "hard", "reason": "跨檔除錯"}', tokens=40), ai("答案")],
+                                   difficulty_config("shadow"), backend=backend)
+        run_agent("找出 race condition", registry=reg, quota=TokenQuota(10**6, 2))
+    assert [e["backend"] for e in log_entries(routing_log)] == ["catalog", "nim"]
 
 
 def test_difficulty_on_switches_hard_questions_and_says_so(workspace, routing_log):
@@ -2505,8 +2517,6 @@ def test_project_image_and_vision_failure_do_not_block_the_answer(workspace, mon
     """@專案裡的圖片也先給看圖模型(不當文字讀);看圖模型和備援都失敗、或這個環境沒有看圖模型,
     照樣回答,並告訴主模型有一張圖沒看到;太大的圖片直接說要縮小。"""
     import agent
-    import llm_registry
-    monkeypatch.setattr(llm_registry, "VISION_RETRIES", 0)  # 不要真的等重試
     (workspace / "screen.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
     reg, seen = scripted_registry([RuntimeError("[503] busy"), RuntimeError("[503] busy"), ai("文字的部分先回答")],
                                   vision_config())
@@ -4144,6 +4154,7 @@ def test_memory_tool_and_system_prompt(workspace):
     plain = AgentSession(reg, TokenQuota(10**6, 2))
     assert "save_memory" not in str(plain.messages[0].content)
     tools.bench().memory = memory.Memory(None)
+    tools.bench().confirm = lambda action, detail: True  # 使用者在確認卡片按了同意(寫入前一定先問,見下一個測試)
     session = AgentSession(reg, TokenQuota(10**6, 2), tools=tools.ALL_TOOLS + [memory.save_memory])
     assert "call save_memory" in str(session.messages[0].content) and "What you remember" not in str(session.messages[0].content)
     session.ask("記住:我在準備 AI 應用整合工程師的面試")
@@ -4152,6 +4163,23 @@ def test_memory_tool_and_system_prompt(workspace):
     assert "- 使用者在準備 AI 應用整合工程師的面試" in str(fresh.messages[0].content)
     assert str(fresh.messages[0].content).startswith(SYSTEM_PROMPT)
     assert memory.save_memory.invoke({"fact": "密碼是 1234"}).startswith("錯誤:看起來是密碼")
+
+
+def test_memory_is_written_only_after_the_user_agrees(workspace):
+    """10/27 地端相容性測試:CPU 上的 3B 小模型修 bug 時,自己編了兩條「使用者偏好」寫進記憶(使用者一句都沒提)。
+    記憶會放進之後每段對話的系統提示,檔案、網頁裡藏的指令也能這樣留下來 —— 寫進去之前要使用者同意,不同意就不寫;
+    不合規則的(像密碼)直接擋,不用問。排程任務沒有人能按,Hub.confirm 會直接拒絕。"""
+    import memory
+    tools.bench().memory = memory.Memory(None)
+    asked: list[tuple[str, str]] = []
+    tools.bench().confirm = lambda action, detail: asked.append((action, detail)) or detail == "回答用條列"
+    refused = memory.save_memory.invoke({"fact": "使用者不喜歡使用 vim"})
+    memory.save_memory.invoke({"fact": "回答用條列"})
+    assert [it["text"] for it in tools.bench().memory.list()] == ["回答用條列"]
+    assert asked == [("記住這件事", "使用者不喜歡使用 vim"), ("記住這件事", "回答用條列")]
+    assert "沒有同意" in refused and "已記住" not in refused
+    assert memory.save_memory.invoke({"fact": "密碼是 1234"}).startswith("錯誤:看起來是密碼")
+    assert len(asked) == 2
 
 
 def test_memory_on_the_web(workspace, tmp_path_factory):
@@ -4418,3 +4446,108 @@ def test_chat_models_retry_busy_servers_before_falling_back():
     assert set(retry.status_forcelist) == {429, 500, 502, 503} and retry.total == llm_registry.BUSY_RETRIES
     assert retry.read == 0 and retry.allowed_methods is None  # POST 也重試;讀取逾時不重試
     assert spec.timeout_s == 90
+
+
+def _fake_nim():
+    """假的地端 NIM(OpenAI 相容):回固定的「收到」,記下每個請求的 Authorization 標頭。"""
+    import http.server
+    import threading
+    seen: list[str | None] = []
+
+    class Nim(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            seen.append(self.headers.get("Authorization"))
+            body = json.dumps({"id": "c1", "object": "chat.completion", "created": 0, "model": "local",
+                               "choices": [{"index": 0, "message": {"role": "assistant", "content": "收到"},
+                                            "finish_reason": "stop"}],
+                               "usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Nim)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{server.server_address[1]}/v1", seen, server
+
+
+def test_nim_backend_does_not_send_the_nvidia_key(monkeypatch):
+    """10/27 地端相容性測試(CPU 跑的假 NIM):models.yaml 的地端不設 api_key_env,套件拿到 api_key=None 卻自己去讀
+    環境變數 NVIDIA_API_KEY,把試用平台的金鑰當 Bearer 送給地端伺服器 / 公司的 API Gateway。"""
+    from dataclasses import replace
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-must-not-leave")
+    url, seen, server = _fake_nim()
+    try:
+        registry = ModelRegistry.from_yaml(backend="nim")
+        registry.specs["code"] = replace(registry.spec("code"), nim_base_url=url)
+        assert registry.chat("code").invoke("只回答兩個字:收到").content == "收到"
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert seen == [None]
+
+
+def test_chat_model_sends_the_key_it_is_given(monkeypatch):
+    """對照組:有明確給金鑰的後端(catalog)照常帶 Bearer,不能為了地端把驗證整個拿掉。"""
+    import llm_registry
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-from-env")
+    url, seen, server = _fake_nim()
+    try:
+        spec = ModelRegistry.from_yaml().spec("code")
+        llm_registry.nvidia_chat_factory(spec, base_url=url, api_key="nvapi-given", model_kwargs={}).invoke("hi")
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert seen == ["Bearer nvapi-given"]
+
+
+def test_vision_gives_up_at_once_when_no_server_answers(monkeypatch):
+    """10/27 地端相容性測試:地端沒部署看圖 NIM,每次附圖要等 38 秒才放棄 —— 連不到(找不到主機、拒絕連線)也被當忙線:
+    連線層重試 2 次 × 看圖再重試 2 次 × 主模型和備援各一輪 = 18 次。連不到不會因為多等就好,主模型和備援各試一次就該放棄。"""
+    import urllib3.util.connection
+    attempts: list[tuple[str, int]] = []
+
+    def refuse(address, *args, **kwargs):
+        attempts.append(address)
+        raise ConnectionRefusedError("沒有人在聽")
+
+    monkeypatch.setattr(urllib3.util.connection, "create_connection", refuse)
+    registry = ModelRegistry.from_yaml(backend="nim")
+    with pytest.raises(Exception):
+        registry.vision_model("vision").invoke("這張圖是什麼?")
+    assert attempts == [("nim-nemotron-omni", 8000), ("nim-llama-vision", 8000)]
+
+
+def test_smoke_test_can_check_the_local_backend(monkeypatch, tmp_path):
+    """10/27:README 說上線前用 smoke_test.py 再對一次,但它把後端寫死成 catalog、沒有 NVIDIA 金鑰就不跑 ——
+    換成地端時正好最需要冒煙測試,卻不能用。地端不需要金鑰,--backend nim 要能直接測地端伺服器。"""
+    from dataclasses import replace
+    import smoke_test
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
+    (tmp_path / ".env").write_text("LLM_BACKEND=nim\n", encoding="utf-8")
+    url, seen, server = _fake_nim()
+    load = ModelRegistry.from_yaml
+
+    def pointed_at_fake_nim(*args, **kwargs):  # 等於部署時把 code 的 nim_base_url 填成這台伺服器
+        registry = load(*args, **kwargs)
+        registry.specs["code"] = replace(registry.spec("code"), nim_base_url=url)
+        return registry
+
+    monkeypatch.setattr(smoke_test.ModelRegistry, "from_yaml", pointed_at_fake_nim)
+    monkeypatch.setattr(sys, "argv", ["smoke_test.py", "--backend", "nim", "--env-file", str(tmp_path / ".env"),
+                                      "--roles", "code", "--checks", "plain", "--pause", "0",
+                                      "--out", str(tmp_path / "smoke.log")])
+    try:
+        code = smoke_test.main()
+    finally:
+        server.shutdown()
+        server.server_close()
+    lines = (tmp_path / "smoke.log").read_text(encoding="utf-8").splitlines()
+    assert code == 0 and seen == [None]
+    assert [l.split()[:4] for l in lines if l.startswith("code ")] == [
+        ["code", "nvidia/nemotron-3.5-super-vl-120b-a12b", "plain", "通過"]]

@@ -1,7 +1,7 @@
-"""Catalog 冒煙測試:每個角色打幾個最小請求,確認模型還活著、思考開關與 tool calling 有效。
+"""冒煙測試(catalog 或地端 NIM):每個角色打幾個最小請求,確認模型還活著、思考開關與 tool calling 有效。
 
 只送固定的測試字串,不送任何程式碼。直接呼叫單一模型(不經備援鏈),失敗才看得出是哪一顆。
-用法:python smoke_test.py [--env-file 其他專案的 .env] [--roles ...] [--checks ...] [--full]
+用法:python smoke_test.py [--backend nim] [--env-file 其他專案的 .env] [--roles ...] [--checks ...] [--full]
 """
 from __future__ import annotations
 
@@ -71,6 +71,8 @@ def run_check(registry: ModelRegistry, role: str, check: str) -> tuple[bool, str
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--backend", choices=["catalog", "nim"],
+                    help="測哪個後端;預設看環境變數 / .env 的 LLM_BACKEND,都沒有就 catalog")
     ap.add_argument("--env-file", default=str(Path(__file__).with_name(".env")))
     ap.add_argument("--pause", type=float, default=2.0, help="每次呼叫間隔秒數(免費層約 40 RPM)")
     ap.add_argument("--roles", nargs="+", help="只測這些角色,例如 --roles code long_context")
@@ -88,26 +90,30 @@ def main() -> int:
         log_file.write(line + "\n")
         log_file.flush()
 
-    key = dotenv_values(args.env_file).get("NVIDIA_API_KEY")
-    if not key:
-        emit(f"{args.env_file} 裡沒有 NVIDIA_API_KEY")
-        return 2
-    os.environ["NVIDIA_API_KEY"] = key
+    env = dotenv_values(args.env_file)
+    backend = args.backend or os.getenv("LLM_BACKEND") or env.get("LLM_BACKEND") or "catalog"
+    registry = ModelRegistry.from_yaml(backend=backend)
+    key_env = registry._backend_cfg.get("api_key_env")  # 地端不需要金鑰(models.yaml 的 api_key_env: null)
+    if key_env:
+        key = env.get(key_env)
+        if not key:
+            emit(f"{args.env_file} 裡沒有 {key_env}")
+            return 2
+        os.environ[key_env] = key
     warnings.simplefilter("ignore")  # 套件對不在內建表的模型會一直警告
 
-    registry = ModelRegistry.from_yaml(backend="catalog")
     failures = 0
-    emit(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} ===")
-    emit(f"{'角色':<13}{'模型':<38}{'檢查':<10}{'結果':<6}{'秒':>6}{'tokens':>8}  備註")
+    emit(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} · {backend} ===")
+    emit(f"{'角色':<13}{'模型':<42}{'檢查':<10}{'結果':<6}{'秒':>6}{'tokens':>8}  備註")
     tested_models: set[str] = set()
     for role, spec in registry.specs.items():
         if args.roles and role not in args.roles:
             continue
-        if "catalog" not in spec.available_on:
-            emit(f"{role:<13}{spec.model:<38}{'-':<10}{'略過':<6}{'':>6}{'':>8}  只提供地端")
+        if backend not in spec.available_on:
+            emit(f"{role:<13}{spec.model:<42}{'-':<10}{'略過':<6}{'':>6}{'':>8}  {backend} 上沒有提供")
             continue
         if spec.model in tested_models and not args.roles:
-            emit(f"{role:<13}{spec.model:<38}{'-':<10}{'略過':<6}{'':>6}{'':>8}  同一顆模型前面測過了")
+            emit(f"{role:<13}{spec.model:<42}{'-':<10}{'略過':<6}{'':>6}{'':>8}  同一顆模型前面測過了")
             continue
         tested_models.add(spec.model)
         checks = ["plain"]
@@ -127,7 +133,7 @@ def main() -> int:
             except Exception as e:  # 404 / 410 / 429 / 逾時都記下來,繼續測下一個
                 ok, note, tokens, ai = False, f"{type(e).__name__}: {str(e).splitlines()[0][:110]}", 0, None
             failures += not ok
-            emit(f"{role:<13}{spec.model:<38}{check:<10}{'通過' if ok else '失敗':<6}"
+            emit(f"{role:<13}{spec.model:<42}{check:<10}{'通過' if ok else '失敗':<6}"
                  f"{time.perf_counter() - t0:>6.1f}{tokens:>8}  {note}")
             if args.full and ai is not None:
                 emit(f"    [回答] {str(ai.content)[:800]!r}")
@@ -144,7 +150,7 @@ def main() -> int:
         except Exception as e:
             ok, note, tokens = False, f"{type(e).__name__}: {str(e).splitlines()[0][:110]}", 0
         failures += not ok
-        emit(f"{'embedding':<13}{model:<38}{'search':<10}{'通過' if ok else '失敗':<6}"
+        emit(f"{'embedding':<13}{model:<42}{'search':<10}{'通過' if ok else '失敗':<6}"
              f"{time.perf_counter() - t0:>6.1f}{tokens:>8}  {note}")
     if registry.safety and (not args.roles or "safety" in args.roles):  # 安全把關(固定的兩句:正常 / 藏著指令)
         t0, model = time.perf_counter(), registry.safety["model"]
@@ -157,7 +163,7 @@ def main() -> int:
         except Exception as e:
             ok, note = False, f"{type(e).__name__}: {str(e).splitlines()[0][:110]}"
         failures += not ok
-        emit(f"{'safety':<13}{model:<38}{'screen':<10}{'通過' if ok else '失敗':<6}"
+        emit(f"{'safety':<13}{model:<42}{'screen':<10}{'通過' if ok else '失敗':<6}"
              f"{time.perf_counter() - t0:>6.1f}{'':>8}  {note}")
     emit(f"\n{failures} 項失敗")
     log_file.close()

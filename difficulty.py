@@ -205,13 +205,15 @@ def _excerpt(task: str) -> str:
 
 
 def record(d: Decision, *, task: str, turn: str, used: str | None, steps: int, tokens: int | None,
-           ms: int, outcome: str, features: dict | None = None, predicted: dict | None = None) -> None:
+           ms: int, outcome: str, features: dict | None = None, predicted: dict | None = None,
+           backend: str | None = None) -> None:
     """每輪一行 JSON。寫不進去只警告,不影響回答。
     features:這題的特徵(只有數字,ml/features.py)、predicted:決策樹的判斷和線性回歸的預估 —— train_models.py 拿這些
-    當訓練資料,report_routing.py 拿來看決策樹跟分類器一不一致、預估準不準。"""
+    當訓練資料,report_routing.py 拿來看決策樹跟分類器一不一致、預估準不準。
+    backend:catalog / nim。10/27 地端相容性測試(CPU 上的 3B 小模型)寫進來,跟正式紀錄分不出來。"""
     if d.mode == "off":
         return
-    entry = {"ts": datetime.now(TAIPEI).isoformat(timespec="seconds"), "mode": d.mode, "turn": turn, "by": d.by,
+    entry = {"ts": datetime.now(TAIPEI).isoformat(timespec="seconds"), "backend": backend, "mode": d.mode, "turn": turn, "by": d.by,
              "engine": d.engine, "pick": d.pick, "reason": d.reason, "error": d.error or None, "classify_ms": d.ms,
              "classify_tokens": d.tokens, "used": used, "steps": steps, "tokens": tokens, "ms": ms,
              "outcome": outcome, "task": _excerpt(task), "features": features, **(predicted or {})}

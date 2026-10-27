@@ -631,7 +631,7 @@ class AgentSession:
             self.tokens_used += d.tokens
             difficulty.record(d, task=task, turn=mode, ms=ms, used=r and r.role, steps=r.steps if r else 0,
                               tokens=None if r is None else answered + d.tokens, outcome=outcome,
-                              features=feats, predicted=predicted)
+                              features=feats, predicted=predicted, backend=self.registry.backend)
 
         judging.add_done_callback(write)
 

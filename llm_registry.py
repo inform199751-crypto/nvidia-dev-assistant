@@ -41,7 +41,6 @@ class ModelSpec:
 
 
 ChatFactory = Callable[..., BaseChatModel]
-VISION_RETRIES = 2  # 看圖模型忙線時,換備援前先重試幾次(每次等 1–3 秒)
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -58,14 +57,15 @@ def retrying_session(verify: bool = True):
     """會自己重試忙線的 requests.Session(換掉套件的 get_session_fn)。
     10/26 實測 3.5 Super VL:連續呼叫 20 次,前 9 次成功、之後 0.3 秒就回「500 Failed to generate completions」;
     隔幾秒再送大多就成功。以前一失敗 with_fallbacks 馬上換 DeepSeek(每步慢 3–4 倍),Super 該答的步數有 14% 被換掉。
-    逾時(卡住不回)不重試:一次就是 timeout_s 秒,重試只會再卡一次,交給備援。"""
+    逾時(卡住不回)不重試:一次就是 timeout_s 秒,重試只會再卡一次,交給備援。
+    連不到(找不到主機、拒絕連線)也不重試:10/27 地端沒部署看圖 NIM,每次附圖白等 38 秒;多等也不會好,直接交給備援。"""
     import requests
     from requests.adapters import HTTPAdapter
     from urllib3.util.retry import Retry
 
     session = requests.Session()
     session.verify = verify
-    retry = Retry(total=BUSY_RETRIES, connect=BUSY_RETRIES, read=0, status=BUSY_RETRIES, backoff_factor=1,
+    retry = Retry(total=BUSY_RETRIES, connect=0, read=0, status=BUSY_RETRIES, backoff_factor=1,
                   status_forcelist=(429, 500, 502, 503), allowed_methods=None, raise_on_status=False)
     session.mount("https://", HTTPAdapter(max_retries=retry))
     session.mount("http://", HTTPAdapter(max_retries=retry))
@@ -90,6 +90,11 @@ def nvidia_chat_factory(spec: ModelSpec, *, base_url: str, api_key: str | None,
     # 套件內部的 client(requirements.txt 鎖版本;升版要確認還在):一般呼叫和串流都從 get_session_fn 拿 Session
     client = chat._client
     client.get_session_fn = lambda: retrying_session(client.verify_ssl)
+    if api_key is None:  # 沒給金鑰時套件會自己讀環境變數 NVIDIA_API_KEY,地端會把試用平台的金鑰當 Bearer 送出去
+        client.api_key = None
+        # 標頭範本還固定帶「Bearer **********」佔位(有金鑰才換成真的),公司的 API Gateway 可能當成壞掉的憑證拒絕
+        client.headers_tmpl = {kind: {k: v for k, v in headers.items() if k != "Authorization"}
+                               for kind, headers in client.headers_tmpl.items()}
     return chat
 
 
@@ -271,10 +276,10 @@ class ModelRegistry:
 
     def vision_model(self, role: str) -> Runnable:
         """看圖:關思考(10/9 實測 Nano Omni 開思考慢 5 倍、多花上千 tokens,看圖說明用不到)。
-        免費層常回 503 忙線(10/9 實測約一半),等一下再送通常就過:每顆先重試 VISION_RETRIES 次再換備援。"""
+        免費層常回 503 忙線(10/9 實測約一半),等一下再送通常就過:retrying_session 每顆先重試 BUSY_RETRIES 次再換備援。
+        以前這裡另外包一層 with_retry,10/27 拿掉:忙線變成重試 9 次,逾時、連不到也照樣重等(地端沒部署看圖 NIM 白等 38 秒)。"""
         def build(r: str) -> Runnable:
-            model = self.chat(r, thinking=False)
-            return model.with_retry(stop_after_attempt=1 + VISION_RETRIES) if VISION_RETRIES else model
+            return self.chat(r, thinking=False)
 
         backups = [build(fb) for fb in self.spec(role).fallbacks if self.spec(fb).supports_images]
         return build(role).with_fallbacks(backups) if backups else build(role)
