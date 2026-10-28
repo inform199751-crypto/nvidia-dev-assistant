@@ -1458,6 +1458,7 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
+  ["10/28", ["語音模式問專案的事(例如「calc.py 有什麼 bug」)會先讀檔再回答;VS Code 外掛裡拿不到麥克風,不再顯示語音按鈕;英文朗讀的句子不再黏在一起"]],
   ["10/27", ["語音模式(像 ChatGPT 手機版):輸入框空的時候按右下角的按鈕,全螢幕一顆球,用說的問,說完停一下就送出;回答短、口語,唸出來之後再換你說。點球打斷、可以關麥克風,Esc 或 × 結束。輸入框的麥克風改成聽寫:說的話變成文字,看過再送"]],
   ["10/26", ["每則回答下面有「朗讀」,用這台裝置的聲音唸出來;在「設定 → 朗讀」選聲音和語速",
              "可以請 HSUAN 畫圖了(NVIDIA 的 FLUX):說「幫我畫一張…」,畫好直接顯示在對話裡,也能從「成品」下載",
@@ -2187,12 +2188,13 @@ function spokenText(src) {  // Markdown 整理成唸得出來的文字:程式碼
     .replace(/\n{2,}/g, "\n").trim();
 }
 function speechChunks(text) {  // 一段一段排進去:瀏覽器一次唸太長會唸到一半停掉
-  const parts = [], pause = state.lang === "en" ? "." : "。";
+  // 英文句子之間要空格:「world.second」會被唸成 world dot second(10/28 實測)
+  const parts = [], en = state.lang === "en", pause = en ? "." : "。", gap = en ? " " : "";
   for (const s of text.split(/(?<=[。!?!?;;\n])/)) {
     let t = s.trim();
     if (!t) continue;
     if (!/[。!?!?;;,,::.]$/.test(t)) t += pause;  // 標題、清單項目沒有標點:補一個停頓,不然跟下一句黏在一起唸
-    if (parts.length && parts.at(-1).length + t.length < 160) parts[parts.length - 1] += t; else parts.push(t);
+    if (parts.length && parts.at(-1).length + t.length < 160) parts[parts.length - 1] += gap + t; else parts.push(t);
   }
   return parts;
 }
@@ -2202,7 +2204,9 @@ function stopSpeaking() {
   if (canSpeak()) speechSynthesis.cancel();
   if (speech.btn) { speech.btn.setAttribute("aria-pressed", "false"); speech.btn.textContent = "朗讀"; speech.btn = null; }
 }
-const NO_VOICE = "這台裝置沒有這個語言的本機語音。Windows 可以到「設定 → 時間與語言 → 語音」加中文(台灣)的語音,或到 HSUAN 的「設定 → 朗讀」選一個線上的聲音。";
+const VOICE_NAME = { "zh-TW": "中文(台灣)", en: "英文", ja: "日文" };
+const NO_VOICE_TEXT = () => `這台裝置沒有${VOICE_NAME[state.lang] || "這個語言"}的本機語音。Windows 可以到「設定 → 時間與語言 → 語音」`
+  + `加${VOICE_NAME[state.lang] || "這個語言"}的語音,或到 HSUAN 的「設定 → 朗讀」選一個線上的聲音。`;
 // 回傳有沒有開始唸。btn:回答下面的「朗讀」(唸的時候變「停止朗讀」);after:整則自然唸完才呼叫(中途停掉不會);
 // onPart / onWord:語音模式的字幕和球(開始唸某一段、唸到一個詞)
 function speak(text, { btn = null, after = null, onPart = null, onWord = null } = {}) {
@@ -2210,7 +2214,7 @@ function speak(text, { btn = null, after = null, onPart = null, onWord = null } 
   stopSpeaking();
   if (again) return false;  // 唸到一半再按:停止
   const voice = pickVoice();
-  if (!voice) { alert(NO_VOICE); return false; }
+  if (!voice) { alert(NO_VOICE_TEXT()); return false; }
   const parts = speechChunks(spokenText(text));
   if (!parts.length) return false;
   if (btn) { speech.btn = btn; btn.setAttribute("aria-pressed", "true"); btn.textContent = "停止朗讀"; }
@@ -2239,9 +2243,11 @@ function speakButton(text) {
 // 麥克風只給安全連線(這台電腦的 127.0.0.1、https);手機走 http 拿不到,所以不顯示按鈕
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const RECOG_LANG = { "zh-TW": "zh-TW", en: "en-US", ja: "ja-JP" };
-// 用 function 宣告:updateSend 在頁面程式跑到這裡之前就會呼叫它
+// 用 function 宣告:updateSend 在頁面程式跑到這裡之前就會呼叫它。
+// 被別人用 iframe 嵌進去、又沒給麥克風的(VS Code 外掛的面板只給剪貼簿):按了也只會出錯,不顯示(10/28 實測)
 function canTalk() {
-  return !!(window.SpeechRecognition || window.webkitSpeechRecognition) && window.isSecureContext && "speechSynthesis" in window;
+  return !!(window.SpeechRecognition || window.webkitSpeechRecognition) && window.isSecureContext && "speechSynthesis" in window
+    && document.featurePolicy?.allowsFeature?.("microphone") !== false;
 }
 async function consentVoice() {  // 第一次用麥克風:說清楚聲音會送到哪裡,同意才開(存在這台裝置)
   if (store.get("voiceOk", "") === "1") return true;
@@ -2315,7 +2321,7 @@ const voicesReady = () => speechSynthesis.getVoices().length ? Promise.resolve()
 async function voiceOn() {
   if (!await consentVoice()) return;
   await voicesReady();
-  if (!pickVoice()) return alert(NO_VOICE);
+  if (!pickVoice()) return alert(NO_VOICE_TEXT());
   stopDictation(false); stopSpeaking();
   $("vm-top").textContent = `語音模式 · 聲音由${/Edg\//.test(navigator.userAgent) ? "微軟" : "瀏覽器"}的雲端辨識,回答用這台裝置的聲音唸`;
   Object.assign(voice, { on: true, muted: false, quiet: 0, spoken: 0, note: "" });  // 事件編號是每段對話各自的
@@ -2393,7 +2399,7 @@ function renderVoice(box) {  // 設定頁的「朗讀」
     + (canTalk() ? "輸入框的麥克風是聽寫(說的話變成文字,看過再送);輸入框空的時候,右下角的按鈕是語音模式:用說的對話,回答唸完再換你說。"
       + "聽你說話用的是瀏覽器的雲端辨識。" : "")));
   const vs = speechVoices();
-  if (!vs.length) { box.appendChild(el("div", "none", "這台裝置沒有這個語言的語音(Windows:設定 → 時間與語言 → 語音,加中文(台灣))。")); return; }
+  if (!vs.length) { box.appendChild(el("div", "none", NO_VOICE_TEXT())); return; }
   const f = box.appendChild(el("div", "field"));
   const sel = f.appendChild(el("select")); sel.className = "config"; sel.style.minHeight = "auto";
   for (const v of vs) sel.appendChild(new Option(`${v.name}(${v.localService ? "本機" : "線上:文字會送到雲端"})`, v.voiceURI));

@@ -342,10 +342,14 @@ Split this task into independent parts and give them to sub-agents with delegate
 
 # 語音模式(10/27,像 ChatGPT 手機版的語音模式):回答會被唸出來,要短、口語、不能有表格和程式碼;
 # 這一輪也關思考(努力程度的提示不接),使用者在等它開口,快比仔細重要
-VOICE_NOTE = ("\n\n(Voice mode: the user is speaking to you and your reply will be read aloud. Answer in a natural "
-              "spoken style and keep it short, usually one to three sentences, unless they ask for detail. Do not use "
-              "Markdown, lists, tables, code blocks or URLs; say it in words. If something really needs code or a long "
-              "list, give the gist and offer to write it out.)")
+# 10/28 實測:只寫「要短」,程式模式問「calc.py 有什麼 bug」它一個工具都沒用,直接說找不到 calc.py(檔案明明在);
+# 一般問法會先讀檔。所以講明:照常用工具查,只有最後唸出來的那段要短
+VOICE_NOTE = ("\n\n(Voice mode: the user is speaking to you and your final reply will be read aloud. Look things up "
+              "with your tools exactly as you normally would (list, read and search files before answering questions "
+              "about the project; never say a file does not exist without checking). Only the final reply changes: a "
+              "natural spoken style, short, usually one to three sentences, unless they ask for detail. Do not use "
+              "Markdown, lists, tables, code blocks or URLs in it; say it in words. If something really needs code or a "
+              "long list, give the gist and offer to write it out.)")
 
 # 深度研究(10/26,像 ChatGPT 的 Deep Research):列子問題 → 問一次要不要上網 → 子助理同時查 → 寫附出處的報告、存成文件
 RESEARCH_PLAN_PROMPT = """You plan web research. Split the user's question into 3 to 5 focused sub-questions that together answer it; each must be answerable by searching the web on its own. Reply with only a JSON array of strings, written in the user's language."""

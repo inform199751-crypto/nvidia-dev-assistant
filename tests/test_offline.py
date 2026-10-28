@@ -3239,7 +3239,9 @@ def test_web_split_switch_reaches_the_model(webui_app):
 def test_voice_mode_turn_is_short_fast_and_not_routed(webui_app, routing_log, monkeypatch):
     """10/27 語音模式(像 ChatGPT 手機版):/api/ask 帶 voice → 問題後面接 VOICE_NOTE(短、口語、不要表格和程式碼),
     畫面的問題標「語音」、顯示的還是原本說的話。使用者在等它開口,所以努力程度選高也不接「要仔細」、不開思考,
-    依難度選模型開著也不問分類器(劇本只有一則回答:問了分類器,回答就會變成分類器的 JSON)。"""
+    依難度選模型開著也不問分類器(劇本只有一則回答:問了分類器,回答就會變成分類器的 JSON)。
+    10/28 實測:只寫「要短」時,程式模式問「calc.py 有什麼 bug」它一個工具都沒用、直接說找不到 calc.py ——
+    工具照樣綁,提示也要講明「照常用工具查,只有唸出來的回答要短」。"""
     import agent
     app = webui_app([ai("兩點半。"), ai('{"level": "normal"}'), ai("1. 先看 calc.py")], difficulty_config("on"))
     reg, asked = app.hub.session.registry, []
@@ -3257,6 +3259,7 @@ def test_voice_mode_turn_is_short_fast_and_not_routed(webui_app, routing_log, mo
     assert user["voice"] is True and user["text"] == "現在幾點" and events[-1]["answer"] == "兩點半。"
     question = app.seen[0][1][-1].content
     assert agent.VOICE_NOTE in question and "Effort" not in question and asked == [False]
+    assert "read_file" in app.seen[0][2] and "tools exactly as you normally would" in agent.VOICE_NOTE
     assert [e["by"] for e in log_entries(routing_log)] == ["voice"]
     # 先規劃不會是語音的:照常問分類器、接努力程度的提示
     since = len(app.hub.events)
