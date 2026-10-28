@@ -52,6 +52,7 @@ SYSTEM_PROMPT = """You are HSUAN, an internal assistant for a software team: fir
 3. Hypothesize: state the root cause in one or two sentences, citing path:line.
 4. Fix and verify: call propose_patch with edits. Each edit replaces old_string with new_string in one file; copy old_string verbatim from read_file output WITHOUT the line-number prefix, and include a few surrounding lines if it is not unique. To add a new file (e.g. a regression test), use a path that does not exist with an empty old_string. Edits go into your draft (the user's real files do not change); the tool runs the tests on the drafted version and returns the diff and the real result. Keep changes minimal; do not refactor unrelated code.
 5. Your edits accumulate in the draft: read_file, search_code, run_tests and run_command all see the drafted version, and the next propose_patch builds on it. If tests still fail, fix forward on top of the current draft. The user applies the draft to their real files only after reviewing it.
+6. Before calling it fixed, a passing reported test is not enough: re-read the docstring or spec of each function you changed and make sure every rule it states holds; check the boundaries (exactly at a limit, empty, duplicates, None); add a regression test for at least one other case of the same bug and run it. Describe only what your edits actually do.
 
 ## Rules
 - Keep the answer proportional to the question: a short or casual question gets a few sentences; when the user asks for a length or format, follow it. Lead with the answer. If you need something from the user (an error message, a screenshot), ask for it briefly instead of listing every possible cause. Stop when the content ends: no closing wishes or offers of more help (such as 祝您順利, 祝您…, 隨時告訴我) and no emoji.
@@ -318,6 +319,22 @@ STOPPED_NOTE = "<note>使用者停止了上一題「{task}」,那一題沒有做
 HEARD_NOTE = "<note>使用者在你做事的時候又傳了訊息,請一併考慮,需要時調整你正在做的事:</note>\n"
 # 10/16 使用者的對話:Super 偶爾回一則空白(答案只寫在思考裡,force_nonempty_content 也擋不住),使用者什麼都沒看到
 EMPTY_NOTE = "<note>你剛才的回覆是空的,使用者什麼都沒看到。請直接寫出給使用者的回答。</note>"
+# 10/29 評測:系統提示寫了「修完要補測試」,16 次裡還是有 7 次沒補就回答;有補測試的 12 次全部通過,
+# 沒過的都是只修了題目點名的那個測試(漏了函式說明寫的規則、邊界)。所以改了程式卻沒補測試,程式提醒一次
+REVIEW_NOTE = ("<note>你改了程式,但這一輪沒有補測試。回答之前先做完:1. 重讀你改過的每個函式的說明或規格,"
+               "逐條確認都成立,不只是題目提到的那個情況;2. 檢查邊界(剛好等於上限、空的、重複、None);"
+               "3. 用 propose_patch 為同一個 bug 的另一種情況加一個測試並跑過,發現問題就接著修。"
+               "做完再回答,只描述程式真的有做的事。</note>")
+CODE_SUFFIXES = {".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".kt", ".go", ".rs", ".rb", ".php", ".cs", ".c", ".cc",
+                 ".cpp", ".h", ".swift", ".scala"}
+_TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]*$|_test\.\w+$|\.(test|spec)\.\w+$")
+
+
+def needs_review(before: dict, after: dict) -> bool:
+    """這一輪的草稿改了程式檔、卻沒有新增或修改任何測試檔(before / after:這一輪開始時和現在的草稿)。"""
+    changed = [p for p, text in after.items() if before.get(p) != text]
+    tests = [p for p in changed if _TEST_PATH.search(p.replace("\\", "/"))]
+    return not tests and any(Path(p).suffix.lower() in CODE_SUFFIXES for p in changed)
 # 10/16 實測:同一題「這個專案在做什麼」有一次讀了 15 步檔案還沒回答,做到上限就只剩一句「已達上限」(22.8 萬 tokens 白花)。
 # 最後一步不給工具,請它根據查到的先回答
 WRAP_UP_NOTE = ("<note>這是這一輪的最後一步,不能再用工具了。請根據目前查到的內容直接回答使用者;"
@@ -715,6 +732,8 @@ class AgentSession:
             max_steps = limits.get("max_subagent_steps", 8)
 
         nudged = False  # 空白回答只提醒一次
+        # 改了程式卻沒補測試:回答前提醒一次(REVIEW_NOTE);規劃只讀不改、子 agent 不能改,都不用
+        reviewed, draft_before = mode == "plan" or self.sub, dict(toolbox.bench().draft)
         self.served = []  # 這一輪實際回答的模型(AgentResult.models)
         with nullcontext() if self.sub else self.quota.slot(self.user):
             for step in range(1, max_steps + 1):
@@ -776,6 +795,11 @@ class AgentSession:
                         nudged = True
                         self.messages.append(HumanMessage(EMPTY_NOTE))
                         self._notice("模型這次回了空白,請它再寫一次")
+                        continue
+                    if not reviewed and step < max_steps - 1 and needs_review(draft_before, toolbox.bench().draft):
+                        reviewed = True  # 留至少兩步給它補測試、再回答(最後一步不給工具)
+                        self.messages.append(HumanMessage(REVIEW_NOTE))
+                        self._notice("改了程式但沒有補測試:請它對照函式說明、檢查邊界、補一個測試再回答")
                         continue
                     return AgentResult(answer, role, step, used + self.sub_tokens)
                 for call in ai.tool_calls:

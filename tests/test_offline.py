@@ -940,8 +940,8 @@ def test_chat_asks_before_applying_patch(workspace, fake_sandbox, monkeypatch, c
     note = {"edits": [{"path": "calc.py", "old_string": "a + b", "new_string": "a + b  # 修好了"}], "reason": "加註解",
             "test_target": "."}
     reg, seen = scripted_registry([
-        ai(tool_calls=[{"name": "propose_patch", "args": fix, "id": "c1"}]), ai("修好了"),
-        ai(tool_calls=[{"name": "propose_patch", "args": note, "id": "c2"}]), ai("加了註解"),
+        ai(tool_calls=[{"name": "propose_patch", "args": fix, "id": "c1"}]), ai("修好了"), ai("對照過說明和邊界,沒有問題"),
+        ai(tool_calls=[{"name": "propose_patch", "args": note, "id": "c2"}]), ai("加了註解"), ai("對照過說明和邊界,沒有問題"),
         ai("知道檔案變了"),
     ])
     inputs = iter(["修 add", "", "再加個註解", "y", "接下來呢", "/exit"])
@@ -953,6 +953,46 @@ def test_chat_asks_before_applying_patch(workspace, fake_sandbox, monkeypatch, c
     assert tools.DRAFT == {}
     last_question = seen[-1][1][-1].content
     assert "使用者已把" in last_question and "接下來呢" in last_question
+
+
+def test_needs_review_only_for_code_changes_without_tests():
+    """改了程式檔、這一輪沒有新增或修改任何測試檔才算;文件、設定檔不算,上一輪就改過的也不算。"""
+    from agent import needs_review
+    assert needs_review({}, {"calc.py": "x"})
+    assert not needs_review({}, {"calc.py": "x", "tests/test_calc.py": "t"})
+    assert not needs_review({}, {"calc.py": "x", "test_calc.py": "t"})
+    assert not needs_review({}, {"src/app.ts": "x", "src/app.test.ts": "t"})
+    assert not needs_review({}, {"README.md": "x", "config.yaml": "y"})
+    assert not needs_review({"calc.py": "x"}, {"calc.py": "x"})  # 上一輪改的,這一輪沒動
+    assert needs_review({"tests/test_calc.py": "t"}, {"tests/test_calc.py": "t", "calc.py": "x"})
+
+
+def test_fix_without_test_gets_one_review(workspace, fake_sandbox):
+    """10/29 評測:系統提示寫了「修完要補測試」,16 次裡還是 7 次沒補就回答;有補的 12 次全過,沒過的都是只修了
+    題目點名的測試(漏了函式說明寫的「不重複」、邊界的 >=)。改了程式卻沒補測試 → 程式提醒一次(REVIEW_NOTE),
+    它補了測試才回答;有補測試、規劃模式都不提醒。"""
+    import agent
+    (workspace / "calc.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    fix = {"edits": [{"path": "calc.py", "old_string": "a - b", "new_string": "a + b"}], "reason": "修加法"}
+    test = {"edits": [{"path": "tests/test_more.py", "old_string": "",
+                       "new_string": "from calc import add\n\ndef test_negative():\n    assert add(-1, -2) == -3\n"}],
+            "reason": "補測試"}
+    reg, seen = scripted_registry([ai(tool_calls=[{"name": "propose_patch", "args": fix, "id": "c1"}]), ai("修好了"),
+                                   ai(tool_calls=[{"name": "propose_patch", "args": test, "id": "c2"}]), ai("補了測試,都通過")])
+    session = AgentSession(reg, TokenQuota(10**6, 2))
+    r = session.ask("add 錯了,修一下")
+    assert r.answer == "補了測試,都通過" and r.steps == 4
+    notes = [m for m in session.messages if isinstance(m, HumanMessage) and m.content == agent.REVIEW_NOTE]
+    assert len(notes) == 1
+    # 這一輪本來就有補測試:不提醒
+    tools.discard_draft()
+    both = {"edits": fix["edits"] + test["edits"], "reason": "修加法並補測試"}
+    reg2, _ = scripted_registry([ai(tool_calls=[{"name": "propose_patch", "args": both, "id": "c1"}]), ai("修好了")])
+    assert AgentSession(reg2, TokenQuota(10**6, 2)).ask("add 錯了").answer == "修好了"
+    # 草稿上一輪就改過了,這一輪只是問問題:不提醒
+    reg3, _ = scripted_registry([ai("好")])
+    s3 = AgentSession(reg3, TokenQuota(10**6, 2))
+    assert s3.ask("剛剛改了什麼").answer == "好"
 
 
 def test_draft_accumulates_and_every_tool_sees_it(workspace, fake_sandbox):
@@ -1333,7 +1373,8 @@ def test_webui_confirm_and_apply(webui_app, workspace, fake_sandbox):
     (workspace / "calc.py").write_bytes(b"def add(a, b):\n    return a - b\n")
     fix = {"edits": [{"path": "calc.py", "old_string": "a - b", "new_string": "a + b"}],
            "reason": "修加法", "test_target": "."}
-    app = webui_app([ai(tool_calls=[{"name": "propose_patch", "args": fix, "id": "c1"}]), ai("修好了"), ai("知道了")])
+    app = webui_app([ai(tool_calls=[{"name": "propose_patch", "args": fix, "id": "c1"}]), ai("修好了"), ai("對照過說明和邊界,沒有問題"),
+                     ai("知道了")])
 
     results = []
     worker = threading.Thread(target=lambda: results.append(app.hub.confirm("上網搜尋", "pypdf")))
@@ -1462,7 +1503,7 @@ def test_webui_team_mode(workspace, fake_sandbox, tmp_path_factory):
     (workspace / "calc.py").write_bytes(b"def add(a, b):\n    return a - b\n")
     fix = {"edits": [{"path": "calc.py", "old_string": "a - b", "new_string": "a + b"}], "reason": "修加法",
            "test_target": "."}
-    scripts = {"amy@corp": [ai(tool_calls=[{"name": "propose_patch", "args": fix, "id": "c1"}]), ai("修好了")],
+    scripts = {"amy@corp": [ai(tool_calls=[{"name": "propose_patch", "args": fix, "id": "c1"}]), ai("修好了"), ai("對照過說明和邊界,沒有問題")],
                "bob@corp": [ai("你好 Bob")]}
     seen: dict[str, list] = {}
     out = tmp_path_factory.mktemp("out")
@@ -3972,7 +4013,7 @@ def test_eval_runner_scores_with_hidden_tests_and_original_tests(tmp_path, monke
     good, cheat = tasks["retry"], tasks["paging"]
     src = (good.root / "repo" / "retry.py").read_text(encoding="utf-8")
     test_file = (cheat.root / "repo" / "tests" / "test_views.py").read_text(encoding="utf-8")
-    script = [_edit_call(good, [("retry.py", src, run_evals.reference_fix(good)["retry.py"])]), ai("改好了"),
+    script = [_edit_call(good, [("retry.py", src, run_evals.reference_fix(good)["retry.py"])]), ai("改好了"), ai("對照過說明和邊界,沒有問題"),
               _edit_call(cheat, [("tests/test_views.py", test_file, "def test_ok():\n    assert True\n"),
                                  ("tests/conftest.py", "", "collect_ignore = ['.']\n")]), ai("改好了")]
     reg, seen = scripted_registry(script)
@@ -3981,9 +4022,10 @@ def test_eval_runner_scores_with_hidden_tests_and_original_tests(tmp_path, monke
     rows = [run_evals.run_one(t, cfg, reg, quota, tmp_path / t.id, _host_pytest, transcript=tmp_path / f"{t.id}.json")
             for t in (good, cheat)]
     talk = json.loads((tmp_path / "retry.json").read_text(encoding="utf-8"))  # 整段對話留著,查失敗原因用
-    assert [m["type"] for m in talk] == ["system", "human", "ai", "tool", "ai"] and "已改在草稿上" in talk[3]["data"]["content"]
+    assert [m["type"] for m in talk] == ["system", "human", "ai", "tool", "ai", "human", "ai"]  # 沒補測試:提醒一次
+    assert "已改在草稿上" in talk[3]["data"]["content"] and "沒有補測試" in talk[5]["data"]["content"]
     assert rows[0]["passed"] and rows[0]["self_passed"] and rows[0]["error"] is None
-    assert (rows[0]["files_changed"], rows[0]["steps"], rows[0]["tokens"]) == (1, 2, 200)
+    assert (rows[0]["files_changed"], rows[0]["steps"], rows[0]["tokens"]) == (1, 3, 300)
     assert rows[0]["lines_changed"] > 0 and rows[0]["roles"] == ["code"]
     assert "7 passed" in rows[0]["tests"]  # 驗收跑的是原本 3 個 + 隱藏 4 個測試,不是 HSUAN 的沙箱結果
     assert not rows[1]["passed"] and rows[1]["self_passed"]
@@ -4172,9 +4214,9 @@ def test_list_arguments_sent_as_json_strings_are_accepted(workspace, fake_sandbo
     reg, seen = scripted_registry([
         ai(tool_calls=[{"name": "propose_patch", "id": "c1",
                         "args": {"edits": edits, "reason": "add 寫成減法", "test_target": "."}}]),
-        ai("改好了")])
+        ai("改好了"), ai("對照過說明和邊界,沒有問題")])
     r = AgentSession(reg, TokenQuota(10**6, 2)).ask("test_add 失敗了")
-    assert r.answer == "改好了" and "return a + b" in tools.DRAFT["calc.py"]
+    assert r.answer == "對照過說明和邊界,沒有問題" and "return a + b" in tools.DRAFT["calc.py"]
     assert "已改在草稿上" in str(seen[1][1][-1].content)
     assert coerce_args(tools.read_file, {"path": "[1]"}) == {"path": "[1]"}
     assert coerce_args(tools.propose_patch, {"edits": "不是 JSON"}) == {"edits": "不是 JSON"}  # 轉不了就照原樣,讓工具回錯誤
@@ -4199,7 +4241,7 @@ def test_malformed_list_arguments_parsed_when_safe(workspace, fake_sandbox):
         ai(tool_calls=[{"name": "propose_patch", "id": "c1", "args": {"edits": broken, "reason": "修正"}}]),
         ai(tool_calls=[{"name": "propose_patch", "id": "c2", "args": {"edits": trailing, "reason": "修正",
                                                                        "test_target": "."}}]),
-        ai("改好了")])
+        ai("改好了"), ai("對照過說明和邊界,沒有問題")])
     AgentSession(reg, TokenQuota(10**6, 2)).ask("test_add 失敗了")
     assert "valid list" in str(seen[1][1][-1].content)  # 工具原本的錯誤(第一次評測時模型看得懂、下一步就改對)
     assert "return a + b" in tools.DRAFT["calc.py"]
