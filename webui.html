@@ -498,7 +498,8 @@
   .vm-bar { display: flex; gap: 32px; margin-top: 4px; }
   .vm-btn { width: 60px; height: 60px; border-radius: 50%; border: 1px solid var(--line); background: var(--hover); color: var(--text);
             display: grid; place-items: center; }
-  .vm-btn[aria-pressed="true"] { color: var(--error); border-color: var(--error); }
+  #vm-mute[aria-pressed="true"] { color: var(--error); border-color: var(--error); }
+  #vm-barge[aria-pressed="true"] { color: var(--accent-text, var(--accent)); border-color: var(--accent-text, var(--accent)); }
   .vm-btn.end { background: var(--btn); color: var(--btn-ink); border-color: transparent; }
   @media (prefers-reduced-motion: reduce) { .vm-orb { animation: none !important; transition: none; } }
   .send { width: 36px; height: 36px; border-radius: 50%; border: 0; flex-shrink: 0; background: var(--btn); color: var(--btn-ink);
@@ -674,6 +675,7 @@
   <div class="vm-state" id="vm-state" aria-live="polite"></div>
   <div class="vm-cap" id="vm-cap"></div>
   <div class="vm-bar">
+    <button type="button" class="vm-btn" id="vm-barge" aria-pressed="false" aria-label="戴耳機時直接開口插話"></button>
     <button type="button" class="vm-btn" id="vm-mute" aria-pressed="false" aria-label="關麥克風"></button>
     <button type="button" class="vm-btn end" id="vm-end" aria-label="結束語音模式" title="結束(Esc)">
       <svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
@@ -981,7 +983,7 @@ const handlers = {
     // 前面還在跑的工具結果也要接得上
     if (!e.queued) { bot = null; tools.length = 0; }
     const m = el("div", "msg user");
-    const tags = [e.mode === "plan" && "先規劃", e.mode === "research" && "深度研究", e.split && "分工", e.queued && "回答中送出"].filter(Boolean);
+    const tags = [e.mode === "plan" && "先規劃", e.mode === "research" && "深度研究", e.split && "分工", e.voice && "語音", e.queued && "回答中送出"].filter(Boolean);
     if (tags.length) m.appendChild(el("span", "mode-tag", tags.join(" · ")));
     if (e.queued) heardWaiting.push(m);
     if (e.images?.length) {  // 附上的圖片(伺服器只留縮圖)
@@ -996,6 +998,7 @@ const handlers = {
     const b = ensureBot(); stopThinking();
     if (!b.textEl) { b.textEl = b.appendChild(el("div", "md")); b.textEl.raw = ""; }
     b.textEl.raw += e.text; renderText(b.textEl);
+    voiceText(e);  // 語音模式:湊滿一句就先唸
   },
   tool(e) {
     const b = ensureBot(); stopThinking(); b.textEl = null;  // 工具後面的文字另起一段
@@ -1458,7 +1461,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/28", ["語音模式問專案的事(例如「calc.py 有什麼 bug」)會先讀檔再回答;VS Code 外掛裡拿不到麥克風,不再顯示語音按鈕;英文朗讀的句子不再黏在一起"]],
+  ["10/28", ["語音模式更像打電話:第一句寫出來就開口(不用等整則寫完);預設用微軟的自然語音(曉臻,在「設定 → 朗讀」可以換或改回本機);戴耳機時按語音模式畫面左下的耳機,HSUAN 說話時直接開口就能插話,它還在寫也會一起停",
+             "語音模式問專案的事(例如「calc.py 有什麼 bug」)會先讀檔再回答;VS Code 外掛裡拿不到麥克風,不再顯示語音按鈕;英文朗讀的句子不再黏在一起"]],
   ["10/27", ["語音模式(像 ChatGPT 手機版):輸入框空的時候按右下角的按鈕,全螢幕一顆球,用說的問,說完停一下就送出;回答短、口語,唸出來之後再換你說。點球打斷、可以關麥克風,Esc 或 × 結束。輸入框的麥克風改成聽寫:說的話變成文字,看過再送"]],
   ["10/26", ["每則回答下面有「朗讀」,用這台裝置的聲音唸出來;在「設定 → 朗讀」選聲音和語速",
              "可以請 HSUAN 畫圖了(NVIDIA 的 FLUX):說「幫我畫一張…」,畫好直接顯示在對話裡,也能從「成品」下載",
@@ -2160,7 +2164,7 @@ $("term-give").onclick = () => {  // 最後一個指令和輸出放進輸入框:
 
 // ---------- 朗讀回答(10/26 使用者要的):用電腦本機的語音唸出回答 ----------
 // 只用 localService 的聲音(Windows / iOS 內建的),文字不會送到雲端;使用者在設定頁自己選了「線上」的聲音才用線上的
-const speech = { voice: store.get("voice", ""), rate: Number(store.get("voiceRate", "1")) || 1, btn: null, run: 0, queue: [] };
+const speech = { voice: store.get("voice", ""), rate: Number(store.get("voiceRate", "1")) || 1, btn: null, run: 0, queue: [], cur: null };
 const VOICE_LANG = { "zh-TW": "zh", en: "en", ja: "ja" };
 const canSpeak = () => "speechSynthesis" in window;
 function speechVoices() {  // 回答語言的聲音:本機的在前、台灣的在前
@@ -2187,48 +2191,88 @@ function spokenText(src) {  // Markdown 整理成唸得出來的文字:程式碼
     .replace(/[*_~>#|]/g, "")
     .replace(/\n{2,}/g, "\n").trim();
 }
+// 全形標點用 \u 跳脫寫:直接打的全形字存檔時曾被換成半形,模型寫的「？！」就斷不了句(10/28 實測)
 function speechChunks(text) {  // 一段一段排進去:瀏覽器一次唸太長會唸到一半停掉
   // 英文句子之間要空格:「world.second」會被唸成 world dot second(10/28 實測)
   const parts = [], en = state.lang === "en", pause = en ? "." : "。", gap = en ? " " : "";
-  for (const s of text.split(/(?<=[。!?!?;;\n])/)) {
+  for (const s of text.split(/(?<=[\u3002\uFF01\uFF1F\uFF1B!?;\n])/)) {
     let t = s.trim();
     if (!t) continue;
-    if (!/[。!?!?;;,,::.]$/.test(t)) t += pause;  // 標題、清單項目沒有標點:補一個停頓,不然跟下一句黏在一起唸
+    if (!/[\u3002\uFF01\uFF1F\uFF1B!?;\uFF0C\uFF1A,:.]$/.test(t)) t += pause;  // 標題、清單項目沒有標點:補一個停頓,不然跟下一句黏在一起唸
     if (parts.length && parts.at(-1).length + t.length < 160) parts[parts.length - 1] += gap + t; else parts.push(t);
   }
   return parts;
 }
 function stopSpeaking() {
   speech.run++;  // 被取消的那幾段會觸發 error / end,編號對不上就不當作「唸完了」
-  speech.queue = [];
+  speech.queue = []; speech.cur = null;
   if (canSpeak()) speechSynthesis.cancel();
   if (speech.btn) { speech.btn.setAttribute("aria-pressed", "false"); speech.btn.textContent = "朗讀"; speech.btn = null; }
 }
 const VOICE_NAME = { "zh-TW": "中文(台灣)", en: "英文", ja: "日文" };
 const NO_VOICE_TEXT = () => `這台裝置沒有${VOICE_NAME[state.lang] || "這個語言"}的本機語音。Windows 可以到「設定 → 時間與語言 → 語音」`
   + `加${VOICE_NAME[state.lang] || "這個語言"}的語音,或到 HSUAN 的「設定 → 朗讀」選一個線上的聲音。`;
-// 回傳有沒有開始唸。btn:回答下面的「朗讀」(唸的時候變「停止朗讀」);after:整則自然唸完才呼叫(中途停掉不會);
-// onPart / onWord:語音模式的字幕和球(開始唸某一段、唸到一個詞)
-function speak(text, { btn = null, after = null, onPart = null, onWord = null } = {}) {
-  const again = btn && speech.btn === btn;
+function markSpeaking(btn) {  // 回答下面的「朗讀」:唸的時候變「停止朗讀」
+  if (!btn || !speech.cur) return;
+  speech.btn = btn; btn.setAttribute("aria-pressed", "true"); btn.textContent = "停止朗讀";
+}
+// 唸分成三步(10/28,語音模式要邊寫邊唸):speechBegin 選聲音 → speechAdd 一段一段排進去 → speechEnd 不會再排了,排的唸完才 after。
+// after 只在自然唸完時呼叫(中途停掉不會);onPart / onWord:語音模式的字幕和球(開始唸某一段、唸到一個詞)
+// onIdle:排的都唸完了、但還會再排(語音模式:HSUAN 說「我先看看檔案」之後去跑工具,中間沒聲音)
+function speechBegin({ btn = null, after = null, onPart = null, onWord = null, onIdle = null, onFallback = null, voice = null } = {}) {
   stopSpeaking();
-  if (again) return false;  // 唸到一半再按:停止
-  const voice = pickVoice();
-  if (!voice) { alert(NO_VOICE_TEXT()); return false; }
+  const v = voice || pickVoice();
+  if (!v) { alert(NO_VOICE_TEXT()); return false; }
+  speech.cur = { voice: v, after, onPart, onWord, onIdle, onFallback, pending: 0, closed: false };
+  markSpeaking(btn);
+  return true;
+}
+function speechAdd(text) {  // 排進一段 Markdown(整理成唸得出來的句子);回傳排了幾段
+  const cur = speech.cur, run = speech.run;
+  if (!cur) return 0;
   const parts = speechChunks(spokenText(text));
-  if (!parts.length) return false;
-  if (btn) { speech.btn = btn; btn.setAttribute("aria-pressed", "true"); btn.textContent = "停止朗讀"; }
-  const run = speech.run;
-  // 留著每一段的參考:Chrome 會把沒人參考的 utterance 回收掉,end 事件就不會來
-  speech.queue = parts.map((p, i) => {
+  for (const p of parts) {
     const u = new SpeechSynthesisUtterance(p);
-    u.voice = voice; u.lang = voice.lang; u.rate = speech.rate;
-    if (onPart) u.onstart = () => { if (speech.run === run) onPart(p); };
-    if (onWord) u.onboundary = () => { if (speech.run === run) onWord(); };
-    if (i === parts.length - 1) u.onend = u.onerror = () => { if (speech.run !== run) return; stopSpeaking(); after?.(); };
+    u.voice = cur.voice; u.lang = cur.voice.lang; u.rate = speech.rate;
+    u.onstart = () => { if (speech.run === run) cur.onPart?.(p); };
+    if (cur.onWord) u.onboundary = () => { if (speech.run === run) cur.onWord(); };
+    u.onend = () => {
+      if (speech.run !== run) return;
+      if (--cur.pending === 0 && !cur.closed) cur.onIdle?.();
+      speechMaybeDone();
+    };
+    u.onerror = (ev) => (speech.run === run && !cur.voice.localService && !["interrupted", "canceled"].includes(ev.error)
+      ? speechFallback(cur, u) : u.onend());
+    cur.pending++;
+    speech.queue.push(u);  // 留著參考:Chrome 會把沒人參考的 utterance 回收掉,end 事件就不會來
     speechSynthesis.speak(u);
-    return u;
-  });
+  }
+  return parts.length;
+}
+// 線上的聲音唸不出來(沒網路、微軟的服務掛了;10/28 無頭 Edge 的曉臻就是 synthesis-failed):這一段和後面還沒唸的
+// 改用這台電腦的聲音重排,這次開著的頁面之後也都用本機的,不然語音模式會一直沒聲音
+function speechFallback(cur, failed) {
+  const local = pickVoice();
+  speech.naturalFailed = true;
+  if (!local) return failed.onend();
+  const at = speech.queue.indexOf(failed), rest = at < 0 ? [] : speech.queue.slice(at).map((u) => u.text);
+  speech.run++; speech.queue = []; speechSynthesis.cancel();  // 換編號:被取消的那幾段觸發的事件不算
+  cur.voice = local; cur.pending = 0;
+  cur.onFallback?.();
+  for (const t of rest) speechAdd(t);
+  if (!rest.length) speechMaybeDone();
+}
+function speechEnd() { if (speech.cur) { speech.cur.closed = true; speechMaybeDone(); } }
+function speechMaybeDone() {
+  const cur = speech.cur;
+  if (!cur || !cur.closed || cur.pending > 0) return;
+  stopSpeaking(); cur.after?.();
+}
+function speak(text, opts = {}) {  // 一次排完(朗讀按鈕、試聽);回傳有沒有開始唸
+  if (opts.btn && speech.btn === opts.btn) { stopSpeaking(); return false; }  // 唸到一半再按:停止
+  if (!speechBegin(opts)) return false;
+  if (!speechAdd(text)) { stopSpeaking(); return false; }
+  speechEnd();
   return true;
 }
 function speakButton(text) {
@@ -2236,8 +2280,25 @@ function speakButton(text) {
   b.setAttribute("aria-pressed", "false"); b.title = "用這台裝置的語音唸出這則回答(文字不會送到雲端)";
   return b;
 }
+// 語音模式預設用微軟的自然語音(Edge 的線上聲音,10/28 這台有曉臻、雲哲、曉雨):比本機的聲音自然很多,但要唸的文字會送到微軟。
+// 只挑跟回答語言完全一樣的(zh-TW,不要 zh-HK 的粵語);設定頁可以改回本機
+const NATURAL_LANG = { "zh-TW": "zh-tw", en: "en-us", ja: "ja-jp" };
+function naturalVoices() {
+  if (!canSpeak()) return [];
+  const want = NATURAL_LANG[state.lang] || "zh-tw";
+  return speechSynthesis.getVoices().filter((v) => !v.localService && /natural/i.test(v.name) && v.lang.toLowerCase() === want);
+}
+function voiceModeVoice() {
+  const pick = store.get("vmVoice", "");
+  if (pick !== "local" && !speech.naturalFailed) {
+    const ns = naturalVoices(), v = ns.find((x) => x.voiceURI === pick) || ns[0];
+    if (v) return v;
+  }
+  return pickVoice();
+}
+const voiceLabel = (v) => (v.name.match(/Microsoft (.+?) (Multilingual )?Online/) || [])[1] || v.name;
 
-// ---------- 語音(10/26–27 使用者要的,像 ChatGPT):輸入框的麥克風 = 聽寫;輸入框空的時候右下角 = 語音模式 ----------
+// ---------- 語音(10/26–28 使用者要的,像 ChatGPT):輸入框的麥克風 = 聽寫;輸入框空的時候右下角 = 語音模式 ----------
 // NVIDIA 平台沒有聽得懂中文的語音模型(10/10 試過 Nano Omni,錯字太多),所以聽寫用瀏覽器的語音辨識:
 // Edge 把聲音送到微軟、Chrome 送到 Google 的雲端,第一次用先說清楚、同意才開。
 // 麥克風只給安全連線(這台電腦的 127.0.0.1、https);手機走 http 拿不到,所以不顯示按鈕
@@ -2249,12 +2310,13 @@ function canTalk() {
   return !!(window.SpeechRecognition || window.webkitSpeechRecognition) && window.isSecureContext && "speechSynthesis" in window
     && document.featurePolicy?.allowsFeature?.("microphone") !== false;
 }
-async function consentVoice() {  // 第一次用麥克風:說清楚聲音會送到哪裡,同意才開(存在這台裝置)
-  if (store.get("voiceOk", "") === "1") return true;
+async function consentVoice() {  // 第一次用麥克風:說清楚聲音和文字會送到哪裡,同意才開(存在這台裝置)
+  if (store.get("voiceOk2", "") === "1") return true;
   const where = /Edg\//.test(navigator.userAgent) ? "微軟" : "瀏覽器廠商(Chrome 是 Google、Safari 是 Apple)";
   if (!confirm(`用說的:你說的話由瀏覽器轉成文字,聲音會送到${where}的雲端辨識,轉好的文字跟打字一樣送給 HSUAN。`
+    + "語音模式的回答預設用微軟的自然語音唸,要唸的文字也會送到微軟(「設定 → 朗讀」可以改回這台電腦的聲音)。"
     + "不要用它講公司機密或客戶資料。")) return false;
-  store.set("voiceOk", "1");
+  store.set("voiceOk2", "1");
   return true;
 }
 function micError(err) {  // 瀏覽器語音辨識的錯誤 → 給人看的原因;沒聽到聲音、被我們中止的不算
@@ -2289,20 +2351,29 @@ async function dictate() {
   try { rec.start(); } catch (e) { stopDictation(false); alert(`語音辨識開不起來:${e.message}`); }
 }
 
-// 語音模式:全螢幕、中間一顆球。你說 → 停一下自動送出(voice: true,回答會短、口語)→ 回答唸出來 → 再換你說
-// phase:listen 在聽、wait 等 HSUAN 回答、speak 在唸、idle 麥克風關著;muted:使用者關了麥克風(唸完不會再聽)
-// spoken:唸過的 done 事件編號(重播的不唸)
+// 語音模式:全螢幕、中間一顆球。你說 → 停一下自動送出(voice: true,回答會短、口語)→ 回答邊寫邊唸 → 唸完再換你說
+// phase:listen 在聽、wait 等 HSUAN 開口、speak 在唸、idle 麥克風關著;muted:使用者關了麥克風(唸完不會再聽)
+// waiting:在等自己送出的那一題的回答(打斷之後才結束的那一輪不唸、也不打擾正在聽的);spoken:處理過的 done 事件編號
+// stream:這一題邊寫邊唸 —— raw 收到的文字、at 已經排進去唸到哪、started 開始唸了沒
+// barge:戴耳機時唸的時候麥克風也開著,聽到你說話就停下來聽你(沒戴耳機會聽到自己的聲音,預設關)
 const QUIET_ROUNDS = 4;  // 連續幾次沒聽到聲音就先關麥克風(瀏覽器大約 5–8 秒沒聲音算一次)
-const voice = { on: false, phase: "", muted: false, rec: null, heard: "", error: "", quiet: 0, spoken: 0, note: "" };
-const VM_STATE = { listen: "正在聽…", wait: "想一下…", speak: "正在說 · 點球打斷", idle: "麥克風關著 · 按麥克風繼續" };
+const voice = { on: false, phase: "", muted: false, rec: null, heard: "", error: "", quiet: 0, spoken: 0, note: "",
+                waiting: false, stream: null, barge: store.get("voiceBarge", "") === "1" };
+const VM_STATE = { listen: "正在聽…", wait: "想一下…", idle: "麥克風關著 · 按麥克風繼續" };
+const HEADSET_ICON = '<svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12.5V10a6.5 6.5 0 0113 0v2.5"/><rect x="2.5" y="11.5" width="3.5" height="5" rx="1.2"/><rect x="14" y="11.5" width="3.5" height="5" rx="1.2"/></svg>';
 function voiceUi() {
-  const vm = $("vm"), mute = $("vm-mute");
+  const vm = $("vm"), mute = $("vm-mute"), barge = $("vm-barge");
   vm.hidden = !voice.on; vm.dataset.phase = voice.phase;
-  $("vm-state").textContent = voice.note || VM_STATE[voice.phase] || "";
+  $("vm-state").textContent = voice.note || (voice.phase === "speak"
+    ? (voice.barge && !voice.muted ? "正在說 · 直接開口就能插話" : "正在說 · 點球打斷") : VM_STATE[voice.phase] || "");
   mute.setAttribute("aria-pressed", String(voice.muted));
   mute.setAttribute("aria-label", voice.muted ? "打開麥克風" : "關麥克風");
   mute.title = voice.muted ? "打開麥克風" : "關麥克風(HSUAN 說完不會再聽)";
   mute.innerHTML = voice.muted ? MIC_OFF_ICON : MIC_ICON;
+  barge.innerHTML = HEADSET_ICON;
+  barge.setAttribute("aria-pressed", String(voice.barge));
+  barge.title = voice.barge ? "戴耳機模式:HSUAN 說話時直接開口就能插話(沒戴耳機它會聽到自己的聲音)。按一下關掉"
+    : "戴耳機的話打開:HSUAN 說話時直接開口就能插話,不用點球";
   $("vm-orb").setAttribute("aria-label", voice.phase === "speak" ? "打斷,換你說" : voice.phase === "idle" ? "打開麥克風" : "語音模式");
 }
 function caption(text, mine = false) {  // 球下面的字幕:你說的話(亮)/ 正在唸的那一段(暗)
@@ -2321,12 +2392,15 @@ const voicesReady = () => speechSynthesis.getVoices().length ? Promise.resolve()
 async function voiceOn() {
   if (!await consentVoice()) return;
   await voicesReady();
-  if (!pickVoice()) return alert(NO_VOICE_TEXT());
+  const v = voiceModeVoice();
+  if (!v) return alert(NO_VOICE_TEXT());
   stopDictation(false); stopSpeaking();
-  $("vm-top").textContent = `語音模式 · 聲音由${/Edg\//.test(navigator.userAgent) ? "微軟" : "瀏覽器"}的雲端辨識,回答用這台裝置的聲音唸`;
-  Object.assign(voice, { on: true, muted: false, quiet: 0, spoken: 0, note: "" });  // 事件編號是每段對話各自的
+  $("vm-top").textContent = `語音模式 · 聲音由${/Edg\//.test(navigator.userAgent) ? "微軟" : "瀏覽器"}的雲端辨識 · `
+    + (v.localService ? "回答用這台電腦的聲音唸" : `回答用微軟的「${voiceLabel(v)}」唸`);
+  // 事件編號是每段對話各自的;正在回答就等它答完整則唸(已經寫了一半,不邊寫邊唸)
+  Object.assign(voice, { on: true, muted: false, quiet: 0, spoken: 0, note: "", waiting: busy, stream: null });
   caption("");
-  if (busy) { voice.phase = "wait"; voiceUi(); } else listen();  // 正在回答:等它答完、唸完再聽
+  if (busy) { voice.phase = "wait"; voiceUi(); } else listen();
 }
 function stopListening() {  // 先把 voice.rec 清掉再 abort:onend 看到不是自己就不會接著做
   const rec = voice.rec;
@@ -2334,60 +2408,140 @@ function stopListening() {  // 先把 voice.rec 清掉再 abort:onend 看到不�
 }
 function voiceOff() {
   const was = voice.on;
-  voice.on = false; voice.phase = ""; stopListening();
+  voice.on = false; voice.phase = ""; voice.waiting = false; voice.stream = null; stopListening();
   if (!was) return;
   stopSpeaking(); voiceUi(); input.focus();
 }
 function micOff(note = "") {  // 關麥克風(使用者按的、太久沒聲音、出錯):畫面留著,按麥克風繼續
   voice.muted = true; voice.note = note;
-  if (voice.phase === "listen" || voice.phase === "idle" || !voice.phase) { stopListening(); voice.phase = "idle"; }
+  if (voice.rec?.over || voice.phase === "listen" || voice.phase === "idle" || !voice.phase) stopListening();
+  if (voice.phase === "listen" || !voice.phase) voice.phase = "idle";
   voiceUi();
 }
-function micOn() { voice.muted = false; voice.quiet = 0; voice.note = ""; if (voice.phase === "idle") listen(); else voiceUi(); }
-function listen() {
+function micOn() {
+  voice.muted = false; voice.quiet = 0; voice.note = "";
+  if (voice.phase === "idle") listen();
+  else { if (voice.phase === "speak" && voice.barge) listen(true); voiceUi(); }
+}
+function toggleBarge() {
+  voice.barge = !voice.barge; store.set("voiceBarge", voice.barge ? "1" : "");
+  if (voice.phase === "speak") { if (voice.barge && !voice.muted) listen(true); else if (voice.rec?.over) stopListening(); }
+  voiceUi();
+}
+// 聽。over:HSUAN 還在唸(戴耳機模式),聽到你說話才停下來換你說;唸完時 listen() 直接接著用這一次的聽寫
+function listen(over = false) {
   if (!voice.on) return;
+  if (!over && voice.rec?.over) {  // 唸完了,插話用的那次聽寫還開著:接著用它聽
+    voice.rec.over = false; voice.phase = "listen"; voice.note = ""; caption(""); voiceUi();
+    return;
+  }
   stopListening();
-  if (voice.muted) { voice.phase = "idle"; return voiceUi(); }
-  if (voice.phase !== "listen") caption("");  // 換你說:上一則的字幕清掉
-  voice.phase = "listen"; voice.heard = ""; voice.error = ""; voice.note = ""; voiceUi();
+  if (voice.muted) { if (!over) { voice.phase = "idle"; voiceUi(); } return; }
+  if (!over) {
+    if (voice.phase !== "listen") caption("");  // 換你說:上一則的字幕清掉
+    voice.phase = "listen"; voice.note = ""; voiceUi();
+  }
+  voice.heard = ""; voice.error = "";
   const rec = voice.rec = new Recognition();
+  rec.over = over;
   rec.lang = RECOG_LANG[state.lang] || "zh-TW"; rec.interimResults = true; rec.continuous = false;
   rec.onresult = (ev) => {  // 邊說邊出字幕,球跟著跳
-    voice.heard = [...ev.results].map((r) => r[0].transcript).join("");
-    caption(voice.heard, true); orbPulse();
+    const heard = [...ev.results].map((r) => r[0].transcript).join("");
+    if (rec.over) {  // 唸的時候聽到你說話(兩個字以上,免得雜音誤判):停下來換你說
+      if (heard.trim().length < 2) return;
+      rec.over = false; cutIn(); voice.phase = "listen"; voice.note = ""; voiceUi();
+    }
+    voice.heard = heard; caption(heard, true); orbPulse();
   };
   rec.onerror = (ev) => { voice.error = ev.error; };
   rec.onend = async () => {  // 停一下瀏覽器就會結束這次辨識
     if (voice.rec !== rec) return;  // 已經結束語音模式(或重新開始聽了)
     voice.rec = null;
     const why = micError(voice.error), text = voice.heard.trim();
+    if (rec.over) {  // 插話用的聽寫沒聽到人說話就結束了:還在唸就再開一次(出錯就算了,唸完照常聽時再說)
+      if (!why && speech.cur && (voice.phase === "speak" || voice.phase === "wait")) listen(true);
+      return;
+    }
     if (why) return micOff(why);
     if (!text) {  // 沒聽到聲音:再聽,太久沒聲音就先關麥克風
       if (++voice.quiet >= QUIET_ROUNDS) return micOff("一陣子沒聽到聲音,麥克風先關了 · 按麥克風繼續");
       return listen();
     }
     voice.quiet = 0; voice.phase = "wait"; voiceUi();
+    await idle();  // 剛打斷的那一輪還在收尾:等它結束再送,不然會變成「回答中送出」
+    if (!voice.on || voice.phase !== "wait") return;
+    voice.waiting = true; voice.stream = { raw: "", at: 0, started: false };
     const r = await api("/api/ask", { text, mode: "normal", voice: true });
-    if (!r.ok && voice.on) { voice.phase = "idle"; micOff(r.data.error || "送出失敗"); }
+    if (!r.ok && voice.on) { voice.waiting = false; voice.stream = null; voice.phase = "idle"; micOff(r.data.error || "送出失敗"); }
   };
-  try { rec.start(); } catch (e) { micOff(`語音辨識開不起來:${e.message}`); }
+  try { rec.start(); } catch (e) { if (!over) micOff(`語音辨識開不起來:${e.message}`); }
 }
-function interrupt() { stopSpeaking(); voice.muted = false; listen(); }  // 唸的時候點球:停下來、換你說
-function voiceAnswer(e, btn) {  // 一輪答完(handlers.done):語音模式中就唸出來,唸完再聽(麥克風關著就不聽)
+const idle = () => new Promise((ok) => {
+  const t0 = Date.now(), tick = () => (!busy || Date.now() - t0 > 15000 ? ok() : setTimeout(tick, 100));
+  tick();
+});
+function cutIn() {  // 插話:不唸了;HSUAN 還在寫就一起停(像 ChatGPT,打斷之後它不會接著講完)
+  stopSpeaking(); voice.stream = null;
+  if (voice.waiting) { voice.waiting = false; api("/api/stop", {}); }
+}
+function interrupt() { cutIn(); voice.muted = false; listen(); }  // 唸的時候點球:停下來、換你說
+function startSpeaking(btn = null) {  // 進入「正在說」:選好聲音,戴耳機模式同時開始聽
+  const talking = (on) => { if (voice.on && voice.phase !== (on ? "speak" : "wait")) { voice.phase = on ? "speak" : "wait"; voiceUi(); } };
+  if (!speechBegin({ btn, voice: voiceModeVoice(), after: listen, onPart: (p) => { caption(p); talking(true); },
+                     onWord: () => orbPulse(0.6), onIdle: () => talking(false),
+                     onFallback: () => { $("vm-top").textContent = "語音模式 · 微軟的自然語音連不上,改用這台電腦的聲音"; } })) return false;
+  voice.phase = "speak"; voice.note = ""; voiceUi();
+  if (voice.barge && !voice.muted) listen(true);
+  return true;
+}
+// 句子在哪裡結束(只算程式碼區塊外面的):湊滿一句就可以先唸
+function sentenceCut(raw, from) {
+  let cut = from;
+  for (const m of raw.slice(from).matchAll(/[\u3002\uFF01\uFF1F\uFF1B!?;\n]|[.?!](?=\s)/g)) {
+    const end = from + m.index + m[0].length;
+    if ((raw.slice(0, end).match(/```/g) || []).length % 2 === 0) cut = end;
+  }
+  return cut;
+}
+function voiceText(e) {  // handlers.text:語音模式邊寫邊唸,第一句寫出來就開口(10/28,不用等整則寫完)
+  const s = voice.stream;
+  if (!voice.on || !voice.waiting || !s || !(e.seq > pane.liveSeq)) return;
+  s.raw += e.text;
+  const cut = sentenceCut(s.raw, s.at);
+  if (cut <= s.at) return;
+  const piece = s.raw.slice(s.at, cut);
+  if (!spokenText(piece)) return;  // 只有空白、符號:等下一句一起
+  s.at = cut;
+  if (!s.started) { s.started = startSpeaking(); if (!s.started) return; }
+  speechAdd(piece);
+}
+function voiceAnswer(e, btn) {  // handlers.done:剩下的排進去唸,唸完再聽;還沒開口(沒串流、一句都沒湊滿)就整則唸
   if (!voice.on || !(e.seq > pane.liveSeq) || e.seq <= voice.spoken) return;  // 重播的不唸
   voice.spoken = e.seq;
-  stopListening();  // 還在聽(例如聽的時候在別處送出了一題):先停,不然邊唸邊聽
-  if (!btn) return listen();  // 停止的、空白的回答:直接換你說
-  voice.phase = "speak"; voiceUi();
-  if (!speak(e.answer, { btn, after: listen, onPart: (p) => caption(p), onWord: () => orbPulse(0.6) })) listen();
+  if (!voice.waiting) return;  // 打斷之後才結束的那一輪、在別處送出的:不唸,也不打擾正在聽的
+  voice.waiting = false;
+  const s = voice.stream;
+  voice.stream = null;
+  if (!btn) { stopSpeaking(); return listen(); }  // 停止的、空白的回答:直接換你說
+  if (s && s.started && speech.cur) {
+    speechAdd(s.raw.slice(s.at)); markSpeaking(btn); speechEnd();
+    return;
+  }
+  if (!startSpeaking(btn)) return listen();
+  if (!speechAdd(e.answer)) { stopSpeaking(); return listen(); }
+  speechEnd();
 }
 function voiceError(e) {  // handlers.error:麥克風先關,畫面說出錯了
-  if (voice.on && e.seq > pane.liveSeq) { voice.phase = "idle"; micOff("HSUAN 出錯了 · 按麥克風再說一次"); }
+  if (voice.on && e.seq > pane.liveSeq) {
+    voice.waiting = false; voice.stream = null; stopSpeaking(); stopListening();
+    voice.phase = "idle"; micOff("HSUAN 出錯了 · 按麥克風再說一次");
+  }
 }
 $("voice").hidden = !canTalk();
 $("voice").onclick = dictate;
 $("vm-end").onclick = voiceOff;
 $("vm-mute").onclick = () => voice.muted ? micOn() : micOff();
+$("vm-barge").onclick = toggleBarge;
 $("vm-orb").onclick = () => voice.phase === "speak" ? interrupt() : voice.phase === "idle" ? micOn() : null;
 updateSend();
 if (canSpeak()) speechSynthesis.onvoiceschanged = () => { if (page === "settings") renderPage(); };  // 聲音清單是慢慢載入的
@@ -2410,6 +2564,18 @@ function renderVoice(box) {  // 設定頁的「朗讀」
   rate.value = String(speech.rate);
   rate.onchange = () => { speech.rate = Number(rate.value); store.set("voiceRate", rate.value); };
   f.appendChild(button("試聽", "pill", () => speak("你好,我是 HSUAN。這是朗讀回答的聲音。")));
+  if (!canTalk()) return;
+  // 語音模式的聲音:預設微軟的自然語音(線上),也可以改回本機
+  const ns = naturalVoices();
+  box.appendChild(el("p", "lead", "語音模式的聲音" + (ns.length ? ":預設用微軟的自然語音,比較像真人,但要唸的文字會送到微軟。" : ":這個瀏覽器沒有自然語音,用上面選的聲音。")));
+  if (!ns.length) return;
+  const g = box.appendChild(el("div", "field"));
+  const vm = g.appendChild(el("select")); vm.className = "config"; vm.style.minHeight = "auto";
+  for (const v of ns) vm.appendChild(new Option(`${voiceLabel(v)}(自然語音,線上)`, v.voiceURI));
+  vm.appendChild(new Option("跟上面一樣(本機,文字不出這台電腦)", "local"));
+  vm.value = store.get("vmVoice", "") === "local" ? "local" : voiceModeVoice()?.voiceURI || ns[0].voiceURI;
+  vm.onchange = () => store.set("vmVoice", vm.value);
+  g.appendChild(button("試聽", "pill", () => speak("你好,我是 HSUAN。語音模式會用這個聲音跟你說話。", { voice: voiceModeVoice() })));
 }
 
 // ---------- 右邊的面板(10/24 使用者要的,像 Claude 桌面版):狀態 / 變更 / 檔案 / 瀏覽器 ----------
