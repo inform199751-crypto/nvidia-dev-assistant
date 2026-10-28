@@ -496,6 +496,31 @@ def test_sandbox_runs_on_copy_without_secrets(workspace, tmp_path_factory, monke
     assert seen[0][1] == ["sh", "-c", "cat .env; ls -a"]
 
 
+def test_sandbox_errors_say_they_come_from_the_sandbox(monkeypatch, tmp_path):
+    """10/15 實測:使用者請 HSUAN 跑點餐系統,沙箱裡寫 設定.json 撞到唯讀,模型卻叫使用者用系統管理員身分執行、關防毒;
+    連不到網路也說成使用者的網路問題。撞到沙箱限制的輸出後面要說明是沙箱的限制;逾時要提到一直開著的程式請使用者自己跑。"""
+    import subprocess
+    results = iter([(1, "", "OSError: [Errno 30] Read-only file system: '/ws/app/設定.json'"),
+                    (0, "[Errno 101] Network is unreachable\n", ""),
+                    (1, "", "AssertionError: assert 1 == 2")])
+
+    def fake_run(cmd, **kw):
+        if cmd[1] == "kill":
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[-1] == "server.py":
+            raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+        code, out, err = next(results)
+        return subprocess.CompletedProcess(cmd, code, out, err)
+
+    monkeypatch.setattr(tools.shutil, "which", lambda name: "docker")
+    monkeypatch.setattr(tools.subprocess, "run", fake_run)
+    readonly = tools._docker(tmp_path, ["python", "app/server.py"])
+    assert readonly.startswith("exit code 1") and readonly.endswith(tools.SANDBOX_HINT)
+    assert tools._docker(tmp_path, ["python", "probe.py"]).endswith(tools.SANDBOX_HINT)
+    assert tools.SANDBOX_HINT not in tools._docker(tmp_path, ["python", "-m", "pytest"])
+    assert "終端機面板" in tools._docker(tmp_path, ["python", "server.py"], timeout=1)
+
+
 def test_save_document_stays_in_output_dir(workspace, tmp_path_factory, monkeypatch):
     """文件只存在輸出資料夾:../ 寫不出去、同名不覆蓋、CSV 加 BOM(Excel 才看得懂中文)、工作區不會多檔案。"""
     out = tmp_path_factory.mktemp("output")
@@ -3825,6 +3850,23 @@ def test_terminal_runs_commands_in_the_project_folder(tmp_path, monkeypatch):
     assert not t.running and t.read(since)["lines"][-1].startswith("(結束")
     t.clear()
     assert t.read()["lines"] == []
+
+
+def test_terminal_shows_output_of_programs_that_keep_running(tmp_path, monkeypatch):
+    """10/28 實測:在終端機面板跑點餐系統(python app\\server.py),伺服器起來了、網頁也打得開,畫面卻一個字都沒有 ——
+    輸出接到管子時 Python 會先存著,一直開著的程式看不到啟動訊息和店員密碼,使用者以為沒反應。"""
+    import time as _time
+    import terminal
+    monkeypatch.delenv("PYTHONUNBUFFERED", raising=False)
+    t = terminal.Terminal(tmp_path)
+    t.run(_py("import time; print('ready'); time.sleep(30)"))
+    for _ in range(200):
+        if "ready" in t.read()["lines"]:
+            break
+        _time.sleep(0.05)
+    assert t.running and "ready" in t.read()["lines"]
+    assert t.stop()
+    _wait(t)
 
 
 def test_terminal_only_on_this_computer(workspace, tmp_path_factory, monkeypatch):

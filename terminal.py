@@ -95,7 +95,9 @@ class Terminal:
         if verb.lower() in ("cd", "chdir", "set-location", "sl"):  # 每行都是新的行程,cd 要自己記
             self._cd(arg.strip().strip('"').strip("'"))
             return ""
-        env = mcp_client.child_env({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "NO_COLOR": "1", "PYTHON_COLORS": "0"})
+        # PYTHONUNBUFFERED:輸出接到管子時 Python 會先存著,網站伺服器這類一直跑的程式畫面就一直是空的(10/28)
+        env = mcp_client.child_env({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1",
+                                    "NO_COLOR": "1", "PYTHON_COLORS": "0"})
         try:
             self.proc = subprocess.Popen(shell_argv(command), cwd=self.cwd, stdin=subprocess.DEVNULL,
                                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, creationflags=NO_WINDOW)

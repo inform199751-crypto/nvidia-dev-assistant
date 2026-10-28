@@ -233,8 +233,16 @@ def _sandbox_copy():
         yield copy
 
 
+# 沙箱自己的限制造成的錯誤。10/15 實測:模型把唯讀錯誤當成使用者電腦的問題,叫使用者用系統管理員身分執行、關防毒
+_SANDBOX_LIMITS = re.compile(r"Read-only file system|Network is unreachable|Temporary failure in name resolution"
+                             r"|Name or service not known|Could not resolve host")
+RUN_IT_YOURSELF = "會寫檔、連網或一直開著的程式(例如網站伺服器)請使用者在自己的電腦上執行:HSUAN 的終端機面板或命令列。"
+SANDBOX_HINT = f"(這是沙箱的限制:專案複本唯讀、沒有網路,不是使用者電腦的問題,不要叫使用者檢查權限、防毒或網路。{RUN_IT_YOURSELF})"
+
+
 def _docker(root: Path, argv: list[str], timeout: int = 180) -> str:
-    """在隔離的 Docker 容器裡執行:無網路、唯讀掛載、限 CPU / 記憶體 / 行程數 / 時間。"""
+    """在隔離的 Docker 容器裡執行:無網路、唯讀掛載、限 CPU / 記憶體 / 行程數 / 時間。
+    撞到沙箱限制的輸出後面加 SANDBOX_HINT,模型才不會把它當成使用者電腦的問題。"""
     if not shutil.which("docker"):
         return "錯誤:這台機器沒有 Docker,沙箱無法啟動。為了安全,不會改在主機上直接執行程式碼。"
     name = f"agent-sandbox-{uuid.uuid4().hex[:12]}"
@@ -248,8 +256,9 @@ def _docker(root: Path, argv: list[str], timeout: int = 180) -> str:
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired:
         subprocess.run(["docker", "kill", name], capture_output=True)  # 只停掉 docker CLI 的話,容器會在背景繼續跑
-        return f"錯誤:超過 {timeout} 秒被中止(可能有無窮迴圈或死結)"
-    return f"exit code {r.returncode}\n{r.stdout}\n{r.stderr}".strip()
+        return f"錯誤:超過 {timeout} 秒被中止(可能有無窮迴圈、死結,或是會一直開著的程式)。{RUN_IT_YOURSELF}"
+    out = f"exit code {r.returncode}\n{r.stdout}\n{r.stderr}".strip()
+    return f"{out}\n{SANDBOX_HINT}" if _SANDBOX_LIMITS.search(out) else out
 
 
 def _run_sandbox(root: Path, target: str) -> str:
