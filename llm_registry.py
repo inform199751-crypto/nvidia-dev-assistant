@@ -109,6 +109,8 @@ class ModelRegistry:
         self.safety: dict | None = config.get("safety")  # 安全把關的模型(guard.py)
         self.image: dict | None = config.get("image")  # 畫圖的模型(imagegen.py)
         self.company_data_ok = bool(self._backend_cfg.get("company_data"))  # 這個後端能不能放公司資料(models.yaml)
+        # 網頁的聽寫、語音模式能不能用瀏覽器的雲端語音(10/28):會放公司資料的後端預設不行,聲音和回答會送到微軟 / Google
+        self.cloud_voice_ok = bool(self._backend_cfg.get("cloud_voice", not self.company_data_ok))
         self.specs = {}
         for role, cfg in config["roles"].items():
             cfg = dict(cfg)

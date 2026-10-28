@@ -3079,6 +3079,28 @@ def test_shipped_backends_say_where_company_data_may_go():
     assert ModelRegistry.from_yaml(backend="nim").company_data_ok is True
 
 
+def test_cloud_voice_is_off_where_company_data_may_go(webui_app):
+    """10/28 審查:語音模式、聽寫、自然語音會把說話的聲音和回答的文字送到微軟 / Google 的雲端,切到地端時也一樣 ——
+    「公司資料不出公司」就破功了。cloud_voice 沒寫時:能放公司資料的後端關、試用平台開;寫了照寫的(公司核准了才開)。
+    /api/state 告訴網頁,網頁就不顯示聽寫和語音模式、朗讀只用本機的聲音。"""
+    import httpx
+    assert ModelRegistry.from_yaml(backend="nim").cloud_voice_ok is False
+    assert ModelRegistry.from_yaml(backend="catalog").cloud_voice_ok is True
+
+    def backend(**cfg):
+        c = copy.deepcopy(CONFIG)
+        c["backends"]["nim"].update(cfg)
+        return ModelRegistry(c, backend="nim", chat_factory=lambda spec, **_: None).cloud_voice_ok
+
+    assert backend(company_data=True) is False and backend(company_data=True, cloud_voice=True) is True
+    assert backend(company_data=False) is True and backend(company_data=False, cloud_voice=False) is False
+    on_prem = copy.deepcopy(CONFIG)
+    on_prem["backends"]["nim"]["company_data"] = True
+    state = lambda app: httpx.get(app.base + "/api/state", headers={"X-Token": app.TOKEN}).json()
+    assert state(webui_app([], on_prem))["cloud_voice"] is False
+    assert state(webui_app([]))["cloud_voice"] is True
+
+
 def test_company_folders_are_blocked_on_the_trial_platform(workspace, tmp_path_factory, trial_platform):
     """10/10 公司資料保護:不是靠人記得「不要放」,是讓系統擋住。試用平台上 .env 的 COMPANY_PATHS 底下的資料夾
     加專案、知識庫、拖進來(找位置 / 上傳)都擋;其他資料夾第一次加入回 409,畫面問過「不是公司資料」再送 public 才放行,

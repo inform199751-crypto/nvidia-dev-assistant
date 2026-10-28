@@ -218,7 +218,7 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
   <div class="margin">作品集<br>實測 10-06 – 10-27<br>更新 10-27</div>
   <div>
     <h1>對內研發助理<br>實測紀錄</h1>
-    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/27 邊做邊用真模型測試的過程,實測與審查一共抓到 75 個問題。</p>
+    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/27 邊做邊用真模型測試的過程,實測與審查一共抓到 76 個問題。</p>
     <div class="byline">
       <span><strong>HSUAN</strong></span>
       <span>Python · LangChain · NVIDIA NIM · Docker · Redis · scikit-learn</span>
@@ -330,7 +330,7 @@ flowchart LR
           <tr><td>畫圖</td><td>先探測 catalog,再請它畫雨夜的台北 101</td><td class="num">FLUX.1-dev 約 5 秒 · 2 步 · 4,227 tokens<small>自己把描述寫成英文、選橫幅;Stable Diffusion 3 / 3.5 / SDXL 都 404</small></td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
           <tr><td>端到端評測</td><td>17 題自己寫的修 bug 題,驗收含 HSUAN 看不到的隱藏測試;10/25–26 主模型換成 3.5 Super VL 後,每種設定跑兩次</td><td class="num">依難度選模型 29/34(85%)· 平均約 52k tokens<small>只用 Super 24/34(71%)· 約 72k;同樣設定兩次差 3 題,起伏很大</small></td><td><span class="pill pass">選模型較好</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">202 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">203 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端相容性</td><td>沒有 GPU:CPU 版 llama.cpp + Llama 3.2 3B 假裝成地端伺服器,只把模型網址指過去</td><td>程式一行都不用改就切得過去;回話、思考開關、tool calling 都通,上下文自動換成地端的 256K<small>抓到 5 個只有切到地端才會出現的問題(第 63–67 個)</small></td><td><span class="pill pass">切換通過</span></td></tr>
           <tr><td>地端 NIM 本身</td><td>需要 GPU 伺服器</td><td>NIM 容器、顯存、速度、大模型的回答品質</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
@@ -341,7 +341,7 @@ flowchart LR
 
 <section>
   <div class="label">
-    <h2>抓到的 75 個問題</h2>
+    <h2>抓到的 76 個問題</h2>
     <div class="note">依類別分組,編號照發現順序,跟 README 一致。每一條都寫了怎麼發現的</div>
   </div>
   <div class="body">
@@ -379,6 +379,7 @@ flowchart LR
         <li><span class="n">73</span><div><span class="what">終端機面板跑一直開著的 Python 程式,畫面一個字都沒有,看起來像沒反應</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">設 PYTHONUNBUFFERED=1,啟動畫面馬上出現</div></li>
         <li><span class="n">74</span><div><span class="what">斷句用的全形標點存檔時被換成半形,模型寫的「?!」斷不了句,還多唸一個停頓</span><span class="how"><span class="tag">語音模式實測</span></span></div><div class="fix">全形標點改用跳脫字元寫,怎麼存都不會變</div></li>
         <li><span class="n">75</span><div><span class="what">微軟的自然語音是線上的,連不上時整則回答沒聲音</span><span class="how"><span class="tag">Edge 實測</span></span></div><div class="fix">出錯就改用本機聲音把剩下的唸完,之後都用本機的</div></li>
+        <li><span class="n">76</span><div><span class="what">切到地端之後,語音模式照樣把聲音和回答送到微軟的雲端,「公司資料不出公司」破功</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">每個後端設定能不能用雲端語音,地端預設關:不顯示語音按鈕、只用本機的聲音</div></li>
       </ol>
     </div>
 

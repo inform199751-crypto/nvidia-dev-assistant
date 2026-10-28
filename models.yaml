@@ -23,6 +23,9 @@ backends:
     base_url: http://localhost:8000/v1   # 角色沒寫 nim_base_url 時用這個
     api_key_env: null                    # NIM 本身不驗 key,驗證交給前面的 API Gateway
     company_data: true                   # 公司自己的伺服器,資料不出公司
+    # 聽寫、語音模式、自然語音要把說話的聲音和回答的文字送到瀏覽器廠商(微軟 / Google)的雲端 —— 地端預設關,
+    # 公司核准了那家的語音服務再改 true。沒寫的話:能放公司資料的後端就關、試用平台就開
+    cloud_voice: false
 
 routing:
   default_role: code

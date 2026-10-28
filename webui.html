@@ -1361,6 +1361,8 @@ async function loadState() {
   state = r.data;
   if (pane.liveSeq === Infinity && state.conv === conv) pane.liveSeq = state.seq ?? 0;
   $("trial-badge").hidden = state.company_ok !== false;
+  $("voice").hidden = !canTalk(); updateSend();  // 聽寫、語音模式:地端不能用雲端語音
+  if (!canTalk()) { voiceOff(); stopDictation(false); }
   $("term-btn").hidden = !state.terminal;  // 終端機:只有這台電腦自己看得到
   if (!state.terminal) $("term").hidden = true;
   else if (!term.restored) { term.restored = true; if (store.get("term", "") === "1") termOpen(true); }
@@ -1461,7 +1463,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["10/28", ["語音模式更像打電話:第一句寫出來就開口(不用等整則寫完);預設用微軟的自然語音(曉臻,在「設定 → 朗讀」可以換或改回本機);戴耳機時按語音模式畫面左下的耳機,HSUAN 說話時直接開口就能插話,它還在寫也會一起停",
+  ["10/28", ["地端模式(公司自己的伺服器)不能用聽寫和語音模式:它們會把聲音送到微軟的雲端;朗讀只用這台電腦的聲音",
+             "語音模式更像打電話:第一句寫出來就開口(不用等整則寫完);預設用微軟的自然語音(曉臻,在「設定 → 朗讀」可以換或改回本機);戴耳機時按語音模式畫面左下的耳機,HSUAN 說話時直接開口就能插話,它還在寫也會一起停",
              "語音模式問專案的事(例如「calc.py 有什麼 bug」)會先讀檔再回答;VS Code 外掛裡拿不到麥克風,不再顯示語音按鈕;英文朗讀的句子不再黏在一起"]],
   ["10/27", ["語音模式(像 ChatGPT 手機版):輸入框空的時候按右下角的按鈕,全螢幕一顆球,用說的問,說完停一下就送出;回答短、口語,唸出來之後再換你說。點球打斷、可以關麥克風,Esc 或 × 結束。輸入框的麥克風改成聽寫:說的話變成文字,看過再送"]],
   ["10/26", ["每則回答下面有「朗讀」,用這台裝置的聲音唸出來;在「設定 → 朗讀」選聲音和語速",
@@ -2167,10 +2170,12 @@ $("term-give").onclick = () => {  // 最後一個指令和輸出放進輸入框:
 const speech = { voice: store.get("voice", ""), rate: Number(store.get("voiceRate", "1")) || 1, btn: null, run: 0, queue: [], cur: null };
 const VOICE_LANG = { "zh-TW": "zh", en: "en", ja: "ja" };
 const canSpeak = () => "speechSynthesis" in window;
+// 地端(/api/state 的 cloud_voice 是 false):公司資料不能出去,不用雲端的語音 —— 不能聽寫、沒有語音模式,朗讀只用本機的聲音
+function cloudVoice() { return state.cloud_voice !== false; }  // function 宣告:canTalk 很早就會呼叫
 function speechVoices() {  // 回答語言的聲音:本機的在前、台灣的在前
   if (!canSpeak()) return [];
   const want = VOICE_LANG[state.lang] || "zh", tw = (v) => /tw|hant/i.test(v.lang);
-  return speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith(want))
+  return speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith(want) && (v.localService || cloudVoice()))
     .sort((a, b) => (b.localService - a.localService) || (tw(b) - tw(a)));
 }
 function pickVoice() {
@@ -2284,7 +2289,7 @@ function speakButton(text) {
 // 只挑跟回答語言完全一樣的(zh-TW,不要 zh-HK 的粵語);設定頁可以改回本機
 const NATURAL_LANG = { "zh-TW": "zh-tw", en: "en-us", ja: "ja-jp" };
 function naturalVoices() {
-  if (!canSpeak()) return [];
+  if (!canSpeak() || !cloudVoice()) return [];
   const want = NATURAL_LANG[state.lang] || "zh-tw";
   return speechSynthesis.getVoices().filter((v) => !v.localService && /natural/i.test(v.name) && v.lang.toLowerCase() === want);
 }
@@ -2308,7 +2313,7 @@ const RECOG_LANG = { "zh-TW": "zh-TW", en: "en-US", ja: "ja-JP" };
 // 被別人用 iframe 嵌進去、又沒給麥克風的(VS Code 外掛的面板只給剪貼簿):按了也只會出錯,不顯示(10/28 實測)
 function canTalk() {
   return !!(window.SpeechRecognition || window.webkitSpeechRecognition) && window.isSecureContext && "speechSynthesis" in window
-    && document.featurePolicy?.allowsFeature?.("microphone") !== false;
+    && document.featurePolicy?.allowsFeature?.("microphone") !== false && cloudVoice();
 }
 async function consentVoice() {  // 第一次用麥克風:說清楚聲音和文字會送到哪裡,同意才開(存在這台裝置)
   if (store.get("voiceOk2", "") === "1") return true;
@@ -2548,6 +2553,8 @@ if (canSpeak()) speechSynthesis.onvoiceschanged = () => { if (page === "settings
 function renderVoice(box) {  // 設定頁的「朗讀」
   if (!canSpeak()) return;
   section(box, "朗讀");
+  if (!cloudVoice()) box.appendChild(el("p", "lead", "現在是地端模式:聽寫和語音模式要把說話的聲音送到雲端辨識,公司資料不能出去,所以關掉了;"
+    + "朗讀只用這台電腦的聲音。公司核准了雲端語音服務,再請管理者在 models.yaml 把 cloud_voice 改成 true。"));
   box.appendChild(el("p", "lead", "每則回答下面有「朗讀」按鈕。預設用這台裝置內建的聲音(本機),文字不會送到雲端;"
     + "選了標「線上」的聲音,要唸的文字會送到瀏覽器廠商的伺服器。"
     + (canTalk() ? "輸入框的麥克風是聽寫(說的話變成文字,看過再送);輸入框空的時候,右下角的按鈕是語音模式:用說的對話,回答唸完再換你說。"

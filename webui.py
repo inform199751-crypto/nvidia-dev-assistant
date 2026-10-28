@@ -1976,6 +1976,8 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                              "backend": hub.session.registry.backend, "version": version(),
                              # 公司資料保護:畫面上方的提醒;公司資料夾的位置只給這台電腦看
                              "company_ok": guard.COMPANY_OK,
+                             # 聽寫、語音模式、自然語音要用瀏覽器的雲端語音:地端預設 False,網頁就不顯示、朗讀只用本機的聲音
+                             "cloud_voice": hub.session.registry.cloud_voice_ok,
                              # 設定頁的「操作瀏覽器」:開了沒、這裡能不能開(訪客、多人模式、沒有 Edge / Chrome 不行)
                              "browser": {"on": desk.browser_on, "can": desk.can_browse and not team and not guest},
                              "terminal": self._term_ok(),  # 右上角的終端機按鈕:只有這台電腦自己看得到
