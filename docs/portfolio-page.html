@@ -124,6 +124,7 @@ section {
 .cap-item dt { font-weight: 700; font-size: 15px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 .cap-item dt .file { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--muted); }
 .cap-item dd { margin: 0; font-size: 14px; color: var(--muted); line-height: 1.65; }
+.cap-item.wide { grid-column: 1 / -1; }
 
 /* ---------- 表格 ---------- */
 .table-scroll { overflow-x: auto; }
@@ -215,10 +216,10 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
 <div class="wrap">
 
 <header class="cover">
-  <div class="margin">作品集<br>實測 10-06 – 10-27<br>更新 10-27</div>
+  <div class="margin">作品集<br>實測 10-06 – 10-28<br>更新 10-29</div>
   <div>
     <h1>對內研發助理<br>實測紀錄</h1>
-    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/27 邊做邊用真模型測試的過程,實測與審查一共抓到 76 個問題。</p>
+    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/28 邊做邊用真模型測試的過程,實測與審查一共抓到 76 個問題。</p>
     <div class="byline">
       <span><strong>HSUAN</strong></span>
       <span>Python · LangChain · NVIDIA NIM · Docker · Redis · scikit-learn</span>
@@ -279,7 +280,7 @@ flowchart LR
 <section>
   <div class="label">
     <h2>做出來的東西</h2>
-    <div class="note">同一個 agent,五種用法,加上九項能力</div>
+    <div class="note">同一個 agent,五種用法,加上十項能力</div>
   </div>
   <div class="body">
     <dl class="caps">
@@ -297,6 +298,7 @@ flowchart LR
       <div class="cap-item"><dt>MCP 連接器與分工 <span class="file">mcp_client.py</span></dt><dd>接外部 MCP server 的工具,每次使用先問;打開「分工」讓子助理同時查不同模組</dd></div>
       <div class="cap-item"><dt>跨對話記憶與排程 <span class="file">memory.py · scheduler.py</span></dt><dd>說「記住…」就記一句話,存在自己的電腦;每天幾點自動開對話去做,改程式只留草稿</dd></div>
       <div class="cap-item"><dt>深度研究與畫圖 <span class="file">imagegen.py</span></dt><dd>把問題拆成子問題同時上網查,寫附出處的報告;用 FLUX.1-dev 畫圖,直接顯示在對話裡</dd></div>
+      <div class="cap-item wide"><dt>語音模式 <span class="file">webui.html</span></dt><dd>像 ChatGPT 手機版:全螢幕一顆球,用說的問、邊寫邊唸,戴耳機可以直接開口插話;回答改成口語的一到三句。辨識用瀏覽器的語音服務、聲音用微軟的自然語音,這兩個都在雲端,所以切到地端時預設關掉</dd></div>
     </dl>
   </div>
 </section>
@@ -304,7 +306,7 @@ flowchart LR
 <section>
   <div class="label">
     <h2>實測結果</h2>
-    <div class="note">NVIDIA API Catalog 免費層,10/6 – 10/27;地端相容性用這台電腦的 CPU</div>
+    <div class="note">NVIDIA API Catalog 免費層,10/6 – 10/28;地端相容性用這台電腦的 CPU</div>
   </div>
   <div class="body">
     <div class="table-scroll">
@@ -328,6 +330,7 @@ flowchart LR
           <tr><td>跨對話的記憶</td><td>說兩條偏好(一條沒說「記住」),再開新對話問「什麼是 RAG?」</td><td class="num">兩句都自己記下 · 三題約 8,000 tokens<small>新對話照偏好回答:剛好 5 點條列、最後一點是面試講法</small></td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>排程任務</td><td>設「每天 18:43 跑全部測試,有失敗就三點整理原因」,不手動觸發</td><td class="num">準時自己開對話 · 12,394 tokens<small>沙箱跑測試、找出 calc.py:2 寫成減法;途中主模型一步沒回應,DeepSeek 接手、畫面有提醒</small></td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>畫圖</td><td>先探測 catalog,再請它畫雨夜的台北 101</td><td class="num">FLUX.1-dev 約 5 秒 · 2 步 · 4,227 tokens<small>自己把描述寫成英文、選橫幅;Stable Diffusion 3 / 3.5 / SDXL 都 404</small></td><td><span class="pill pass">通過</span></td></tr>
+          <tr><td>語音模式</td><td>對話模式 6 題(含追問、會想用表格或程式碼的題目)、程式模式問 calc.py 的 bug 3 次;麥克風那段用模擬的語音辨識</td><td class="num">對話模式每題 2.4–4.6 秒、沒有表格和條列<small>程式模式 3/3 先讀檔再回答、3.5 秒開口;戴耳機時一開口就停下來換你說</small></td><td><span class="pill warn">麥克風用模擬</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
           <tr><td>端到端評測</td><td>17 題自己寫的修 bug 題,驗收含 HSUAN 看不到的隱藏測試;10/25–26 主模型換成 3.5 Super VL 後,每種設定跑兩次</td><td class="num">依難度選模型 29/34(85%)· 平均約 52k tokens<small>只用 Super 24/34(71%)· 約 72k;同樣設定兩次差 3 題,起伏很大</small></td><td><span class="pill pass">選模型較好</span></td></tr>
           <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">203 個</td><td><span class="pill pass">全過</span></td></tr>
@@ -348,9 +351,9 @@ flowchart LR
     <ul class="tally">
       <li>模型與套件<b>14</b></li>
       <li>token 與路由<b>9</b></li>
-      <li>agent 行為與工具<b>18</b></li>
-      <li>安全與隱私<b>12</b></li>
-      <li>多人、部署與介面<b>10</b></li>
+      <li>agent 行為與工具<b>21</b></li>
+      <li>安全與隱私<b>13</b></li>
+      <li>多人、部署與介面<b>15</b></li>
       <li>自己訓練的模型與知識庫<b>4</b></li>
     </ul>
 
@@ -371,15 +374,6 @@ flowchart LR
         <li><span class="n">59</span><div><span class="what">主模型 Nemotron 3 Super 在 catalog 上回 404(清單上還在),備援默默換成 DeepSeek:看起來正常、其實慢 3–4 倍,一整天沒人發現</span><span class="how"><span class="tag">端到端評測</span></span></div><div class="fix">換成 Nemotron 3.5 Super VL;備援接手時畫面提醒、評測記實際回答的模型</div></li>
         <li><span class="n">60</span><div><span class="what">新的 3.5 Super VL 呼叫工具時把修改清單寫成字串,常常連 JSON 都不合法(18 次有 8 次),每次白花一步,有時乾脆放棄</span><span class="how"><span class="tag">端到端評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">讀開頭那段完整的清單(壞掉的 23 個救回 13 個);改成中文錯誤加範例反而更糟,所以只做安全的讀回</div></li>
         <li><span class="n">62</span><div><span class="what">新的 Super 在免費平台上時好時壞:常回 500、偶爾卡住 180 秒,14% 的步數被換成 DeepSeek</span><span class="how"><span class="tag">對話紀錄</span> <span class="tag">直接呼叫</span></span></div><div class="fix">遇到忙線同一顆先自動重試 2 次再換備援(連續 20 次成功 9 → 14 次);逾時 180 → 90 秒</div></li>
-        <li><span class="n">68</span><div><span class="what">做語音對話(像 ChatGPT 的語音模式)時:表格轉成唸的文字吃掉換行,清單的「-」被唸出來;剛打開就按,聲音清單還沒載入,誤報沒有中文語音</span><span class="how"><span class="tag">網頁實測</span></span></div><div class="fix">聽寫用瀏覽器的辨識(先問、同意才開),唸用電腦內建的聲音;只在同一行轉換、補停頓;聲音清單等 1.5 秒再判斷</div></li>
-        <li><span class="n">69</span><div><span class="what">語音對話照一般問題回答:又長又有表格,還可能交給慢的 DeepSeek,第一次等了 3 分鐘</span><span class="how"><span class="tag">網頁實測</span> <span class="tag">使用者回饋</span></span></div><div class="fix">做成全螢幕語音模式;問題接「口語、一到三句」的提示、關思考、不問分類器,從說完到開口 3.1 秒</div></li>
-        <li><span class="n">70</span><div><span class="what">語音模式只說「要短」,程式模式問 calc.py 的 bug 時一個檔都沒讀,就說找不到 calc.py</span><span class="how"><span class="tag">語音模式實測</span></span></div><div class="fix">提示講明照常用工具查、只有唸出來的回答要短;重跑 3/3 先讀檔再回答</div></li>
-        <li><span class="n">71</span><div><span class="what">VS Code 外掛面板拿不到麥克風卻顯示語音按鈕;英文句子黏在一起唸;沒有日文語音時叫人裝中文語音</span><span class="how"><span class="tag">語音模式實測</span></span></div><div class="fix">不准用麥克風的地方不顯示按鈕;英文句子加空格;說明照回答語言寫</div></li>
-        <li><span class="n">72</span><div><span class="what">HSUAN 在沙箱裡開點餐系統撞到唯讀、連不到網路,卻說是使用者的資料夾或網路有問題,叫人關防毒</span><span class="how"><span class="tag">對話紀錄</span></span></div><div class="fix">沙箱的錯誤後面註明「這是沙箱的限制,不是你電腦的問題」,一直開著的程式請使用者自己在終端機跑</div></li>
-        <li><span class="n">73</span><div><span class="what">終端機面板跑一直開著的 Python 程式,畫面一個字都沒有,看起來像沒反應</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">設 PYTHONUNBUFFERED=1,啟動畫面馬上出現</div></li>
-        <li><span class="n">74</span><div><span class="what">斷句用的全形標點存檔時被換成半形,模型寫的「?!」斷不了句,還多唸一個停頓</span><span class="how"><span class="tag">語音模式實測</span></span></div><div class="fix">全形標點改用跳脫字元寫,怎麼存都不會變</div></li>
-        <li><span class="n">75</span><div><span class="what">微軟的自然語音是線上的,連不上時整則回答沒聲音</span><span class="how"><span class="tag">Edge 實測</span></span></div><div class="fix">出錯就改用本機聲音把剩下的唸完,之後都用本機的</div></li>
-        <li><span class="n">76</span><div><span class="what">切到地端之後,語音模式照樣把聲音和回答送到微軟的雲端,「公司資料不出公司」破功</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">每個後端設定能不能用雲端語音,地端預設關:不顯示語音按鈕、只用本機的聲音</div></li>
       </ol>
     </div>
 
@@ -399,7 +393,7 @@ flowchart LR
     </div>
 
     <div class="group">
-      <h3>agent 行為與工具 <span class="count">18</span></h3>
+      <h3>agent 行為與工具 <span class="count">21</span></h3>
       <ol class="findings">
         <li><span class="n">06</span><div><span class="what">agent 沒辦法驗證自己的修正,最後自己編了測試結果</span><span class="how"><span class="tag">端到端實測</span></span></div><div class="fix">提修正時在複本上套用並真的跑測試,回傳實際結果</div></li>
         <li><span class="n">13</span><div><span class="what">模型回的工具參數不是合法 JSON 時,被當成最終答案、回傳空字串</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">讀套件原始碼</span></span></div><div class="fix">把錯誤回給模型,讓它修正重送</div></li>
@@ -419,11 +413,14 @@ flowchart LR
         <li><span class="n">54</span><div><span class="what">分工工具的參數被包成字串,檢查擋了兩次才成功</span><span class="how"><span class="tag">讀使用者的對話紀錄</span></span></div><div class="fix">工具也收字串</div></li>
         <li><span class="n">55</span><div><span class="what">按停止之後再問同一題,模型照抄對話裡那句「使用者按了停止」</span><span class="how"><span class="tag">網頁實測</span></span></div><div class="fix">停下來的那一輪從對話拿掉,下一題前面告訴模型;重測正常</div></li>
         <li><span class="n">56</span><div><span class="what">讀了 15 步檔案還沒回答,做到上限只剩一句「已達上限」,22.8 萬 tokens 白花</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">最後一步不給工具,先回答查到的、說明還缺什麼</div></li>
+        <li><span class="n">69</span><div><span class="what">語音對話照一般問題回答:又長又有表格,還可能交給慢的 DeepSeek,第一次等了 3 分鐘</span><span class="how"><span class="tag">網頁實測</span> <span class="tag">使用者回饋</span></span></div><div class="fix">做成全螢幕語音模式;問題接「口語、一到三句」的提示、關思考、不問分類器,從說完到開口 3.1 秒</div></li>
+        <li><span class="n">70</span><div><span class="what">語音模式只說「要短」,程式模式問 calc.py 的 bug 時一個檔都沒讀,就說找不到 calc.py</span><span class="how"><span class="tag">語音模式實測</span></span></div><div class="fix">提示講明照常用工具查、只有唸出來的回答要短;重跑 3/3 先讀檔再回答</div></li>
+        <li><span class="n">72</span><div><span class="what">HSUAN 在沙箱裡開點餐系統撞到唯讀、連不到網路,卻說是使用者的資料夾或網路有問題,叫人關防毒</span><span class="how"><span class="tag">對話紀錄</span></span></div><div class="fix">沙箱的錯誤後面註明「這是沙箱的限制,不是你電腦的問題」,一直開著的程式請使用者自己在終端機跑</div></li>
       </ol>
     </div>
 
     <div class="group">
-      <h3>安全與隱私 <span class="count">12</span></h3>
+      <h3>安全與隱私 <span class="count">13</span></h3>
       <ol class="findings">
         <li><span class="n">08</span><div><span class="what">讀檔工具擋不住 .env,金鑰可能被送出去</span><span class="how"><span class="tag">接真實專案前檢查</span></span></div><div class="fix">封鎖 .env、金鑰、憑證與 .git</div></li>
         <li><span class="n">16</span><div><span class="what">搜尋工具會跟著捷徑連結(symlink / junction)讀到工作區外的檔案</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">本機重現</span></span></div><div class="fix">依實際位置檢查,工作區外與機密檔一律略過</div></li>
@@ -437,11 +434,12 @@ flowchart LR
         <li><span class="n">57</span><div><span class="what">終端機照預設會帶著 NVIDIA 金鑰,打 env 就印出來,再一鍵就送給模型</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">拿掉 .env 的變數和像金鑰的;終端機只有這台電腦能用</div></li>
         <li><span class="n">63</span><div><span class="what">地端模式把 NVIDIA 金鑰送給地端伺服器:設定是不用金鑰,套件卻自己讀環境變數,當 Bearer 送出去</span><span class="how"><span class="tag">地端相容性測試</span> <span class="tag">只記錄標頭的假伺服器</span></span></div><div class="fix">沒有金鑰的後端清掉套件自己讀到的金鑰和標頭裡的佔位;重測沒有 Authorization 標頭</div></li>
         <li><span class="n">66</span><div><span class="what">3B 小模型修 bug 時,自己編了兩條「使用者偏好」寫進跨對話記憶;檔案裡藏的指令也能這樣留到之後每段對話</span><span class="how"><span class="tag">地端相容性測試</span></span></div><div class="fix">寫進記憶前先問使用者(排程任務一律不記);像密碼金鑰的直接擋,不用問</div></li>
+        <li><span class="n">76</span><div><span class="what">切到地端之後,語音模式照樣把聲音和回答送到微軟的雲端,「公司資料不出公司」破功</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">每個後端設定能不能用雲端語音,地端預設關:不顯示語音按鈕、只用本機的聲音</div></li>
       </ol>
     </div>
 
     <div class="group">
-      <h3>多人、部署與介面 <span class="count">10</span></h3>
+      <h3>多人、部署與介面 <span class="count">15</span></h3>
       <ol class="findings">
         <li><span class="n">07</span><div><span class="what">.env 裡設定的工作目錄被忽略</span><span class="how"><span class="tag">端到端實測</span></span></div><div class="fix">讀完 .env 之後再設定工具</div></li>
         <li><span class="n">19</span><div><span class="what">沙箱逾時只停掉 docker 指令,容器在背景繼續跑;Windows 上中文輸出變亂碼</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">本機實測</span></span></div><div class="fix">容器加名字、逾時就強制停止;輸出一律用 UTF-8 解碼</div></li>
@@ -453,6 +451,11 @@ flowchart LR
         <li><span class="n">58</span><div><span class="what">終端機的錯誤看不懂:一大段 XML、多出「位於 線路…」、夾著顏色控制碼</span><span class="how"><span class="tag">網頁實測</span></span></div><div class="fix">錯誤併進一般輸出只留訊息、濾掉顏色碼;重測和一般終端機一樣</div></li>
         <li><span class="n">64</span><div><span class="what">地端沒部署看圖模型時,每次附圖白等 38 秒:找不到主機也被當忙線,兩層重試加上備援一共試 18 次</span><span class="how"><span class="tag">地端相容性測試</span> <span class="tag">離線測試數連線次數</span></span></div><div class="fix">連不到不重試、直接換備援,拿掉重複的那層重試:18 次 → 2 次</div></li>
         <li><span class="n">65</span><div><span class="what">冒煙測試把後端寫死成 catalog,換成地端時最需要它卻不能用;模型名稱剛好等於欄寬,報表黏在一起</span><span class="how"><span class="tag">地端相容性測試</span></span></div><div class="fix">加 --backend nim,只有需要金鑰的後端才檢查金鑰;欄寬放大</div></li>
+        <li><span class="n">68</span><div><span class="what">做語音對話(像 ChatGPT 的語音模式)時:表格轉成唸的文字吃掉換行,清單的「-」被唸出來;剛打開就按,聲音清單還沒載入,誤報沒有中文語音</span><span class="how"><span class="tag">網頁實測</span></span></div><div class="fix">聽寫用瀏覽器的辨識(先問、同意才開),唸用電腦內建的聲音;只在同一行轉換、補停頓;聲音清單等 1.5 秒再判斷</div></li>
+        <li><span class="n">71</span><div><span class="what">VS Code 外掛面板拿不到麥克風卻顯示語音按鈕;英文句子黏在一起唸;沒有日文語音時叫人裝中文語音</span><span class="how"><span class="tag">語音模式實測</span></span></div><div class="fix">不准用麥克風的地方不顯示按鈕;英文句子加空格;說明照回答語言寫</div></li>
+        <li><span class="n">73</span><div><span class="what">終端機面板跑一直開著的 Python 程式,畫面一個字都沒有,看起來像沒反應</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">設 PYTHONUNBUFFERED=1,啟動畫面馬上出現</div></li>
+        <li><span class="n">74</span><div><span class="what">斷句用的全形標點存檔時被換成半形,模型寫的「?!」斷不了句,還多唸一個停頓</span><span class="how"><span class="tag">語音模式實測</span></span></div><div class="fix">全形標點改用跳脫字元寫,怎麼存都不會變</div></li>
+        <li><span class="n">75</span><div><span class="what">微軟的自然語音是線上的,連不上時整則回答沒聲音</span><span class="how"><span class="tag">Edge 實測</span></span></div><div class="fix">出錯就改用本機聲音把剩下的唸完,之後都用本機的</div></li>
       </ol>
     </div>
 
@@ -562,6 +565,7 @@ flowchart LR
     <ul class="plain">
       <li><strong>地端 NIM 沒有實際部署。</strong>需要 GPU 伺服器;Ultra 550B 要 8 張 B200 / H200 等級,建議第一階段先用 Super 120B(FP8 約 2 張 H100)。我先用 CPU 上的小模型假裝成地端伺服器,驗證了切換不用改程式,也抓到 5 個問題;NIM 容器、顯存和速度還沒驗證。</li>
       <li>第一階段只部署 Super 時,安全檢查連不到會不擋網頁內容(只提醒模型沒檢查到),地端要上網就要一起部署 Content Safety。</li>
+      <li>語音模式的實測都用模擬的語音辨識(開發用的瀏覽器不給麥克風),真的麥克風和微軟的自然語音還沒親耳驗過;地端要用語音,得先核准一家雲端語音服務,或另外部署地端的語音模型。</li>
       <li>多人部署只在本機 Docker 測過,還沒在公司 SSO 和 GPU 主機上跑;多台伺服器要設 sticky session。</li>
       <li>沒有獨立的工作佇列:整份文件這種 8 分鐘的任務會佔住一個執行名額,同時執行上限要依 GPU 數量調整。</li>
       <li>依難度選模型 10/25 打開,但分類器跟出題時標的難度只有 9/15 一致,真實使用的準確度還要看紀錄。</li>
@@ -572,7 +576,7 @@ flowchart LR
 
 <footer>
   <span><strong>HSUAN</strong></span>
-  <span>2026-10-06 初版 · 2026-10-27 更新</span>
+  <span>2026-10-06 初版 · 2026-10-29 更新</span>
   <span>實測環境:NVIDIA API Catalog 免費層、Windows 10、Docker 29.7</span>
 </footer>
 
