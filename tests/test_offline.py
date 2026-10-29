@@ -4539,14 +4539,18 @@ def test_scheduled_run_opens_a_conversation_and_never_waits_for_confirmation(wor
 
 def test_image_generator_falls_back_and_reports_filtering(monkeypatch):
     """畫圖:第一顆逾時 / 忙線就換下一顆;被內容過濾擋下的不換(換了也一樣),丟 ValueError 讓模型跟使用者說;
-    地端沒有部署畫圖模型就沒有這個功能。"""
+    地端沒有部署畫圖模型就沒有這個功能。10/30 使用者畫雨天的 101 等了 3 分多鐘才失敗(FLUX.1-dev 60–70 秒回 500、
+    schnell 等 240 秒沒回):改成 FLUX.2 klein 先畫(3–4 秒)、FLUX.1-dev 備援,每顆最多等 60 秒;
+    imagegen.SIZES 每種尺寸兩顆都要收得下(klein 512–1568、16 的倍數,FLUX.1-dev 768–1344、64 的倍數)。"""
     import base64
     import httpx
-    calls = []
+    import imagegen
+    calls, waits = [], []
 
     def post(url, json=None, headers=None, timeout=None):
         calls.append(url.rsplit("/", 2)[-1])
-        if "flux.1-dev" in url and len(calls) == 1:
+        waits.append(timeout)
+        if "flux.2-klein" in url and len(calls) == 1:
             raise httpx.ReadTimeout("slow")
         if json["prompt"] == "blocked":
             return httpx.Response(200, json={"artifacts": [{"finishReason": "CONTENT_FILTERED", "base64": ""}]})
@@ -4554,8 +4558,10 @@ def test_image_generator_falls_back_and_reports_filtering(monkeypatch):
 
     monkeypatch.setattr(httpx, "post", post)
     draw = ModelRegistry.from_yaml(backend="catalog").image_generator()
-    assert draw("a red apple", 1024, 1024) == (b"JPEG", "black-forest-labs/flux.1-schnell")
-    assert calls == ["flux.1-dev", "flux.1-schnell"]
+    assert draw("a red apple", 1024, 1024) == (b"JPEG", "black-forest-labs/flux.1-dev")
+    assert calls == ["flux.2-klein-4b", "flux.1-dev"] and sum(waits) <= 120  # 都壞掉時最多等 2 分鐘
+    for w, h in imagegen.SIZES.values():
+        assert all(512 <= v <= 1568 and v % 16 == 0 and 768 <= v <= 1344 and v % 64 == 0 for v in (w, h))
     with pytest.raises(ValueError, match="內容過濾"):
         draw("blocked", 1024, 1024)
     assert ModelRegistry.from_yaml(backend="nim").image_generator() is None
