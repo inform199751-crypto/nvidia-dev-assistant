@@ -219,7 +219,7 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
   <div class="margin">作品集<br>實測 10-06 – 10-29<br>更新 10-29</div>
   <div>
     <h1>對內研發助理<br>實測紀錄</h1>
-    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/29 邊做邊用真模型測試的過程,實測與審查一共抓到 77 個問題。</p>
+    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/29 邊做邊用真模型測試的過程,實測與審查一共抓到 78 個問題。</p>
     <div class="byline">
       <span><strong>HSUAN</strong></span>
       <span>Python · LangChain · NVIDIA NIM · Docker · Redis · scikit-learn</span>
@@ -333,7 +333,7 @@ flowchart LR
           <tr><td>語音模式</td><td>對話模式 6 題(含追問、會想用表格或程式碼的題目)、程式模式問 calc.py 的 bug 3 次;麥克風那段用模擬的語音辨識</td><td class="num">對話模式每題 2.4–4.6 秒、沒有表格和條列<small>程式模式 3/3 先讀檔再回答、3.5 秒開口;戴耳機時一開口就停下來換你說</small></td><td><span class="pill warn">麥克風用模擬</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
           <tr><td>端到端評測</td><td>17 題自己寫的修 bug 題,驗收含 HSUAN 看不到的隱藏測試;10/25–26 主模型換成 3.5 Super VL 後,每種設定跑兩次</td><td class="num">依難度選模型 29/34(85%)· 平均約 52k tokens<small>只用 Super 24/34(71%)· 約 72k;同樣設定兩次差 3 題,起伏很大</small></td><td><span class="pill pass">選模型較好</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">205 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">206 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端相容性</td><td>沒有 GPU:CPU 版 llama.cpp + Llama 3.2 3B 假裝成地端伺服器,只把模型網址指過去</td><td>程式一行都不用改就切得過去;回話、思考開關、tool calling 都通,上下文自動換成地端的 256K<small>抓到 5 個只有切到地端才會出現的問題(第 63–67 個)</small></td><td><span class="pill pass">切換通過</span></td></tr>
           <tr><td>地端 NIM 本身</td><td>需要 GPU 伺服器</td><td>NIM 容器、顯存、速度、大模型的回答品質</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
@@ -344,12 +344,12 @@ flowchart LR
 
 <section>
   <div class="label">
-    <h2>抓到的 77 個問題</h2>
+    <h2>抓到的 78 個問題</h2>
     <div class="note">依類別分組,編號照發現順序,跟 README 一致。每一條都寫了怎麼發現的</div>
   </div>
   <div class="body">
     <ul class="tally">
-      <li>模型與套件<b>14</b></li>
+      <li>模型與套件<b>15</b></li>
       <li>token 與路由<b>9</b></li>
       <li>agent 行為與工具<b>22</b></li>
       <li>安全與隱私<b>13</b></li>
@@ -358,7 +358,7 @@ flowchart LR
     </ul>
 
     <div class="group">
-      <h3>模型與套件 <span class="count">14</span></h3>
+      <h3>模型與套件 <span class="count">15</span></h3>
       <ol class="findings">
         <li><span class="n">01</span><div><span class="what">指定的 deepseek-v3、qwen2.5-coder-32b 已經從 catalog 下架</span><span class="how"><span class="tag">探測 API</span></span></div><div class="fix">改用現役版本,Qwen 標為只能地端</div></li>
         <li><span class="n">02</span><div><span class="what">套件預設輸出上限只有 1024 tokens,寫程式會被截斷</span><span class="how"><span class="tag">讀套件原始碼</span></span></div><div class="fix">每個模型角色明確設定上限</div></li>
@@ -374,6 +374,7 @@ flowchart LR
         <li><span class="n">59</span><div><span class="what">主模型 Nemotron 3 Super 在 catalog 上回 404(清單上還在),備援默默換成 DeepSeek:看起來正常、其實慢 3–4 倍,一整天沒人發現</span><span class="how"><span class="tag">端到端評測</span></span></div><div class="fix">換成 Nemotron 3.5 Super VL;備援接手時畫面提醒、評測記實際回答的模型</div></li>
         <li><span class="n">60</span><div><span class="what">新的 3.5 Super VL 呼叫工具時把修改清單寫成字串,常常連 JSON 都不合法(18 次有 8 次),每次白花一步,有時乾脆放棄</span><span class="how"><span class="tag">端到端評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">讀開頭那段完整的清單(壞掉的 23 個救回 13 個);改成中文錯誤加範例反而更糟,所以只做安全的讀回</div></li>
         <li><span class="n">62</span><div><span class="what">新的 Super 在免費平台上時好時壞:常回 500、偶爾卡住 180 秒,14% 的步數被換成 DeepSeek</span><span class="how"><span class="tag">對話紀錄</span> <span class="tag">直接呼叫</span></span></div><div class="fix">遇到忙線同一顆先自動重試 2 次再換備援(連續 20 次成功 9 → 14 次);逾時 180 → 90 秒</div></li>
+        <li><span class="n">78</span><div><span class="what">修改清單後面連說明一起塞進同一個字串,只讀清單就少了必填的說明,工具一直回錯誤,重送 6 次把 15 步用完</span><span class="how"><span class="tag">難題評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">整段補上開頭剛好是合法 JSON 才把說明拿回來,一樣不猜;全部評測紀錄能用的呼叫從 49 次變 75 次</div></li>
       </ol>
     </div>
 

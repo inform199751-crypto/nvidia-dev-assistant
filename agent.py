@@ -958,13 +958,31 @@ def coerce_args(tool, args: dict) -> dict:
         kinds = _arg_kinds(props, name)
         if not (isinstance(value, str) and kinds & {"array", "object"}):
             continue
+        text = value.strip()
         try:
-            parsed, _ = _LENIENT.raw_decode(value.strip())  # 開頭那段完整的 JSON;後面多黏的東西不管
+            parsed, end = _LENIENT.raw_decode(text)  # 開頭那段完整的 JSON;後面多黏的東西不管
         except ValueError:
             continue
         if (isinstance(parsed, list) and "array" in kinds) or (isinstance(parsed, dict) and "object" in kinds):
             fixed[name] = parsed
+            spilled = _spilled_args(name, text, end)
+            fixed.update({k: v for k, v in spilled.items() if k in props and k not in fixed})
     return fixed
+
+
+def _spilled_args(name: str, text: str, end: int) -> dict:
+    """字串後面接著其他參數(`[...], "reason": "...", "test_target": "tests"}`):前面補上 `{"edits": `
+    整段是合法的 JSON 才拿,一樣不猜。10/29 難題評測:install_order 把 reason、test_target 都塞進 edits 字串,
+    只讀開頭那段就少了 reason,工具一直回「reason 必填」,重送 6 次、15 步用完一個修改都沒送出去。"""
+    if not text[end:].lstrip().startswith(","):
+        return {}
+    for close in ("", "}"):
+        try:
+            whole = _LENIENT.decode("{%s: %s%s" % (json.dumps(name), text, close))
+        except ValueError:
+            continue
+        return whole if isinstance(whole, dict) else {}
+    return {}
 
 
 def task_list(tasks: list | str) -> list[str]:

@@ -4247,6 +4247,29 @@ def test_malformed_list_arguments_parsed_when_safe(workspace, fake_sandbox):
     assert "return a + b" in tools.DRAFT["calc.py"]
 
 
+def test_other_arguments_spilled_into_edits_string_are_recovered(workspace, fake_sandbox):
+    """10/29 難題評測:3.5 Super VL 把 reason、test_target 也塞進 edits 字串(`[...], "reason": "...", "test_target": "tests"}`),
+    只讀開頭那段就少了 reason,工具一直回「reason 必填」,install_order 重送 6 次、15 步用完一個修改都沒送出去。
+    前面補上 `{"edits": ` 整段是合法的 JSON 才拿回來(當時全部評測紀錄裡 edits 是字串的 150 次,通過參數檢查 49 → 75 次);
+    模型另外給的參數照它給的、不是工具參數的鍵不拿,整段讀不了就跟以前一樣只拿 edits。"""
+    from agent import coerce_args
+    edit = {"path": "calc.py", "old_string": "    return a - b", "new_string": "    return a + b"}
+    spilled = json.dumps([edit]) + ', "reason": "add 寫成減法", "test_target": "."}'  # 評測裡看到的樣子(連右大括號)
+    assert coerce_args(tools.propose_patch, {"edits": spilled}) == {"edits": [edit], "reason": "add 寫成減法", "test_target": "."}
+    assert coerce_args(tools.propose_patch, {"edits": spilled[:-1]})["reason"] == "add 寫成減法"  # 沒有右大括號
+    assert coerce_args(tools.propose_patch, {"edits": spilled, "reason": "另外給的"})["reason"] == "另外給的"
+    assert coerce_args(tools.propose_patch, {"edits": json.dumps([edit]) + ', "reason": "r", "path": "x"}'}) == {
+        "edits": [edit], "reason": "r"}  # path 不是 propose_patch 的參數
+    broken = json.dumps([edit]) + ', "reason": "d["x"]"}'  # 後面的引號沒跳脫:不猜,只拿 edits
+    assert coerce_args(tools.propose_patch, {"edits": broken}) == {"edits": [edit]}
+    (workspace / "calc.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    reg, seen = scripted_registry([
+        ai(tool_calls=[{"name": "propose_patch", "id": "c1", "args": {"edits": spilled}}]),
+        ai("改好了"), ai("對照過說明和邊界,沒有問題")])
+    AgentSession(reg, TokenQuota(10**6, 2)).ask("test_add 失敗了")
+    assert "已改在草稿上" in str(seen[1][1][-1].content) and "return a + b" in tools.DRAFT["calc.py"]
+
+
 def test_shipped_difficulty_routing_is_on_and_yaml_booleans_read_as_modes(monkeypatch):
     """10/25 打開依難度選模型(端到端評測 16/17,只用 3.5 Super VL 兩次都 12/17)。改設定時差點踩到:
     YAML 會把沒加引號的 on / off 讀成 True / False,True 不等於 "on",永遠不會換模型 —— 設定檔加引號,
