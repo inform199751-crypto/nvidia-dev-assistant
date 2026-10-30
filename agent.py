@@ -413,9 +413,42 @@ def as_complete_message(msg: AIMessage) -> AIMessage:
              for c in msg.tool_calls]
             + [{"id": c.get("id"), "type": "function", "function": {"name": c.get("name"), "arguments": c.get("args") or ""}}
                for c in msg.invalid_tool_calls])
-    return AIMessage(content=msg.content, additional_kwargs=kwargs, tool_calls=msg.tool_calls,
+    content = strip_dsml(msg.content) if isinstance(msg.content, str) else msg.content
+    return AIMessage(content=content, additional_kwargs=kwargs, tool_calls=msg.tool_calls,
                      invalid_tool_calls=msg.invalid_tool_calls, usage_metadata=msg.usage_metadata,
                      response_metadata=msg.response_metadata, id=msg.id)
+
+
+# DeepSeek 邊產生邊送時,NVIDIA 把它工具呼叫的開頭標記漏進文字(10/15、10/30 實測:'\n\n<｜DSML｜' 接 ' calls>\n',
+# 切成兩段送來);工具呼叫本身照常在 tool_call_chunks。一次拿完整回應時沒有。
+_DSML_TAG = re.compile(r"</?｜DSML｜[^>]*>\n?")
+_DSML_STARTS = ("<｜DSML｜", "</｜DSML｜")
+
+
+def strip_dsml(text: str) -> str:
+    return _DSML_TAG.sub("", text)
+
+
+class DsmlFilter:
+    """串流用:標記會被切開送來,可能是標記開頭的那一截先留著,等下一段來了再決定送出還是丟掉。"""
+
+    def __init__(self) -> None:
+        self.held = ""
+
+    def feed(self, text: str) -> str:
+        text = strip_dsml(self.held + text)
+        cut = text.rfind("<")
+        tail = text[cut:] if cut >= 0 else ""
+        if tail and ">" not in tail and (tail.startswith(_DSML_STARTS) or any(s.startswith(tail) for s in _DSML_STARTS)):
+            self.held = tail
+            return text[:cut]
+        self.held = ""
+        return text
+
+    def flush(self) -> str:
+        """串流結束:留著的如果是沒收尾的標記就丟掉,只是像標記開頭(例如結尾一個 <)就照常送出。"""
+        held, self.held = self.held, ""
+        return "" if held.startswith(_DSML_STARTS) else held
 
 
 EventHandler = Callable[[str, dict], None]
@@ -480,19 +513,21 @@ class AgentSession:
         """有 on_event 就串流(邊想邊顯示),沒有就一次拿完整回應。"""
         if not (self.on_event and self.stream):
             return llm.invoke(self.messages)
-        total, thought = None, []
+        total, thought, dsml = None, [], DsmlFilter()
         for chunk in llm.stream(self.messages):
             if self.cancel.is_set():  # 「停止」:不再收(關掉連線,伺服器也就不再產生)
                 break
             if reasoning := chunk.additional_kwargs.get("reasoning_content"):
                 self._emit("thinking", text=reasoning)
                 thought.append(reasoning)
-            if isinstance(chunk.content, str) and chunk.content:
-                self._emit("text", text=chunk.content)
+            if isinstance(chunk.content, str) and chunk.content and (text := dsml.feed(chunk.content)):
+                self._emit("text", text=text)
             total = chunk if total is None else total + chunk
         if self.cancel.is_set():  # 停在一半:只留已經顯示的文字,沒說完的工具呼叫不算;思考過的內容留著估算用量
             return AIMessage(content=str(total.content) if total is not None else "",
                              additional_kwargs={"reasoning_content": "".join(thought)})
+        if rest := dsml.flush():
+            self._emit("text", text=rest)
         return as_complete_message(total)
 
     def refresh_system_prompt(self) -> None:

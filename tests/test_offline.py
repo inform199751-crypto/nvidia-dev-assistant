@@ -784,6 +784,30 @@ def test_streaming_emits_events_and_keeps_tool_calls_for_the_wire(workspace):
     assert s.messages[2].additional_kwargs["_reasoning_api_fields"] == ["reasoning_content"]
 
 
+def test_streaming_hides_deepseek_tool_call_markup(workspace):
+    """10/15、10/30 實測:DeepSeek 邊產生邊送時,NVIDIA 把工具呼叫的開頭標記漏進文字,還切成兩段送來
+    ('\\n\\n<｜DSML｜'、' calls>\\n')。畫面會印出這串怪字,它也會存進對話、之後每一步再送回伺服器。
+    一次拿完整回應時沒有(10/29 評測 150 則工具呼叫前的文字都乾淨)。真的小於號、不是標記的全形符號照常顯示。"""
+    (workspace / "calc.py").write_text("x = 1\n", encoding="utf-8")
+    usage = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+    step1 = [AIMessageChunk(content="我先看"), AIMessageChunk(content="檔案。\n\n"),
+             AIMessageChunk(content="\n\n<｜DSML｜"),
+             AIMessageChunk(content=" calls>\n", tool_call_chunks=[
+                 {"index": None, "id": "c1", "name": "read_file", "args": '{"path": "calc.py"}'}]),
+             AIMessageChunk(content="", usage_metadata=usage)]
+    answer = "x 是 1;a < b,全形的 <｜不是標記,結尾 <"
+    step2 = [AIMessageChunk(content="x 是 1;a <"), AIMessageChunk(content=" b,全形的 <｜"),
+             AIMessageChunk(content="不是標記,結尾 <"), AIMessageChunk(content="", usage_metadata=usage)]
+    reg, seen = scripted_registry([step1, step2], chat_cls=StreamingChat)
+    events = []
+    s = AgentSession(reg, TokenQuota(10**6, 2), on_event=lambda kind, data: events.append((kind, data)))
+    r = s.ask("x 是多少")
+    shown = "".join(d["text"] for k, d in events if k == "text")
+    assert "DSML" not in shown and "calls>" not in shown and shown.endswith(answer)
+    assert "DSML" not in seen[1][1][2].content  # 第二步送回伺服器的上一則 AI 訊息
+    assert seen[1][1][2].tool_calls[0]["name"] == "read_file" and r.answer == answer
+
+
 def test_console_view_renders_stream():
     """終端機畫面:「思考中…」會被蓋掉,工具一行一個,回答接著印。"""
     import io
