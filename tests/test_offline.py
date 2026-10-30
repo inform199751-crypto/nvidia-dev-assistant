@@ -4646,6 +4646,15 @@ def test_image_generator_falls_back_and_reports_filtering(monkeypatch):
     assert ModelRegistry.from_yaml(backend="nim").image_generator() is None
 
 
+def test_image_tool_asks_for_the_shape_of_landmarks():
+    """10/30 實測:畫圖模型不認得台北 101,klein 只看名字兩張都畫成杜拜塔、FLUX.1-dev 畫成電視塔;
+    把外型(八節往上疊、每節上寬下窄)寫出來才有機會像。英文描述是主模型寫的,工具說明要請它把地標的外型寫出來。"""
+    import imagegen
+    from langchain_core.utils.function_calling import convert_to_openai_tool
+    desc = convert_to_openai_tool(imagegen.generate_image)["function"]["description"]
+    assert "地標" in desc and "外型" in desc
+
+
 def test_generate_image_tool_saves_and_web_shows_it(workspace, tmp_path_factory, monkeypatch):
     """generate_image 存成「圖片-描述.jpg」(同名加編號),對話裡用 /api/file?view=1 直接顯示(只有圖片能這樣看,
     網頁還是下載);成品頁列得出來;沒有畫圖模型就說沒有;訪客不能畫。"""

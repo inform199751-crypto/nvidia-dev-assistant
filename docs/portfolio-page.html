@@ -329,11 +329,11 @@ flowchart LR
           <tr><td>深度研究</td><td>「企業導入 AI 程式助理有哪些資安風險?要怎麼降低?」,真的上網</td><td class="num">5 個子助理同時查 · 7.9 萬 tokens · 12 分鐘<small>只問一次要不要上網;報告分 5 節、附來源表;最慢的子助理 9 分鐘,免費平台讀網頁慢</small></td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>跨對話的記憶</td><td>說兩條偏好(一條沒說「記住」),再開新對話問「什麼是 RAG?」</td><td class="num">兩句都自己記下 · 三題約 8,000 tokens<small>新對話照偏好回答:剛好 5 點條列、最後一點是面試講法</small></td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>排程任務</td><td>設「每天 18:43 跑全部測試,有失敗就三點整理原因」,不手動觸發</td><td class="num">準時自己開對話 · 12,394 tokens<small>沙箱跑測試、找出 calc.py:2 寫成減法;途中主模型一步沒回應,DeepSeek 接手、畫面有提醒</small></td><td><span class="pill pass">通過</span></td></tr>
-          <tr><td>畫圖</td><td>先探測 catalog,再請它畫雨夜的台北 101</td><td class="num">FLUX.1-dev 約 5 秒 · 2 步 · 4,227 tokens<small>自己把描述寫成英文、選橫幅;Stable Diffusion 3 / 3.5 / SDXL 都 404。10/30 FLUX.1-dev 壞掉(等 3 分多鐘才失敗),改用 FLUX.2 klein:從問到畫好 10.6 秒</small></td><td><span class="pill pass">通過</span></td></tr>
+          <tr><td>畫圖</td><td>先探測 catalog,再請它畫雨夜的台北 101</td><td class="num">FLUX.1-dev 約 5 秒 · 2 步 · 4,227 tokens<small>自己把描述寫成英文、選橫幅;Stable Diffusion 3 / 3.5 / SDXL 都 404。10/30 FLUX.1-dev 壞掉(等 3 分多鐘才失敗),改用 FLUX.2 klein:從問到畫好 10.6 秒。畫圖模型都不認得 101,要把外型寫進描述才有機會像(HSUAN 畫 3 次像 1 次)</small></td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>語音模式</td><td>對話模式 6 題(含追問、會想用表格或程式碼的題目)、程式模式問 calc.py 的 bug 3 次;麥克風那段用模擬的語音辨識</td><td class="num">對話模式每題 2.4–4.6 秒、沒有表格和條列<small>程式模式 3/3 先讀檔再回答、3.5 秒開口;戴耳機時一開口就停下來換你說</small></td><td><span class="pill warn">麥克風用模擬</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
           <tr><td>端到端評測</td><td>17 題自己寫的修 bug 題,驗收含 HSUAN 看不到的隱藏測試;10/25–26 主模型換成 3.5 Super VL 後,每種設定跑兩次;10/30 加了補測試提醒和參數修正,兩種設定各再跑兩次</td><td class="num">依難度選模型 32/34(94%)· 平均約 53k tokens<small>同一版程式只用 Super 29/34(85%)· 約 66k;差別都在難題(17/18 vs 13/18)。改之前是 29/34 vs 24/34</small></td><td><span class="pill pass">選模型較好</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">209 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">210 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端相容性</td><td>沒有 GPU:CPU 版 llama.cpp + Llama 3.2 3B 假裝成地端伺服器,只把模型網址指過去</td><td>程式一行都不用改就切得過去;回話、思考開關、tool calling 都通,上下文自動換成地端的 256K<small>抓到 5 個只有切到地端才會出現的問題(第 63–67 個)</small></td><td><span class="pill pass">切換通過</span></td></tr>
           <tr><td>地端 NIM 本身</td><td>需要 GPU 伺服器</td><td>NIM 容器、顯存、速度、大模型的回答品質</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>

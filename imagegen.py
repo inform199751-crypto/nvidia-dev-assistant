@@ -33,6 +33,7 @@ def _save(data: bytes, prompt: str) -> Path:
 @tool
 def generate_image(prompt: str, size: Literal["square", "landscape", "portrait"] = "square") -> str:
     """畫一張圖。prompt 用英文寫,描述主體、風格、構圖、顏色、光線;size 是 square / landscape(橫)/ portrait(直)。
+    有名的建築、地標,畫圖模型常常只看名字畫不出來:名字之外,把外型寫清楚(輪廓、分幾段、每段的形狀、材質和顏色)。
     畫好存成檔案,使用者在對話裡直接看得到。不要畫真實人物的肖像、商標或不當內容。"""
     if GENERATE is None:
         return "錯誤:這裡沒有畫圖的模型(models.yaml 的 image)"
