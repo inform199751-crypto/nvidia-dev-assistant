@@ -1,6 +1,6 @@
 """依難度選模型的報表:分類器判斷的分布、多花了多少、各模型實際表現,以及給人工抽查的題目。
 
-用法:python report_routing.py [--days 7] [--examples 10] [--log 路徑]
+用法:python report_routing.py [--days 7] [--examples 10] [--log 路徑] [--backend catalog|nim|all]
 紀錄由 agent 每輪寫一行(difficulty.record)。影子模式時 pick 是「本來會選的」、used 是實際用的,
 所以「判斷為難題、實際還是用一般模型」那組如果明顯比較吃力(步數多、tokens 多、碰到步數上限),
 就是分類器分得出難易的證據;再抽查題目確認,才把 mode 改成 on。
@@ -135,11 +135,18 @@ def main() -> None:
     ap.add_argument("--days", type=int, default=7, help="只看最近幾天;0 = 全部")
     ap.add_argument("--examples", type=int, default=10, help="列出幾題判斷為難題的題目給人工抽查")
     ap.add_argument("--log", type=Path, default=default_log)
+    ap.add_argument("--backend", help="只算哪個後端的紀錄;預設看環境變數 / .env 的 LLM_BACKEND(都沒有就 catalog),"
+                                      "all = 全部。地端測試(例如 CPU 上的小模型)跟正式使用混在一起,數字會失真")
     args = ap.parse_args()
 
     cfg = yaml.safe_load((HERE / "models.yaml").read_text(encoding="utf-8"))["routing"].get("difficulty") or {}
-    entries = load(args.log, args.days or None)
-    print(f"{args.log} · {'最近 %d 天' % args.days if args.days else '全部'} · {len(entries)} 輪")
+    everything = load(args.log, args.days or None)
+    backend = None if args.backend == "all" else args.backend or difficulty.current_backend()
+    entries = [e for e in everything if backend is None or difficulty.backend_of(e) == backend]
+    others = Counter(difficulty.backend_of(e) for e in everything if backend and difficulty.backend_of(e) != backend)
+    skipped = "、".join(f"{b} {n} 輪" for b, n in others.items())
+    print(f"{args.log} · {backend or '全部後端'} · {'最近 %d 天' % args.days if args.days else '全部'} · {len(entries)} 輪"
+          + (f"(另外 {skipped}不算,--backend all 才算)" if skipped else ""))
     print("\n".join(report(entries, cfg.get("hard_role", "code_deep"), args.examples)))
 
 

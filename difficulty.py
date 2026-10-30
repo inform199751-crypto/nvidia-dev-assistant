@@ -227,3 +227,13 @@ def record(d: Decision, *, task: str, turn: str, used: str | None, steps: int, t
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except OSError as e:
         log.warning("路由紀錄寫不進 %s:%s", path, e)
+
+
+def current_backend() -> str:
+    """現在用的後端(跟 ModelRegistry 一樣看 LLM_BACKEND)。報表和訓練預設只算它的紀錄。"""
+    return os.getenv("LLM_BACKEND") or "catalog"
+
+
+def backend_of(entry: dict) -> str:
+    """這行紀錄是哪個後端答的;10/27 以前沒記,那時只用過 catalog。"""
+    return entry.get("backend") or "catalog"

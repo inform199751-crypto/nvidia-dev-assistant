@@ -333,7 +333,7 @@ flowchart LR
           <tr><td>語音模式</td><td>對話模式 6 題(含追問、會想用表格或程式碼的題目)、程式模式問 calc.py 的 bug 3 次;麥克風那段用模擬的語音辨識</td><td class="num">對話模式每題 2.4–4.6 秒、沒有表格和條列<small>程式模式 3/3 先讀檔再回答、3.5 秒開口;戴耳機時一開口就停下來換你說</small></td><td><span class="pill warn">麥克風用模擬</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
           <tr><td>端到端評測</td><td>17 題自己寫的修 bug 題,驗收含 HSUAN 看不到的隱藏測試;10/25–26 主模型換成 3.5 Super VL 後,每種設定跑兩次;10/30 加了補測試提醒和參數修正,兩種設定各再跑兩次</td><td class="num">依難度選模型 32/34(94%)· 平均約 53k tokens<small>同一版程式只用 Super 29/34(85%)· 約 66k;差別都在難題(17/18 vs 13/18)。改之前是 29/34 vs 24/34</small></td><td><span class="pill pass">選模型較好</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">206 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">208 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端相容性</td><td>沒有 GPU:CPU 版 llama.cpp + Llama 3.2 3B 假裝成地端伺服器,只把模型網址指過去</td><td>程式一行都不用改就切得過去;回話、思考開關、tool calling 都通,上下文自動換成地端的 256K<small>抓到 5 個只有切到地端才會出現的問題(第 63–67 個)</small></td><td><span class="pill pass">切換通過</span></td></tr>
           <tr><td>地端 NIM 本身</td><td>需要 GPU 伺服器</td><td>NIM 容器、顯存、速度、大模型的回答品質</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
@@ -390,7 +390,7 @@ flowchart LR
         <li><span class="n">26</span><div><span class="what">難度分類器把最常見的「單一測試失敗」判成難題,真的開啟會把一般請求丟給慢約 10 倍的 DeepSeek</span><span class="how"><span class="tag">分類器實測</span></span></div><div class="fix">改判斷標準:跨多個檔案又沒有頭緒才算難題;同 14 題重跑全部符合</div></li>
         <li><span class="n">29</span><div><span class="what">影子模式也同步等分類器,每題多等約 1 秒,答案卻不會變</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">影子模式改在背景判斷,不擋這一輪的回答</div></li>
         <li><span class="n">61</span><div><span class="what">打開依難度選模型時,沒加引號的 on 被設定檔讀成 True,程式以為沒打開、永遠不會換模型</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">設定加引號;讀設定時把 True / False 當成 on / off</div></li>
-        <li><span class="n">67</span><div><span class="what">路由紀錄沒記是哪個後端答的:地端測試(CPU 上的 3B)那一輪跟正式紀錄混在一起,報表和訓練會當成真實資料</span><span class="how"><span class="tag">地端相容性測試</span></span></div><div class="fix">每一行記下 catalog / nim;測試那一行已從紀錄刪掉</div></li>
+        <li><span class="n">67</span><div><span class="what">路由紀錄沒記是哪個後端答的:地端測試(CPU 上的 3B)那一輪跟正式紀錄混在一起,報表和訓練會當成真實資料</span><span class="how"><span class="tag">地端相容性測試</span></span></div><div class="fix">每一行記下 catalog / nim,測試那一行已從紀錄刪掉;報表和訓練預設只算現在用的後端</div></li>
       </ol>
     </div>
 

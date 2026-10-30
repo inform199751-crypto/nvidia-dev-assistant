@@ -15,7 +15,7 @@ docker build -t dev-assistant-sandbox sandbox            # run_tests / propose_p
 .venv/Scripts/python -m pytest -q tests/test_offline.py::test_propose_patch_can_add_new_file   # 單一測試
 .venv/Scripts/python smoke_test.py                       # 真模型冒煙測試(預設 LLM_BACKEND / catalog;--backend nim 測地端、不需金鑰),結果附加到 smoke_results.log
 .venv/Scripts/python smoke_test.py --roles long_context --checks think_off tool   # 只重跑失敗的項目
-.venv/Scripts/python report_routing.py --days 7          # 依難度選模型的報表(讀 output/routing_log.jsonl;10/27 起每行有 backend)
+.venv/Scripts/python report_routing.py --days 7          # 依難度選模型的報表(讀 output/routing_log.jsonl;10/27 起每行有 backend,報表和 train_models 預設只算 LLM_BACKEND 那個,difficulty.backend_of 把沒記的當 catalog)
 .venv/Scripts/python run_evals.py --configs super deepseek  # 端到端評測(會呼叫模型、要 Docker):17 題修 bug → output/evals/<時間>/report.md
 .venv/Scripts/python run_evals.py --out output/evals/<那次>  # 接著跑沒跑完 / 出錯的;--report <那次> 只重產報表
 .venv/Scripts/python train_models.py --label             # 小模型:請 Super 標註 ml/seed_questions.txt(會呼叫模型)

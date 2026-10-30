@@ -80,9 +80,10 @@ def label_seeds(out_dir: Path, pause: float = 1.6) -> Path:
     return path
 
 
-def load_rows(out_dir: Path, log_path: Path, hard_role: str) -> tuple[list[dict], list[dict]]:
+def load_rows(out_dir: Path, log_path: Path, hard_role: str, backend: str | None = None) -> tuple[list[dict], list[dict]]:
     """回傳 (分類資料, 回歸資料)。分類:範例標註 + 紀錄裡 LLM 分類器判斷過的輪(決策樹自己判斷的不算,不然是自己學自己);
-    回歸:紀錄裡正常結束、有 tokens 和時間的輪。"""
+    回歸:紀錄裡正常結束、有 tokens 和時間的輪。backend:只用這個後端的紀錄(地端測試的小模型判斷和秒數不能混進來)。"""
+    import difficulty
     from ml import features
 
     classify, regress = [], []
@@ -98,7 +99,7 @@ def load_rows(out_dir: Path, log_path: Path, hard_role: str) -> tuple[list[dict]
                 e = json.loads(line)
             except ValueError:
                 continue
-            if not e.get("features"):
+            if not e.get("features") or backend and difficulty.backend_of(e) != backend:
                 continue
             if e.get("by") == "classifier" and e.get("engine", "llm") == "llm" and e.get("pick"):
                 classify.append({"features": e["features"], "label": "hard" if e["pick"] == hard_role else "normal",
@@ -458,7 +459,10 @@ def main() -> None:
         label_seeds(out)
     hard_role = (yaml.safe_load((HERE / "models.yaml").read_text(encoding="utf-8"))["routing"].get("difficulty")
                  or {}).get("hard_role", "code_deep")
-    rows, reg_rows = load_rows(out, toolbox.OUTPUT_DIR / "routing_log.jsonl", hard_role)
+    import difficulty
+    backend = difficulty.current_backend()
+    rows, reg_rows = load_rows(out, toolbox.OUTPUT_DIR / "routing_log.jsonl", hard_role, backend)
+    print(f"紀錄只用 {backend} 後端的(LLM_BACKEND)")
     setup_font()
     n_hard = sum(r["label"] == "hard" for r in rows)
     clf = None

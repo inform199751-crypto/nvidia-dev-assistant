@@ -1199,6 +1199,61 @@ def test_routing_report(tmp_path):
     assert "做到上限後換模型 1 輪" in text and "  1 輪 · 平均 4.0 步 · 8,000 tokens · 60.0 秒 · 碰到步數上限 0" in text
 
 
+def _log_with_both_backends(path: Path) -> None:
+    """一行沒記後端的舊紀錄(10/27 以前只用過 catalog)、一行 catalog、三行地端(像 CPU 上 3B 的相容性測試)。"""
+    from ml import features as F
+    now = datetime.now(TAIPEI).isoformat(timespec="seconds")
+    base = {"ts": now, "mode": "on", "turn": "normal", "by": "classifier", "engine": "llm", "reason": "", "error": None,
+            "classify_ms": 800, "classify_tokens": 300, "used": "code", "outcome": "done", "steps": 2, "ms": 4000,
+            "features": F.extract("解釋 add")}
+    rows = [{**base, "pick": "code", "tokens": 5000, "task": "沒記後端的舊紀錄"},
+            {**base, "backend": "catalog", "pick": "code", "tokens": 5000, "task": "catalog 的正式紀錄"}]
+    rows += [{**base, "backend": "nim", "pick": "code_deep", "used": "code_deep", "tokens": 70000, "task": "3B 地端測試"}] * 3
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
+
+
+def test_routing_report_counts_only_the_current_backend(tmp_path, monkeypatch, capsys):
+    """10/27 地端相容性測試用 CPU 上的 3B 假裝成地端,那幾輪跟 catalog 的正式紀錄混在一起,報表會當成真實使用。
+    報表預設只算現在用的後端(LLM_BACKEND),另一個後端的輪數只提一句;--backend all 才全部算。"""
+    import dotenv
+    import report_routing
+    path = tmp_path / "routing_log.jsonl"
+    _log_with_both_backends(path)
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)  # 不讀真的 .env
+
+    def run(*args: str) -> str:
+        monkeypatch.setattr(sys, "argv", ["report_routing.py", "--log", str(path), *args])
+        report_routing.main()
+        return capsys.readouterr().out
+
+    monkeypatch.setenv("LLM_BACKEND", "catalog")
+    out = run()
+    assert " 2 輪" in out.splitlines()[0] and "nim 3 輪不算" in out and "3B 地端測試" not in out
+    monkeypatch.setenv("LLM_BACKEND", "nim")
+    out = run()
+    assert " 3 輪" in out.splitlines()[0] and "catalog 2 輪不算" in out and "3B 地端測試" in out
+    out = run("--backend", "all")
+    assert " 5 輪" in out.splitlines()[0] and "不算" not in out
+
+
+def test_training_learns_only_from_the_current_backend(tmp_path, monkeypatch, capsys):
+    """同一件事在訓練:地端測試那幾輪是 3B 小模型的判斷和秒數,拿去訓練決策樹和線性回歸會學到錯的東西。"""
+    pytest.importorskip("matplotlib")
+    import dotenv
+    import train_models
+    _log_with_both_backends(tmp_path / "routing_log.jsonl")
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
+    monkeypatch.setattr(train_models, "setup_font", lambda: None)  # 會改全域字型,後面的測試畫圖會缺字;這裡不畫圖
+    monkeypatch.setattr(tools, "OUTPUT_DIR", tools.OUTPUT_DIR)  # main 會改它,測完還原
+    monkeypatch.setenv("AGENT_OUTPUT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["train_models.py"])
+    for backend, n in (("catalog", 2), ("nim", 3)):
+        monkeypatch.setenv("LLM_BACKEND", backend)
+        train_models.main()
+        out = capsys.readouterr().out
+        assert f"分類資料不夠:{n} 筆" in out and f"回歸資料不夠:{n} 輪" in out
+
+
 def test_shipped_difficulty_config():
     """出貨設定:分類器與難題模型都存在、難題模型能當 agent 主腦;分類器用短輸出建立。"""
     reg = ModelRegistry.from_yaml(backend="nim")
