@@ -6,6 +6,8 @@
 - 搜尋:問題和每段的向量算餘弦相似度(models.yaml 的 embedding)。算不了(沒網路、服務忙線)就退回關鍵字(BM25,中文兩字一組)。
   10/9 實測 12 題換句話說的中文問題:關鍵字第 1 名命中 7/12,Nemotron 3 Embed 10/12(前 3 名 12/12);
   兩種排名混在一起反而變差(7–8/12),專有名詞和數字向量也找得到(6 題 5 對,錯的那題兩段都有提到),所以平常只用向量。
+- 重新排序(11/1,models.yaml 的 rerank):向量先找前 RERANK_POOL 段,再交給 Nemotron 3.5 Rerank 照「這段答不答得到問題」重排。
+  13 題換句話說的問題:只用向量第 1 名 10/13,加重新排序 13/13,每題多約 0.6 秒;失敗就照向量的順序。
 - 問題改寫成好搜尋的句子:交給主模型 —— search_knowledge 的 query 由它依前後文寫成完整的句子,不另外多呼叫一次模型。
 - 執行時只用標準函式庫:向量正規化後存成 float32 二進位(array),相似度用純 Python 算(幾千段以內夠快)。
 """
@@ -39,6 +41,8 @@ MAX_FILES = 2000
 CHUNK_TOKENS = 400  # 一段多長:太長找不準(一段講好幾件事),太短缺上下文
 EMBED_BATCH = 16    # 一次送幾段去算向量
 TOP_K = 5
+RERANK_POOL = 8  # 重新排序前先用向量找幾段
+RERANK: Callable[[str, list[str]], list[int]] | None = None  # agent.prepare 設定(registry.reranker());None = 只用向量
 
 HEADING = re.compile(r"^(#{1,6})\s+(.+)")
 PAGE = re.compile(r"^--- 第 (\d+) 頁 ---$")  # documents._pdf 的分頁標記
@@ -328,14 +332,22 @@ class KnowledgeBase:
 
 
 def search_all(kbs: list[KnowledgeBase], query: str, k: int = TOP_K) -> tuple[list[dict], str]:
-    """在好幾個知識庫一起找,依分數合併。"""
+    """在好幾個知識庫一起找,依分數合併;有重新排序的模型就把前 RERANK_POOL 段交給它重排(失敗照原本的順序)。"""
+    pool = max(k, RERANK_POOL) if RERANK else k
     hits, hows = [], set()
     for kb in kbs:
-        found, how = kb.search(query, k)
+        found, how = kb.search(query, pool)
         hits += found
         if how:
             hows.add(how)
-    hits.sort(key=lambda h: -h["score"])
+    hits = sorted(hits, key=lambda h: -h["score"])[:pool]
+    if RERANK and len(hits) > 1:
+        try:
+            order = [i for i in dict.fromkeys(RERANK(query, [f"{label(h)}\n{h['text']}" for h in hits])) if 0 <= i < len(hits)]
+            hits = [hits[i] for i in order] + [h for i, h in enumerate(hits) if i not in order]
+            hows.add("重新排序")
+        except Exception:  # 忙線、逾時:照向量的順序,不要整個失敗
+            pass
     return hits[:k], "、".join(sorted(hows))
 
 

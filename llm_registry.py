@@ -108,6 +108,7 @@ class ModelRegistry:
         self.embedding: dict | None = config.get("embedding")  # 知識庫用的 embedding 模型(knowledge.py)
         self.safety: dict | None = config.get("safety")  # 安全把關的模型(guard.py)
         self.image: dict | None = config.get("image")  # 畫圖的模型(imagegen.py)
+        self.rerank: dict | None = config.get("rerank")  # 知識庫重新排序的模型(knowledge.py)
         self.company_data_ok = bool(self._backend_cfg.get("company_data"))  # 這個後端能不能放公司資料(models.yaml)
         # 網頁的聽寫、語音模式能不能用瀏覽器的雲端語音(10/28):會放公司資料的後端預設不行,聲音和回答會送到微軟 / Google
         self.cloud_voice_ok = bool(self._backend_cfg.get("cloud_voice", not self.company_data_ok))
@@ -247,6 +248,27 @@ class ModelRegistry:
             raise RuntimeError("畫圖的模型都沒有成功:" + ";".join(errors))
 
         return draw
+
+    def reranker(self) -> Callable[[str, list[str]], list[int]] | None:
+        """知識庫用:rerank(問題, 段落們) → 段落的新順序(最相關的在前);models.yaml 沒有 rerank、這個環境沒有就回 None。
+        失敗丟例外,由 knowledge.search_all 照向量的順序。"""
+        cfg = self.rerank
+        if not cfg or self.backend not in cfg.get("available_on", ["catalog"]):
+            return None
+        key_env = self._backend_cfg.get("api_key_env")
+
+        def rerank(query: str, passages: list[str]) -> list[int]:
+            import httpx
+
+            api_key = os.getenv(key_env) if key_env else None
+            headers = {"Accept": "application/json", **({"Authorization": f"Bearer {api_key}"} if api_key else {})}
+            body = {"model": cfg["model"], "query": {"text": query}, "passages": [{"text": p} for p in passages]}
+            r = httpx.post(cfg["url"], json=body, headers=headers, timeout=cfg.get("timeout_s", 15))
+            if r.status_code != 200:
+                raise RuntimeError(f"[{r.status_code}] {r.text[:200]}")
+            return [x["index"] for x in sorted(r.json()["rankings"], key=lambda x: -x["logit"])]
+
+        return rerank
 
     def safety_checker(self) -> Callable[[str], tuple[str, str]] | None:
         """安全把關用(guard.py):check(文字) → ("safe" | "unsafe", 類別);models.yaml 沒有 safety 就回 None。

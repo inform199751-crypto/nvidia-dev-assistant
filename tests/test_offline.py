@@ -2807,6 +2807,47 @@ def test_knowledge_update_is_incremental(tmp_path_factory):
     assert len(kb3.chunks) == 2 and hits[0]["file"] == "報帳.md" and how.startswith("關鍵字(")
 
 
+def test_knowledge_reranks_and_falls_back(tmp_path_factory, monkeypatch):
+    """11/1:demo_knowledge 13 題換句話說的問題,只用向量第 1 名 10/13,加 Nemotron 3.5 Rerank 重排 13/13(每題多 0.6 秒)。
+    向量先找前 RERANK_POOL 段(就算只要 1 段)、整批交給重新排序;它忙線或逾時就照向量的順序;地端沒設定就不用。"""
+    import httpx
+    import knowledge
+    folder = tmp_path_factory.mktemp("docs")
+    for i, text in enumerate(["請假三天以上要經理核准", "加班費平日 1.34 倍", "計程車要附收據", "密碼每 90 天換一次"]):
+        (folder / f"{i}.md").write_text(f"# 第 {i} 份\n{text}", encoding="utf-8")
+    kb = knowledge.KnowledgeBase(folder, tmp_path_factory.mktemp("kb"), fake_embedder())
+    kb.update()
+    plain, _ = knowledge.search_all([kb], "加班有沒有多給錢", 4)
+    seen = []
+
+    def reverse(query, passages):
+        seen.append((query, passages))
+        return list(reversed(range(len(passages))))
+
+    monkeypatch.setattr(knowledge, "RERANK", reverse)
+    hits, how = knowledge.search_all([kb], "加班有沒有多給錢", 1)
+    assert len(plain) >= 3 and len(seen[0][1]) == len(plain)  # 只要 1 段也整批送(沒分數的段落本來就不算)
+    assert seen[0][1][0].startswith(knowledge.label(plain[0]))  # 帶著出處送
+    assert hits == [plain[-1]] and how == "照意思、重新排序"
+
+    def busy(query, passages):
+        raise RuntimeError("[503] busy")
+
+    monkeypatch.setattr(knowledge, "RERANK", busy)
+    assert knowledge.search_all([kb], "加班有沒有多給錢", 2) == (plain[:2], "照意思")
+    sent = []
+
+    def post(url, json=None, headers=None, timeout=None):
+        sent.append((url, json))
+        return httpx.Response(200, json={"rankings": [{"index": 1, "logit": 2.0}, {"index": 0, "logit": -1.0}]})
+
+    monkeypatch.setattr(httpx, "post", post)
+    rerank = ModelRegistry.from_yaml(backend="catalog").reranker()
+    assert rerank("q", ["a", "b"]) == [1, 0]
+    assert sent[0][0].endswith("/nemotron-3.5-rerank-8b/reranking") and sent[0][1]["passages"] == [{"text": "a"}, {"text": "b"}]
+    assert ModelRegistry.from_yaml(backend="nim").reranker() is None
+
+
 def test_knowledge_page_and_search_tool(workspace, tmp_path_factory):
     """網頁「知識庫」:加資料夾 → 背景建索引 → 對話多一個 search_knowledge(對話模式也有),系統提示列出知識庫;
     模型查到的段落附出處;試搜尋;拿掉之後工具也拿掉、索引刪掉、文件不動。沒有知識庫時不送這個工具(每一步省 token)。

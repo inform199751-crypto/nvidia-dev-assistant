@@ -216,7 +216,7 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
 <div class="wrap">
 
 <header class="cover">
-  <div class="margin">作品集<br>實測 10-06 – 10-31<br>更新 10-31</div>
+  <div class="margin">作品集<br>實測 10-06 – 11-01<br>更新 11-01</div>
   <div>
     <h1>對內研發助理<br>實測紀錄</h1>
     <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/30 邊做邊用真模型測試的過程,實測與審查一共抓到 80 個問題。</p>
@@ -290,7 +290,7 @@ flowchart LR
       <div class="cap-item"><dt>手機</dt><dd>掃 QR code、輸入 PIN 配對;訪客 PIN 有自己的空間和每日額度</dd></div>
       <div class="cap-item"><dt>VS Code 外掛</dt><dd>編輯器旁邊開小助理,右鍵「問選取的程式碼」;打包不需要 Node</dd></div>
       <div class="cap-item"><dt>多人部署 <span class="file">deploy/</span></dt><dd>Docker Compose:小助理 + Redis 共用額度 + oauth2-proxy 登入,同時執行上限其他人排隊</dd></div>
-      <div class="cap-item"><dt>知識庫</dt><dd>公司文件依標題切段、算向量(Nemotron 3 Embed),照意思找並附出處</dd></div>
+      <div class="cap-item"><dt>知識庫</dt><dd>公司文件依標題切段、算向量(Nemotron 3 Embed),照意思找、再用 Nemotron 3.5 Rerank 重新排序,附出處</dd></div>
       <div class="cap-item"><dt>看圖與掃描 PDF</dt><dd>Nemotron Nano Omni 先把圖片和掃描頁轉成文字,再交給主模型回答</dd></div>
       <div class="cap-item"><dt>上網與安全把關</dt><dd>預設關閉、每次先問;網頁內容先過 Content Safety 模型,擋藏在頁面裡的提示注入</dd></div>
       <div class="cap-item"><dt>自己訓練的難度模型 <span class="file">ml/</span></dt><dd>ID3 決策樹判斷難易、線性回歸預估 tokens 和秒數;執行時讀 JSON,純 Python</dd></div>
@@ -306,7 +306,7 @@ flowchart LR
 <section>
   <div class="label">
     <h2>實測結果</h2>
-    <div class="note">NVIDIA API Catalog 免費層,10/6 – 10/31;地端相容性用這台電腦的 CPU</div>
+    <div class="note">NVIDIA API Catalog 免費層,10/6 – 11/1;地端相容性用這台電腦的 CPU</div>
   </div>
   <div class="body">
     <div class="table-scroll">
@@ -318,7 +318,7 @@ flowchart LR
           <tr><td>長文本</td><td>客服專案 57 檔寫技術文件</td><td class="num">1 步 · 191,076 tokens · 482 秒</td><td><span class="pill pass">引用 14/14</span></td></tr>
           <tr><td>難度分類器</td><td>14 題示範問題,一般與難題各 7</td><td>Super 關思考每次 0.6–1.1 秒、約 300 tokens<small>題目是自己出的;正式打開前改用下面的端到端評測比較</small></td><td><span class="pill pass">14/14</span></td></tr>
           <tr><td>看圖</td><td>錯誤截圖、長條圖、1 MB 的 JPEG</td><td>Nano Omni 每張 1.4–9 秒;檔名、行號、數字全對</td><td><span class="pill pass">全對</span></td></tr>
-          <tr><td>知識庫</td><td>12 題換句話說的問題</td><td class="num">照意思找:第 1 名 10/12、前 3 名 12/12<small>只用關鍵字 7/12</small></td><td><span class="pill pass">前 3 名 12/12</span></td></tr>
+          <tr><td>知識庫</td><td>12 題換句話說的問題</td><td class="num">照意思找:第 1 名 10/12、前 3 名 12/12<small>只用關鍵字 7/12。11/1 另出 13 題:加上 3.5 Rerank 重新排序,第 1 名 10/13 → 13/13,每題多 0.6 秒</small></td><td><span class="pill pass">前 3 名 12/12</span></td></tr>
           <tr><td>安全把關</td><td>正常網頁、註解裡藏指令的網頁、隱晦的提示注入、不當請求</td><td>Content Safety 每次 0.6–1 秒;另外三顆安全模型大多逾時</td><td><span class="pill pass">5/5</span></td></tr>
           <tr><td>掃描的 PDF</td><td>兩頁:會議紀錄 + 預算表格</td><td>逐字讀出、表格保留成表格,兩頁約 19–26 秒</td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>多 agent 分工</td><td>同一題「三個模組各做什麼」,分工 vs 不分工</td><td class="num">4.5–15.5 萬 → 4.5–5.4 萬 tokens<small>主對話 1.9–3 萬 → 1.2–1.3 萬;但 66–88 秒 → 108–155 秒,要等最慢的子助理</small></td><td><span class="pill warn">省 token、比較慢</span></td></tr>
@@ -333,7 +333,7 @@ flowchart LR
           <tr><td>語音模式</td><td>對話模式 6 題(含追問、會想用表格或程式碼的題目)、程式模式問 calc.py 的 bug 3 次;麥克風那段用模擬的語音辨識</td><td class="num">對話模式每題 2.4–4.6 秒、沒有表格和條列<small>程式模式 3/3 先讀檔再回答、3.5 秒開口;戴耳機時一開口就停下來換你說</small></td><td><span class="pill warn">麥克風用模擬</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
           <tr><td>端到端評測</td><td>17 題自己寫的修 bug 題,驗收含 HSUAN 看不到的隱藏測試;10/25–26 主模型換成 3.5 Super VL 後,每種設定跑兩次;10/30 加了補測試提醒和參數修正,兩種設定各再跑兩次</td><td class="num">依難度選模型 32/34(94%)· 平均約 53k tokens<small>同一版程式只用 Super 29/34(85%)· 約 66k;差別都在難題(17/18 vs 13/18)。改之前是 29/34 vs 24/34</small></td><td><span class="pill pass">選模型較好</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">213 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">214 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端相容性</td><td>沒有 GPU:CPU 版 llama.cpp + Llama 3.2 3B 假裝成地端伺服器,只把模型網址指過去</td><td>程式一行都不用改就切得過去;回話、思考開關、tool calling 都通,上下文自動換成地端的 256K<small>抓到 5 個只有切到地端才會出現的問題(第 63–67 個)</small></td><td><span class="pill pass">切換通過</span></td></tr>
           <tr><td>地端 NIM 本身</td><td>需要 GPU 伺服器</td><td>NIM 容器、顯存、速度、大模型的回答品質</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
@@ -585,7 +585,7 @@ flowchart LR
 
 <footer>
   <span><strong>HSUAN</strong></span>
-  <span>2026-10-06 初版 · 2026-10-31 更新</span>
+  <span>2026-10-06 初版 · 2026-11-01 更新</span>
   <span>實測環境:NVIDIA API Catalog 免費層、Windows 10、Docker 29.7</span>
 </footer>
 

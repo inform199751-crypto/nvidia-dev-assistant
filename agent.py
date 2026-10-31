@@ -1280,6 +1280,7 @@ def prepare() -> tuple[ModelRegistry, TokenQuota, list, bool]:
     guard.CHECK = registry.safety_checker()  # 網頁內容、訪客的問題先過安全模型(models.yaml 的 safety)
     guard.configure_company(registry.company_data_ok)  # 公司資料保護:試用平台擋公司資料夾(.env 的 COMPANY_PATHS)
     documents.OCR = page_reader(registry)    # 掃描的 PDF 頁交給看圖模型讀
+    knowledge.RERANK = registry.reranker()   # 知識庫找到的段落再重新排序(models.yaml 的 rerank)
     imagegen.GENERATE = registry.image_generator()  # 畫圖(models.yaml 的 image):有才綁 generate_image、edit_image
     if imagegen.GENERATE:
         tools = tools + [imagegen.generate_image, imagegen.edit_image]

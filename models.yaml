@@ -56,6 +56,16 @@ embedding:
   nim_base_url: http://nim-nemotron-embed:8000/v1
   timeout_s: 60
 
+# 知識庫的重新排序(knowledge.search_all):向量先找前 RERANK_POOL 段,再請它照「這段答不答得到問題」重排。
+# 2026-11-01 實測 demo_knowledge 13 題換句話說的問題:只用向量第 1 名 10/13(搭小黃報帳、感冒請假、加班費排錯),
+#   加重新排序 13/13,每題多約 0.6 秒。新版 3.5 Embed 1B 一樣 10/13,embedding 不換(換了索引要全部重算);3.5 Embed 8B 回 500
+# 失敗(忙線、逾時)照向量的順序。地端要另外部署 rerank NIM 才有,沒寫 nim 就不用
+rerank:
+  model: nvidia/nemotron-3.5-rerank-8b
+  url: https://ai.api.nvidia.com/v1/retrieval/nvidia/nemotron-3.5-rerank-8b/reranking
+  available_on: [catalog]
+  timeout_s: 15
+
 # 安全把關(guard.py):上網讀到的內容、訪客的問題,先讓它檢查(藏在網頁裡要 AI 照做的指令、不當內容)。
 # 2026-10-10 實測 5 題(正常網頁 / 惡意網頁 / 隱晦的提示注入 / 不當請求 / 正常請求):
 #   Nemotron 3.5 Content Safety 全對,每次約 0.7 秒;NemoGuard 8B content safety、Llama Guard 4 全部逾時(60 秒);
