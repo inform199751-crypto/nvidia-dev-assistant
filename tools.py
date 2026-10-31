@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+from collections import Counter
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -331,10 +332,116 @@ def _apply_edit(text: str, old: str, new: str) -> str:
         old, new = (s.replace("\r\n", "\n").replace("\n", "\r\n") for s in (old, new))
     n = text.count(old)
     if n == 0:
-        raise ValueError("找不到 old_string。請用 read_file 重讀,逐字複製(不要帶「    12| 」行號前綴,縮排要一致)")
+        raise ValueError("找不到 old_string。" + (_near_miss(text, old) or
+                         "請用 read_file 重讀,逐字複製(不要帶「    12| 」行號前綴,縮排要一致)"))
     if n > 1:
         raise ValueError(f"old_string 出現 {n} 次,請多帶幾行上下文讓它唯一")
     return text.replace(old, new, 1)
+
+
+NEAR_MISS_LINES = 5000  # 找不到 old_string 時最多比對檔案的幾行
+
+
+def _near_miss(text: str, old: str) -> str:
+    """old_string 找不到時,指出檔案裡最像的那一行、差在哪幾個字;沒有夠像的回空字串。
+    10/30 評測:csv_quotes 把檔案裡的 `]]}` 一直看成 `)}`,讀了 3 次、用 Python 印出原始內容也沒發現,
+    連續 4 次「找不到 old_string」、15 步用完。"""
+    text, old = text.replace("\r\n", "\n"), old.replace("\r\n", "\n")
+    wants, lines = old.split("\n"), text.split("\n")
+    last = len(wants) - 1
+
+    def found(i: int, w: str) -> bool:  # 第一行可以從行中間開始、最後一行可以停在行中間,中間的要整行一樣
+        if i == 0:
+            return w in text if i == last else any(line.endswith(w) for line in lines)
+        return any(line.startswith(w) for line in lines) if i == last else w in lines
+
+    k = next((i for i, w in enumerate(wants) if w.strip() and not found(i, w)), None)
+    if k is None:
+        return ("它的每一行檔案裡都有,但不是這樣連在一起(中間漏了或多了幾行,或空白行的空格不一樣)。"
+                "請用 read_file 重讀那一段,逐字複製")
+    want = wants[k]
+    if len(want) > 500:
+        return ""
+    head, tail, have = k == 0, k == last, Counter(want)
+
+    def like(line: str, floor: float) -> tuple[float, str]:  # 多像、比對的是這一行的哪一段
+        common = sum((have & Counter(line)).values())
+        if 2 * common / (len(want) + common) <= floor:  # 最好也不會比 floor 像
+            return 0.0, ""
+        blocks = [b for b in difflib.SequenceMatcher(None, want, line, autojunk=False).get_matching_blocks() if b.size]
+        if not blocks:
+            return 0.0, ""
+        first, end = blocks[0], blocks[-1].b + blocks[-1].size  # 行中間開始 / 結束時,兩端對不上的字照長度對齊
+        part = line[max(0, first.b - first.a) if head else 0:
+                    min(len(line), end + len(want) - blocks[-1].a - blocks[-1].size) if tail else len(line)]
+        return difflib.SequenceMatcher(None, want, part, autojunk=False).ratio(), part
+
+    # 前面(或後面)幾行對得上,就先看它應該在的那一行:不然常會指到別處只差一個字的行
+    best, no, seg = 0.5, 0, ""
+    for i in _expected_lines(text, wants, k):
+        score, part = like(lines[i], best)
+        if score > best:
+            best, no, seg = score, i + 1, part
+    how = f"照前後幾行,它的第 {k + 1} 行應該是檔案第 {no} 行" if no else ""
+    if not no:
+        best = 0.6                            # 至少要這麼像才說
+        for i, line in enumerate(lines[:NEAR_MISS_LINES], 1):
+            score, part = like(line, best)
+            if score > best:
+                best, no, seg = score, i, part
+        how = f"它的第 {k + 1} 行跟檔案第 {no} 行最像"
+    if not no:
+        return ""
+    ops = [o for o in difflib.SequenceMatcher(None, want, seg, autojunk=False).get_opcodes() if o[0] != "equal"]
+    diffs = []
+    for tag, i1, i2, j1, j2 in ops:
+        ctx = want[:i1][-12:].lstrip()
+        where = "開頭" if not want[:i1].strip() else f" `{ctx}` 後面" if ctx and "`" not in ctx else f"第 {i1 + 1} 個字"
+        a, b = want[i1:i2], seg[j1:j2]
+        diffs.append(f"{where}:你寫 {_shown(a)},檔案是 {_shown(b)}" if tag == "replace" else
+                     f"{where}:你多了 {_shown(a)}" if tag == "delete" else f"{where}:你少了 {_shown(b)}")
+    gist = "差在" + ";".join(diffs) if len(diffs) <= 3 else "但差了好幾處"
+    clip = lambda s: s if len(s) <= 200 else s[:200] + "…"
+    spell = ""
+    if len(diffs) <= 3:  # 差的是符號時逐字唸出來:模型看 `]]}` 會看成 `]}`,並排兩行它只覺得一模一樣
+        (_, i1, _, j1, _), (_, _, i2, _, j2) = ops[0], ops[-1]
+        mine, theirs = want[max(0, i1 - 2):i2 + 2], seg[max(0, j1 - 2):j2 + 2]
+        if len(theirs) <= 16 and any(c in _CHAR_NAMES for c in want[i1:i2] + seg[j1:j2]):
+            spell = f"  逐字唸(連前後兩個字):檔案裡是 {_spelled(theirs)};你寫的是 {_spelled(mine)}\n"
+    return (f"{how},{gist}。\n{spell}"
+            f"  你寫的:{clip(want)}\n  檔案裡:{clip(lines[no - 1])}\n"
+            "請照檔案裡的寫法改 old_string(不要帶「    12| 」行號前綴)")
+
+
+def _expected_lines(text: str, wants: list[str], k: int) -> list[int]:
+    """old_string 第 k 行以外的部分在檔案裡對得上的話,第 k 行應該在檔案的哪幾行(從 0 算)。"""
+    spots: set[int] = set()
+    for chunk, after in (("\n".join(wants[:k]) + "\n", True), ("\n" + "\n".join(wants[k + 1:]), False)):
+        if chunk == "\n":  # 第 k 行前面 / 後面沒有別的行
+            continue
+        pos = text.find(chunk)
+        while pos != -1 and len(spots) < 20:
+            spots.add(text.count("\n", 0, pos + len(chunk)) if after else text.count("\n", 0, pos))
+            pos = text.find(chunk, pos + 1)
+    return sorted(i for i in spots if i <= text.count("\n"))
+
+
+_CHAR_NAMES = {"(": "左圓括號", ")": "右圓括號", "[": "左方括號", "]": "右方括號", "{": "左大括號", "}": "右大括號",
+               "<": "小於", ">": "大於", '"': "雙引號", "'": "單引號", "`": "反引號", ",": "逗號", ".": "句點",
+               ":": "冒號", ";": "分號", "=": "等號", "-": "減號", "+": "加號", "*": "星號", "/": "斜線",
+               "\\": "反斜線", "_": "底線", "#": "井號", "|": "直線", " ": "空格", "\t": "tab"}
+
+
+def _spelled(s: str) -> str:
+    return "、".join(_CHAR_NAMES.get(c, c) for c in s)
+
+
+def _shown(s: str) -> str:
+    """差異的那幾個字:空白說幾個空格 / tab,其他用反引號包起來。"""
+    if s.strip():
+        return f"`{s}`" if "`" not in s else repr(s)
+    parts = [f"{s.count(' ')} 個空格"] * (" " in s) + [f"{s.count(chr(9))} 個 tab"] * ("\t" in s)
+    return "、".join(parts) or repr(s)
 
 
 def _unified_diff(rel: str, before: str | None, after: str) -> str:

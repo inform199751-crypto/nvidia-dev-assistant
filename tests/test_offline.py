@@ -336,6 +336,31 @@ def test_propose_patch_rejects_bad_edits_without_running_tests(workspace, fake_s
     assert fake_sandbox == [] and not list(workspace.glob(".agent_patches/*.patch"))
 
 
+def test_old_string_not_found_points_at_the_difference(workspace, fake_sandbox):
+    """10/30 評測 csv_quotes:模型把 `]]` 打成 `]}`,之後連續 4 次把草稿裡的 `]]}` 看成 `)}`(讀了 3 次、
+    用 Python 印出原始內容也沒發現),每次只拿到「找不到 old_string」,15 步用完。改成指出最像的那一行、差在哪幾個字。
+    10/31 全部評測紀錄 27 次「找不到」各重播到下一次送出修改:對得上 12 → 17、還是找不到 11 → 5、tokens −31%。"""
+    (workspace / "rows.py").write_text("def load(rows):\n    return [dict(r) for r in rows[1:]]\n", encoding="utf-8")
+    assert "已改在草稿上" in patch(("rows.py", "rows[1:]]", "rows[1:]]}"))  # 草稿裡多了一個 }
+    out = patch(("rows.py", "    return [dict(r) for r in rows[1:])}", "    return [dict(r) for r in rows[1:]]"))
+    assert "第 1 行跟檔案第 2 行最像,差在 `in rows[1:]` 後面:你寫 `)`,檔案是 `]`" in out
+    assert "檔案裡:    return [dict(r) for r in rows[1:]]}" in out  # 比對的是草稿
+    # 並排兩行模型還是看成一樣(重播 3/3 一直重送),差的是符號就逐字唸出來
+    assert "逐字唸(連前後兩個字):檔案裡是 冒號、右方括號、右方括號、右大括號;你寫的是 冒號、右方括號、右圓括號、右大括號" in out
+    assert "你寫 `)`,檔案是 `]`" in patch(("rows.py", "rows[1:])}", "rows[1:]]"))  # 只寫行尾一段也找得到
+    (workspace / "calc.py").write_text("def f():\n    return 1\n\ndef g():\n\treturn 2\n", encoding="utf-8")
+    assert "差在開頭:你多了 `    1| `" in patch(("calc.py", "    1| def f():", "def h():"))
+    assert "第 2 行應該是檔案第 2 行,差在開頭:你少了 2 個空格" in patch(("calc.py", "def f():\n  return 1", "x"))
+    # 照前一行找:檔案第 2 行 `    return 1` 只差一個字,但 def g() 底下的是第 5 行
+    assert "第 2 行應該是檔案第 5 行,差在開頭:你寫 4 個空格,檔案是 1 個 tab" in patch(("calc.py", "def g():\n    return 2", "x"))
+    assert "第 1 行應該是檔案第 4 行" in patch(("calc.py", "def g()\n\treturn 2", "x"))  # 照後一行找
+    out = patch(("calc.py", "def f():\n    retrn 1", "x"))
+    assert "差在 `ret` 後面:你少了 `u`" in out and "逐字唸" not in out  # 差的是字母就不用唸
+    assert "不是這樣連在一起" in patch(("calc.py", "def f():\n\ndef g():", "x"))  # 漏了中間那行
+    assert "請用 read_file 重讀" in patch(("calc.py", "class Banana:", "x"))      # 沒有像的就不亂指
+    assert fake_sandbox and (workspace / "calc.py").read_text(encoding="utf-8").startswith("def f():\n    return 1")
+
+
 def test_propose_patch_can_add_new_file(workspace, fake_sandbox):
     """補回歸測試要能新增檔案:不存在的路徑 + old_string 留空;原工作區不能多出檔案。"""
     (workspace / "calc.py").write_bytes(b"def add(a, b):\n    return a - b\n")
@@ -4653,6 +4678,15 @@ def test_image_tool_asks_for_the_shape_of_landmarks():
     from langchain_core.utils.function_calling import convert_to_openai_tool
     desc = convert_to_openai_tool(imagegen.generate_image)["function"]["description"]
     assert "地標" in desc and "外型" in desc
+
+
+def test_prompt_lets_the_model_retry_a_tool_that_failed_in_an_earlier_turn():
+    """10/31 使用者回報「無法畫圖」:同一段對話 10/29 畫圖失敗過(FLUX.1-dev 壞掉),兩天後畫圖早就好了,
+    再問一模一樣的話,Super 沒呼叫工具就回「圖片生成暫時失敗」。它的思考寫著「根據規則…不要重複呼叫相同失敗的工具」:
+    系統提示那條是要它別在同一輪重送一樣的錯誤呼叫。用那段對話重問:舊寫法 20 次有 3 次照抄失敗(還說「我再試一次也畫不出來」),
+    寫明只限同一輪、之前的失敗可能已經好了之後 20/20 重畫。對話模式沒有這條規則,兩種寫法都 15/15。"""
+    assert "within a turn, do not repeat the same failing call" in SYSTEM_PROMPT
+    assert "when the user asks again, call the tool again" in SYSTEM_PROMPT
 
 
 def test_generate_image_tool_saves_and_web_shows_it(workspace, tmp_path_factory, monkeypatch):
