@@ -472,7 +472,7 @@ flowchart LR
         <li><span class="n">31</span><div><span class="what">手寫 ID3 決策樹的準確率 0.66,比全部猜「一般」的 0.68 還差</span><span class="how"><span class="tag">決策樹實驗</span></span></div><div class="fix">補上兩個特徵、用交叉驗證挑深度;深度 5 準確率 0.89</div></li>
         <li><span class="n">36</span><div><span class="what">以為向量加關鍵字的混合排名會更好,實測第 1 名命中從 10/12 掉到 7–8/12</span><span class="how"><span class="tag">知識庫實驗</span></span></div><div class="fix">平常只用向量,算不了向量才退回關鍵字</div></li>
         <li><span class="n">39</span><div><span class="what">掃描的 PDF 沒有文字層讀不到;Nemotron Parse 在 catalog 的 API 格式又不相容</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">沒有文字的頁交給看圖模型讀,一頁約 4 秒,讀過的快取</div></li>
-        <li><span class="n">83</span><div><span class="what">自己訓練的模型放到真實使用上沒有用:決策樹對真實問題每題都猜「一般」,4 題難題全漏;預估 tokens 和秒數的回歸還輸給猜平均</span><span class="how"><span class="tag">真實使用紀錄</span></span></div><div class="fix">選模型繼續問 Super,這些模型只寫進紀錄;之後的紀錄當沒看過的測試資料再評</div></li>
+        <li><span class="n">83</span><div><span class="what">自己訓練的模型放到真實使用上沒有用:決策樹對真實問題每題都猜「一般」,4 題難題全漏;預估 tokens 和秒數的回歸還輸給猜平均</span><span class="how"><span class="tag">真實使用紀錄</span></span></div><div class="fix">選模型繼續問 Super;回歸一存下來畫面就顯示錯十幾倍的預估,改成比猜平均準才存;之後的紀錄當沒看過的測試資料再評</div></li>
       </ol>
     </div>
   </div>
@@ -559,7 +559,7 @@ flowchart LR
         <div class="val">0.89 · F1 0.81</div>
       </div>
     </div>
-    <p>照課程教材手寫 ID3 決策樹,第一版連「全部猜一般」都贏不了。照分類器自己的判斷標準補上「間歇發生」「沒有頭緒或上次修正沒用」兩個特徵,再加深度限制,準確率到 0.89。另外用線性回歸預估每一輪的 tokens 和秒數,也跟 scikit-learn 的決策樹、邏輯回歸、隨機森林、神經網路比較過。執行時只讀訓練好的 JSON,用純 Python 算,不載入 scikit-learn。範例題是 Super 標的,真實準確度要看實際使用的紀錄 —— 10/31 真實使用累積到 32 輪再評:決策樹對真實問題每題都猜「一般」,Super 判成難題的 4 題一題都沒抓到;第一次訓練得起來的回歸,預估 tokens 和秒數都比直接猜平均差。範例題是自己寫的修 bug 問題,真實的有問天氣、畫圖、語音打招呼,差很多。所以選模型還是問 Super,這些模型只寫進紀錄,等資料多了再評。</p>
+    <p>照課程教材手寫 ID3 決策樹,第一版連「全部猜一般」都贏不了。照分類器自己的判斷標準補上「間歇發生」「沒有頭緒或上次修正沒用」兩個特徵,再加深度限制,準確率到 0.89。另外用線性回歸預估每一輪的 tokens 和秒數,也跟 scikit-learn 的決策樹、邏輯回歸、隨機森林、神經網路比較過。執行時只讀訓練好的 JSON,用純 Python 算,不載入 scikit-learn。範例題是 Super 標的,真實準確度要看實際使用的紀錄 —— 10/31 真實使用累積到 32 輪再評:決策樹對真實問題每題都猜「一般」,Super 判成難題的 4 題一題都沒抓到;第一次訓練得起來的回歸,預估 tokens 和秒數都比直接猜平均差。範例題是自己寫的修 bug 問題,真實的有問天氣、畫圖、語音打招呼,差很多。所以選模型還是問 Super。回歸模型一存下來,HSUAN 每一輪就在畫面上顯示「約 18.8 萬 tokens」(實際 1.5 萬),所以訓練程式改成比猜平均準才存;決策樹只寫進紀錄,等資料多了再評。</p>
   </div>
 </section>
 

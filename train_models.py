@@ -384,8 +384,15 @@ def regression_experiment(rows: list[dict], out: Path, folds: int = 5) -> dict:
         fig.tight_layout()
         fig.savefig(out / f"regression_{target}.png", dpi=120)
         plt.close(fig)
-    (out / "cost_linear.json").write_text(json.dumps(saved, ensure_ascii=False, indent=1), encoding="utf-8")
-    return {"n": len(rows), **report}
+    # 比「猜平均」準才存給小助理用(它每一輪開始會把預估顯示在畫面上)。10/31 第一次用真實紀錄訓練:
+    # tokens、秒數的誤差都比猜平均大,畫面卻顯示「預估這一輪約 18.8 萬 tokens」(實際 1.5 萬)。舊的也拿掉
+    useful = all(report[t]["table"][0]["mae"] < report[t]["table"][-1]["mae"] for t in ("tokens", "seconds"))
+    path = out / "cost_linear.json"
+    if useful:
+        path.write_text(json.dumps(saved, ensure_ascii=False, indent=1), encoding="utf-8")
+    else:
+        path.unlink(missing_ok=True)
+    return {"n": len(rows), "saved": useful, **report}
 
 
 # ---------- 報告 ----------
@@ -430,6 +437,8 @@ def write_report(out: Path, clf: dict | None, reg: dict | None, n_reg: int) -> P
             lines += [f"| {m['model']} | {m['mae']:,.1f} | {m['rmse']:,.1f} | {m['r2_log']:.2f} |" for m in r["table"]]
             lines += ["", f"![{target}](regression_{target}.png)", "", "手寫線性回歸的係數(標準化後,絕對值大的影響大):", ""]
             lines += [f"- {name}:{v:+.3f}" for name, v in r["coef"][:8]]
+        lines += ["", "存成 cost_linear.json:小助理每一輪開始會顯示預估。" if reg["saved"] else
+                  "**手寫線性回歸沒有比「猜平均」準,不存模型**:小助理不會顯示預估(cost_linear.json 拿掉了)。"]
     else:
         lines += ["## 實驗二:資料還不夠", "", f"目前 {n_reg} 輪真實紀錄,要至少 {MIN_REGRESS} 輪。"
                   "小助理每回答一題會自動記一輪(models.yaml 的 routing.difficulty.mode 要是 shadow 或 on)。"]
@@ -478,7 +487,10 @@ def main() -> None:
     if reg:
         for target in ("tokens", "seconds"):
             best = reg[target]["table"][0]
-            print(f"回歸 {target}:手寫線性回歸 MAE {best['mae']:,.1f} {reg[target]['unit']}")
+            print(f"回歸 {target}:手寫線性回歸 MAE {best['mae']:,.1f} {reg[target]['unit']}"
+                  f"(猜平均 {reg[target]['table'][-1]['mae']:,.1f})")
+        if not reg["saved"]:
+            print("回歸沒有比猜平均準,不存模型(小助理不會顯示預估)")
     else:
         print(f"回歸資料不夠:{len(reg_rows)} 輪,要 {MIN_REGRESS} 輪(正常使用小助理就會累積)")
     print(f"報告:{write_report(out, clf, reg, len(reg_rows))}")

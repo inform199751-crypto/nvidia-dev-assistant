@@ -2277,6 +2277,13 @@ def test_train_models_end_to_end(tmp_path, monkeypatch):
     tokens, seconds = runtime.estimate(F.extract("解釋 calc.py"))
     assert 1000 < tokens < 20000 and seconds > 0
     assert "資料還不夠" in train_models.write_report(out, None, None, 3).read_text(encoding="utf-8")
+    # 10/31 第一次用真實紀錄訓練,預估比猜平均還差,小助理卻每一輪顯示「約 18.8 萬 tokens」(實際 1.5 萬):
+    # 用量跟問題無關的資料 → 不存模型、舊的也拿掉,就不會再顯示預估
+    noise = [{"features": r["features"], "tokens": rnd.randint(1000, 200000), "seconds": rnd.uniform(3, 300)}
+             for r in reg_rows]
+    reg = train_models.regression_experiment(noise, out)
+    assert not reg["saved"] and not (out / "cost_linear.json").exists() and runtime.estimate(F.extract("解釋 calc.py")) is None
+    assert "不存模型" in train_models.write_report(out, clf, reg, len(noise)).read_text(encoding="utf-8")
 
 
 def test_webui_model_picker_per_conversation(workspace, tmp_path_factory):
