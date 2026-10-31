@@ -4656,11 +4656,12 @@ def test_image_generator_falls_back_and_reports_filtering(monkeypatch):
     import base64
     import httpx
     import imagegen
-    calls, waits = [], []
+    calls, waits, seeds = [], [], []
 
     def post(url, json=None, headers=None, timeout=None):
         calls.append(url.rsplit("/", 2)[-1])
         waits.append(timeout)
+        seeds.append(json["seed"])
         if "flux.2-klein" in url and len(calls) == 1:
             raise httpx.ReadTimeout("slow")
         if json["prompt"] == "blocked":
@@ -4671,6 +4672,9 @@ def test_image_generator_falls_back_and_reports_filtering(monkeypatch):
     draw = ModelRegistry.from_yaml(backend="catalog").image_generator()
     assert draw("a red apple", 1024, 1024) == (b"JPEG", "black-forest-labs/flux.1-dev")
     assert calls == ["flux.2-klein-4b", "flux.1-dev"] and sum(waits) <= 120  # 都壞掉時最多等 2 分鐘
+    calls.clear()  # 改圖:先試原本那顆、種子照給(換下一顆也一樣)
+    assert draw("a red apple", 1024, 1024, seed=7, prefer="black-forest-labs/flux.1-dev")[1] == "black-forest-labs/flux.1-dev"
+    assert calls == ["flux.1-dev"] and seeds[-1] == 7
     for w, h in imagegen.SIZES.values():
         assert all(512 <= v <= 1568 and v % 16 == 0 and 768 <= v <= 1344 and v % 64 == 0 for v in (w, h))
     with pytest.raises(ValueError, match="內容過濾"):
@@ -4707,7 +4711,8 @@ def test_generate_image_tool_saves_and_web_shows_it(workspace, tmp_path_factory,
     monkeypatch.setattr(imagegen, "GENERATE", None)
     assert imagegen.generate_image.invoke({"prompt": "cat"}).startswith("錯誤:這裡沒有畫圖的模型")
     sizes = []
-    monkeypatch.setattr(imagegen, "GENERATE", lambda prompt, w, h: sizes.append((w, h)) or (b"\xff\xd8JPEG", "black-forest-labs/flux.1-dev"))
+    monkeypatch.setattr(imagegen, "GENERATE", lambda prompt, w, h, seed=None, prefer=None:
+                        sizes.append((w, h)) or (b"\xff\xd8JPEG", "black-forest-labs/flux.1-dev"))
     out = imagegen.generate_image.invoke({"prompt": "a red apple on a white table", "size": "landscape"})
     again = imagegen.generate_image.invoke({"prompt": "a red apple on a white table"})
     assert out.startswith("已畫好 圖片-a-red-apple-on-a-white-table.jpg") and "flux.1-dev" in out
@@ -4729,6 +4734,51 @@ def test_generate_image_tool_saves_and_web_shows_it(workspace, tmp_path_factory,
         server.server_close()
     assert "generate_image" in webui.GUEST_BLOCKED_TOOLS
     assert tools.save_document.invoke({"filename": "x.jpg", "content": "x"}).startswith("錯誤")  # 存文件不能存成圖片
+
+
+def test_edit_image_redraws_with_the_same_seed(workspace, tmp_path_factory, monkeypatch):
+    """10/31 使用者想在畫好的圖上加東西。catalog 上的 Kontext 和 klein 改圖只收網頁的範例圖(自己的圖回 422),
+    所以畫圖時記下描述、尺寸、種子、模型,改圖用同一顆模型、同一個種子、改過的描述重畫(實測沒改的地方幾乎不動)。
+    紀錄存在 .images.json:「成品」不列、也下載不到;只能改 HSUAN 畫過的圖;改過的圖可以再改;訪客不能改。"""
+    import httpx
+    import imagegen
+    import webui
+    from agent import CHAT_TOOLS
+    docs = tmp_path_factory.mktemp("docs")
+    monkeypatch.setattr(tools, "OUTPUT_DIR", docs)
+    calls = []
+
+    def draw(prompt, w, h, seed=None, prefer=None):
+        calls.append({"prompt": prompt, "size": (w, h), "seed": seed, "prefer": prefer})
+        return b"\xff\xd8" + prompt.encode(), "black-forest-labs/flux.2-klein-4b"
+
+    monkeypatch.setattr(imagegen, "GENERATE", draw)
+    first = imagegen.generate_image.invoke({"prompt": "a rainbow over flowers", "size": "landscape"})
+    name = first.splitlines()[0].removeprefix("已畫好 ")
+    out = imagegen.edit_image.invoke({"image": name, "prompt": "a rainbow over flowers, a pink unicorn"})
+    edited = out.splitlines()[0].removeprefix("已畫好 ")
+    assert out.startswith("已畫好 ") and edited != name and f"照 {name} 的種子重畫" in out
+    assert calls[1] == {"prompt": "a rainbow over flowers, a pink unicorn", "size": (1344, 768), "seed": calls[0]["seed"],
+                        "prefer": "black-forest-labs/flux.2-klein-4b"}
+    assert (docs / edited).read_bytes() == b"\xff\xd8a rainbow over flowers, a pink unicorn"
+    imagegen.edit_image.invoke({"image": edited, "prompt": "a rainbow, a cute pink unicorn"})  # 改過的再改
+    assert calls[2]["seed"] == calls[0]["seed"] and calls[2]["size"] == (1344, 768)
+    assert imagegen.edit_image.invoke({"image": "照片.jpg", "prompt": "x"}).startswith("錯誤:找不到 照片.jpg 的畫圖紀錄")
+    assert len(calls) == 3  # 不是 HSUAN 畫的就不畫
+    monkeypatch.setattr(imagegen, "GENERATE", lambda *a, **k: (b"x", "black-forest-labs/flux.1-dev"))
+    assert "換了一顆,構圖會跟" in imagegen.edit_image.invoke({"image": name, "prompt": "a rainbow"})
+    reg, _ = scripted_registry([])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws), workspace, store=tmp_path_factory.mktemp("state"))
+    server, base = _serve(desk)
+    try:
+        names = [d["name"] for d in httpx.get(base + "/api/outputs", headers={"X-Token": "t0k"}).json()["docs"]]
+        assert name in names and edited in names and imagegen.INDEX not in names
+        assert httpx.get(base + "/api/file", params={"token": "t0k", "name": imagegen.INDEX}).status_code == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert "edit_image" in webui.GUEST_BLOCKED_TOOLS and "edit_image" in CHAT_TOOLS
 
 
 def test_chat_models_retry_busy_servers_before_falling_back():

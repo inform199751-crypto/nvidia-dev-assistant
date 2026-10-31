@@ -1016,8 +1016,8 @@ const handlers = {
         li.now = li.appendChild(el("small", "", "準備中…"));
         return li;
       });
-    } else if (e.name === "generate_image") {  // 畫圖:描述是英文的(模型寫的),圖畫好會顯示在下面
-      summary.append(el("span", "", "畫圖"), el("code", "", String(e.args?.prompt || "").slice(0, 100)));
+    } else if (e.name === "generate_image" || e.name === "edit_image") {  // 畫圖 / 改圖:描述是英文的(模型寫的),圖畫好會顯示在下面
+      summary.append(el("span", "", e.name === "edit_image" ? "改圖" : "畫圖"), el("code", "", String(e.args?.prompt || "").slice(0, 100)));
     } else if (e.name === "save_memory") {  // 跨對話的記憶:寫成「記住:…」,點一下到設定頁看全部
       summary.append(el("span", "", "記住"), el("code", "", String(e.args?.fact || "")));
     } else summary.append(el("span", "", e.name), el("code", "", args.length > 100 ? args.slice(0, 100) + "…" : args));
@@ -1028,7 +1028,7 @@ const handlers = {
   tool_done(e) {
     const d = tools.shift(); if (!d) return;
     d.out.textContent = e.output;
-    const drawn = d.toolName === "generate_image" && /^已畫好 (.+)$/m.exec(e.output || "");
+    const drawn = (d.toolName === "generate_image" || d.toolName === "edit_image") && /^已畫好 (.+)$/m.exec(e.output || "");
     if (drawn) {  // 畫好的圖:直接顯示,附「下載」
       const name = drawn[1].trim(), url = `/api/file?token=${encodeURIComponent(TOKEN)}&name=${encodeURIComponent(name)}`;
       const fig = d.parentElement.insertBefore(el("div", "drawn"), d.nextSibling);
@@ -1464,7 +1464,8 @@ document.addEventListener("keydown", (ev) => {
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
   ["10/31", ["同一段對話裡之前失敗過的事(例如畫圖剛好碰到平台壞掉),再請 HSUAN 做一次會重新試,不會直接說上次失敗了",
-             "HSUAN 改程式時抄錯原文,工具會指出差在哪幾個字(括號、引號這類符號逐字唸出來),比較快改對"]],
+             "HSUAN 改程式時抄錯原文,工具會指出差在哪幾個字(括號、引號這類符號逐字唸出來),比較快改對",
+             "可以改畫好的圖:說「在剛剛那張圖加一隻獨角獸」,HSUAN 用同一個隨機種子重畫,沒改的地方大致不變(平台不收自己的圖,所以不是真的在原圖上改)"]],
   ["10/30", ["畫圖換成 FLUX.2 klein:平台上原本的 FLUX.1-dev 壞掉,等 3 分多鐘才失敗;現在從問到畫好約 10 秒,原本的模型留著當備援"]],
   ["10/29", ["修 bug 更仔細:修完會對照函式說明、檢查邊界、補一個測試再回答(改了程式卻沒補測試,HSUAN 會被提醒一次);評測的一般題從 13/16 變 16/16,但每題多花約四分之一的 tokens、時間多一倍", "模型把修改的說明塞進修改清單裡送來時也讀得回來,不會一直重送到步數用完"]],
   ["10/28", ["地端模式(公司自己的伺服器)不能用聽寫和語音模式:它們會把聲音送到微軟的雲端;朗讀只用這台電腦的聲音",

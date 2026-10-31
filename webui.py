@@ -2443,7 +2443,7 @@ GUEST_DAILY_TOKENS = 200_000  # 每支訪客手機每天的額度(用的是主�
 # 訪客用不到的工具:空資料夾沒有程式可以測、可以改、可以看 git;也不讓訪客在主人電腦上跑沙箱;
 # 子 agent 會同時打好幾個請求,用的是主人的金鑰和速率限制
 GUEST_BLOCKED_TOOLS = {"run_tests", "run_command", "propose_patch", "git_log", "git_blame", "delegate", "save_memory",
-                       "generate_image"}  # 畫圖用的是主人的金鑰
+                       "generate_image", "edit_image"}  # 畫圖用的是主人的金鑰
 
 
 def guest_desks(registry, tools: list, status: str, model: str, base: Path | None = None) -> Callable[[str], Desk]:

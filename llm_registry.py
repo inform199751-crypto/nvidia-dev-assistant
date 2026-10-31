@@ -207,17 +207,18 @@ class ModelRegistry:
         embed.model = cfg["model"]  # 換了模型,知識庫要全部重算
         return embed
 
-    def image_generator(self) -> Callable[[str, int, int], tuple[bytes, str]] | None:
-        """畫圖用(imagegen.py):draw(英文描述, 寬, 高) → (圖片, 用的模型);models.yaml 沒有 image、這個環境沒有就回 None。
-        catalog 的畫圖模型不在 /v1/chat 那組網址,直接打 base_url/<模型>;逾時、忙線、404 換下一顆,
-        被內容過濾擋下的不換(換了也一樣),丟 ValueError 讓模型跟使用者說。"""
+    def image_generator(self) -> Callable[..., tuple[bytes, str]] | None:
+        """畫圖用(imagegen.py):draw(英文描述, 寬, 高, seed=None, prefer=None) → (圖片, 用的模型);
+        models.yaml 沒有 image、這個環境沒有就回 None。seed 沒給就隨機;prefer 是先試的模型(改圖要用原本那顆,
+        同一個種子才畫得出相同的構圖)。catalog 的畫圖模型不在 /v1/chat 那組網址,直接打 base_url/<模型>;
+        逾時、忙線、404 換下一顆,被內容過濾擋下的不換(換了也一樣),丟 ValueError 讓模型跟使用者說。"""
         cfg = self.image
         if not cfg or self.backend not in cfg.get("available_on", ["catalog"]):
             return None
         base = (cfg.get("nim_base_url") or cfg["base_url"]) if self.backend == "nim" else cfg["base_url"]
         key_env = self._backend_cfg.get("api_key_env")
 
-        def draw(prompt: str, width: int, height: int) -> tuple[bytes, str]:
+        def draw(prompt: str, width: int, height: int, seed: int | None = None, prefer: str | None = None) -> tuple[bytes, str]:
             import base64
             import secrets
 
@@ -226,8 +227,9 @@ class ModelRegistry:
             api_key = os.getenv(key_env) if key_env else None
             headers = {"Accept": "application/json", **({"Authorization": f"Bearer {api_key}"} if api_key else {})}
             errors = []
-            for m in cfg["models"]:
-                body = {"prompt": prompt, "width": width, "height": height, "seed": secrets.randbelow(2**31), **m.get("params", {})}
+            seed = secrets.randbelow(2**31) if seed is None else seed
+            for m in sorted(cfg["models"], key=lambda m: m["model"] != prefer):
+                body = {"prompt": prompt, "width": width, "height": height, "seed": seed, **m.get("params", {})}
                 try:
                     r = httpx.post(f"{base.rstrip('/')}/{m['model']}", json=body, headers=headers, timeout=cfg.get("timeout_s", 120))
                 except httpx.HTTPError as e:

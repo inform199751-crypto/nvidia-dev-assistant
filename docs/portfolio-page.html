@@ -297,7 +297,7 @@ flowchart LR
       <div class="cap-item"><dt>終端機與操作瀏覽器 <span class="file">terminal.py · browser.py</span></dt><dd>在專案資料夾跑指令、不帶金鑰;用無頭 Edge 測自己開發中的網站,只開 localhost 這類開發位址</dd></div>
       <div class="cap-item"><dt>MCP 連接器與分工 <span class="file">mcp_client.py</span></dt><dd>接外部 MCP server 的工具,每次使用先問;打開「分工」讓子助理同時查不同模組</dd></div>
       <div class="cap-item"><dt>跨對話記憶與排程 <span class="file">memory.py · scheduler.py</span></dt><dd>說「記住…」就記一句話,存在自己的電腦;每天幾點自動開對話去做,改程式只留草稿</dd></div>
-      <div class="cap-item"><dt>深度研究與畫圖 <span class="file">imagegen.py</span></dt><dd>把問題拆成子問題同時上網查,寫附出處的報告;用 FLUX 畫圖,直接顯示在對話裡</dd></div>
+      <div class="cap-item"><dt>深度研究與畫圖 <span class="file">imagegen.py</span></dt><dd>把問題拆成子問題同時上網查,寫附出處的報告;用 FLUX 畫圖、改圖(同一個種子重畫),直接顯示在對話裡</dd></div>
       <div class="cap-item wide"><dt>語音模式 <span class="file">webui.html</span></dt><dd>像 ChatGPT 手機版:全螢幕一顆球,用說的問、邊寫邊唸,戴耳機可以直接開口插話;回答改成口語的一到三句。辨識用瀏覽器的語音服務、聲音用微軟的自然語音,這兩個都在雲端,所以切到地端時預設關掉</dd></div>
     </dl>
   </div>
@@ -329,11 +329,11 @@ flowchart LR
           <tr><td>深度研究</td><td>「企業導入 AI 程式助理有哪些資安風險?要怎麼降低?」,真的上網</td><td class="num">5 個子助理同時查 · 7.9 萬 tokens · 12 分鐘<small>只問一次要不要上網;報告分 5 節、附來源表;最慢的子助理 9 分鐘,免費平台讀網頁慢</small></td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>跨對話的記憶</td><td>說兩條偏好(一條沒說「記住」),再開新對話問「什麼是 RAG?」</td><td class="num">兩句都自己記下 · 三題約 8,000 tokens<small>新對話照偏好回答:剛好 5 點條列、最後一點是面試講法</small></td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>排程任務</td><td>設「每天 18:43 跑全部測試,有失敗就三點整理原因」,不手動觸發</td><td class="num">準時自己開對話 · 12,394 tokens<small>沙箱跑測試、找出 calc.py:2 寫成減法;途中主模型一步沒回應,DeepSeek 接手、畫面有提醒</small></td><td><span class="pill pass">通過</span></td></tr>
-          <tr><td>畫圖</td><td>先探測 catalog,再請它畫雨夜的台北 101</td><td class="num">FLUX.1-dev 約 5 秒 · 2 步 · 4,227 tokens<small>自己把描述寫成英文、選橫幅;Stable Diffusion 3 / 3.5 / SDXL 都 404。10/30 FLUX.1-dev 壞掉(等 3 分多鐘才失敗),改用 FLUX.2 klein:從問到畫好 10.6 秒。畫圖模型都不認得 101,要把外型寫進描述才有機會像(HSUAN 畫 3 次像 1 次)</small></td><td><span class="pill pass">通過</span></td></tr>
+          <tr><td>畫圖</td><td>先探測 catalog,再請它畫雨夜的台北 101</td><td class="num">FLUX.1-dev 約 5 秒 · 2 步 · 4,227 tokens<small>自己把描述寫成英文、選橫幅;Stable Diffusion 3 / 3.5 / SDXL 都 404。10/30 FLUX.1-dev 壞掉(等 3 分多鐘才失敗),改用 FLUX.2 klein:從問到畫好 10.6 秒。畫圖模型都不認得 101,要把外型寫進描述才有機會像(HSUAN 畫 3 次像 1 次)。10/31 加改圖:平台的改圖模型只收範例圖,改成同一個種子重畫,加獨角獸、換小白兔時彩虹和草地都沒動</small></td><td><span class="pill pass">通過</span></td></tr>
           <tr><td>語音模式</td><td>對話模式 6 題(含追問、會想用表格或程式碼的題目)、程式模式問 calc.py 的 bug 3 次;麥克風那段用模擬的語音辨識</td><td class="num">對話模式每題 2.4–4.6 秒、沒有表格和條列<small>程式模式 3/3 先讀檔再回答、3.5 秒開口;戴耳機時一開口就停下來換你說</small></td><td><span class="pill warn">麥克風用模擬</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
           <tr><td>端到端評測</td><td>17 題自己寫的修 bug 題,驗收含 HSUAN 看不到的隱藏測試;10/25–26 主模型換成 3.5 Super VL 後,每種設定跑兩次;10/30 加了補測試提醒和參數修正,兩種設定各再跑兩次</td><td class="num">依難度選模型 32/34(94%)· 平均約 53k tokens<small>同一版程式只用 Super 29/34(85%)· 約 66k;差別都在難題(17/18 vs 13/18)。改之前是 29/34 vs 24/34</small></td><td><span class="pill pass">選模型較好</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">212 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">213 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端相容性</td><td>沒有 GPU:CPU 版 llama.cpp + Llama 3.2 3B 假裝成地端伺服器,只把模型網址指過去</td><td>程式一行都不用改就切得過去;回話、思考開關、tool calling 都通,上下文自動換成地端的 256K<small>抓到 5 個只有切到地端才會出現的問題(第 63–67 個)</small></td><td><span class="pill pass">切換通過</span></td></tr>
           <tr><td>地端 NIM 本身</td><td>需要 GPU 伺服器</td><td>NIM 容器、顯存、速度、大模型的回答品質</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
@@ -344,12 +344,12 @@ flowchart LR
 
 <section>
   <div class="label">
-    <h2>抓到的 84 個問題</h2>
+    <h2>抓到的 85 個問題</h2>
     <div class="note">依類別分組,編號照發現順序,跟 README 一致。每一條都寫了怎麼發現的</div>
   </div>
   <div class="body">
     <ul class="tally">
-      <li>模型與套件<b>17</b></li>
+      <li>模型與套件<b>18</b></li>
       <li>token 與路由<b>9</b></li>
       <li>agent 行為與工具<b>25</b></li>
       <li>安全與隱私<b>13</b></li>
@@ -358,7 +358,7 @@ flowchart LR
     </ul>
 
     <div class="group">
-      <h3>模型與套件 <span class="count">17</span></h3>
+      <h3>模型與套件 <span class="count">18</span></h3>
       <ol class="findings">
         <li><span class="n">01</span><div><span class="what">指定的 deepseek-v3、qwen2.5-coder-32b 已經從 catalog 下架</span><span class="how"><span class="tag">探測 API</span></span></div><div class="fix">改用現役版本,Qwen 標為只能地端</div></li>
         <li><span class="n">02</span><div><span class="what">套件預設輸出上限只有 1024 tokens,寫程式會被截斷</span><span class="how"><span class="tag">讀套件原始碼</span></span></div><div class="fix">每個模型角色明確設定上限</div></li>
@@ -377,6 +377,7 @@ flowchart LR
         <li><span class="n">78</span><div><span class="what">修改清單後面連說明一起塞進同一個字串,只讀清單就少了必填的說明,工具一直回錯誤,重送 6 次把 15 步用完</span><span class="how"><span class="tag">難題評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">整段補上開頭剛好是合法 JSON 才把說明拿回來,一樣不猜;全部評測紀錄能用的呼叫從 49 次變 75 次</div></li>
         <li><span class="n">79</span><div><span class="what">畫圖的模型在平台上壞掉(一顆等 60–70 秒回錯誤、一顆等到逾時),使用者等了 3 分多鐘還是沒有圖</span><span class="how"><span class="tag">使用者回報</span> <span class="tag">直接打 API</span></span></div><div class="fix">試了 19 個模型 ID,找到新上架、3–4 秒的 FLUX.2 klein 改成先畫;每顆最多等 60 秒,從問到畫好 10.6 秒</div></li>
         <li><span class="n">80</span><div><span class="what">DeepSeek 邊產生邊顯示時,NVIDIA 把工具呼叫的開頭標記漏進文字:畫面冒出一行 &lt;｜DSML｜ calls&gt;,還存進對話、每一步再送回伺服器</span><span class="how"><span class="tag">實測</span> <span class="tag">探針記錄原文</span></span></div><div class="fix">邊顯示邊過濾(標記被切成兩段送來,可能是開頭的那截先留著再判斷),存進對話前也拿掉;再跑兩次,畫面和紀錄都是 0</div></li>
+        <li><span class="n">85</span><div><span class="what">平台上的改圖模型(Kontext、klein)只收網頁的範例圖,自己的圖不管直接附還是先上傳都被拒</span><span class="how"><span class="tag">使用者要求</span> <span class="tag">直接打 API</span></span></div><div class="fix">記下每張圖的描述和種子,改圖用同一個種子重畫:描述不變就一模一樣,加一隻獨角獸其他幾乎不動</div></li>
       </ol>
     </div>
 
