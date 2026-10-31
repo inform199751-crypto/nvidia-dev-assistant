@@ -344,14 +344,14 @@ flowchart LR
 
 <section>
   <div class="label">
-    <h2>抓到的 83 個問題</h2>
+    <h2>抓到的 84 個問題</h2>
     <div class="note">依類別分組,編號照發現順序,跟 README 一致。每一條都寫了怎麼發現的</div>
   </div>
   <div class="body">
     <ul class="tally">
       <li>模型與套件<b>17</b></li>
       <li>token 與路由<b>9</b></li>
-      <li>agent 行為與工具<b>24</b></li>
+      <li>agent 行為與工具<b>25</b></li>
       <li>安全與隱私<b>13</b></li>
       <li>多人、部署與介面<b>15</b></li>
       <li>自己訓練的模型與知識庫<b>5</b></li>
@@ -396,7 +396,7 @@ flowchart LR
     </div>
 
     <div class="group">
-      <h3>agent 行為與工具 <span class="count">24</span></h3>
+      <h3>agent 行為與工具 <span class="count">25</span></h3>
       <ol class="findings">
         <li><span class="n">06</span><div><span class="what">agent 沒辦法驗證自己的修正,最後自己編了測試結果</span><span class="how"><span class="tag">端到端實測</span></span></div><div class="fix">提修正時在複本上套用並真的跑測試,回傳實際結果</div></li>
         <li><span class="n">13</span><div><span class="what">模型回的工具參數不是合法 JSON 時,被當成最終答案、回傳空字串</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">讀套件原始碼</span></span></div><div class="fix">把錯誤回給模型,讓它修正重送</div></li>
@@ -422,6 +422,7 @@ flowchart LR
         <li><span class="n">77</span><div><span class="what">修 bug 只修題目點名的那個測試,漏了函式說明寫的規則和邊界,還說自己改了沒改的東西</span><span class="how"><span class="tag">端到端評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">提示加檢查清單,改了程式沒補測試再由程式提醒一次;8 題 × 2 次從 13/16 到 16/16,tokens 多 26%</div></li>
         <li><span class="n">81</span><div><span class="what">修改對不上原文時只回「找不到、請重讀」:模型把 ]]} 連續 4 次看成 )},重讀、印出原始內容都沒發現,15 步用完</span><span class="how"><span class="tag">完整評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">指出最像的那一行、差在哪幾個字,符號逐字唸出來;27 次重播,下一次修改對得上 12 → 17、tokens 少 31%</div></li>
         <li><span class="n">82</span><div><span class="what">同一段對話畫圖失敗過,兩天後再問,模型沒試就說「暫時失敗」:把「不要重送失敗的呼叫」套到之前的輪</span><span class="how"><span class="tag">使用者回報</span> <span class="tag">讀那段對話</span></span></div><div class="fix">規則寫明只限同一輪;用那段對話重問,照抄失敗 3/20 → 0/20</div></li>
+        <li><span class="n">84</span><div><span class="what">語音把「公主」聽成「高主」,HSUAN 猜成女明星、說不能畫真人,使用者以為它不能畫人</span><span class="how"><span class="tag">使用者回報</span> <span class="tag">讀那段對話</span></span></div><div class="fix">不改:畫人本來就可以(12/12);同一刻重問 10 次都先問清楚;加「可能聽錯字」的提示也猜不到公主(0/10)</div></li>
       </ol>
     </div>
 
