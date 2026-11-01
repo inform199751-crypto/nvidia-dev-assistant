@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0a0a0a"><!-- 桌面版(Edge app 模式)的標題列顏色 -->
-<title>HSUAN</title>
+<title>JUSTIN</title>
 <link rel="icon" href="/favicon.ico">
 <!-- 手機「加到主畫面」:圖示和全螢幕(iPhone 看 apple-* 那幾個,Android 看 manifest) -->
 <link rel="manifest" href="/manifest.webmanifest">
@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="apple-mobile-web-app-title" content="HSUAN">
+<meta name="apple-mobile-web-app-title" content="JUSTIN">
 <script>  /* 外觀(預設深色):在畫面畫出來之前就設好,才不會先閃一下白的;10/10 拿掉的淺色、跟著系統回到深色 */
   try {
     const t = localStorage.getItem("theme");
@@ -532,7 +532,7 @@
 <aside id="sidebar" aria-label="側邊欄">
   <div class="side-scroll">
     <div class="side-top">
-      <div class="brand"><img src="/favicon.ico" alt="">HSUAN</div>
+      <div class="brand"><img src="/favicon.ico" alt="">JUSTIN</div>
       <div class="mode-switch" role="group" aria-label="模式">
         <button type="button" data-mode="chat" aria-pressed="false" aria-label="對話模式" title="對話:一般問答、寫作、翻譯、上網查(不綁專案)">
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 4.5h12A1.5 1.5 0 0117.5 6v7a1.5 1.5 0 01-1.5 1.5H9l-3.5 3v-3H4A1.5 1.5 0 012.5 13V6A1.5 1.5 0 014 4.5z"/></svg>
@@ -593,15 +593,15 @@
     <button type="button" class="icon-btn" id="back" aria-label="回到對話" hidden>
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l-6 6 6 6"/></svg>
     </button>
-    <div class="model"><span style="color:var(--text);font-size:17px;font-weight:600" id="top-title">HSUAN</span></div>
+    <div class="model"><span style="color:var(--text);font-size:17px;font-weight:600" id="top-title">JUSTIN</span></div>
     <span class="top-spacer"></span>
     <button type="button" class="icon-btn term-toggle" id="term-btn" hidden aria-label="終端機" title="終端機:在這段對話的專案資料夾裡跑指令(只有這台電腦看得到)">
       <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M6 8l2.5 2L6 12M10.5 12.5H14"/></svg>
     </button>
-    <button type="button" class="icon-btn panel-toggle pane-btn" id="changes-btn" aria-pressed="false" aria-label="變更" title="變更:HSUAN 還沒套用的修改、專案裡還沒 commit 的修改">
+    <button type="button" class="icon-btn panel-toggle pane-btn" id="changes-btn" aria-pressed="false" aria-label="變更" title="變更:JUSTIN 還沒套用的修改、專案裡還沒 commit 的修改">
       <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3 3v12H5z"/><path d="M10 7v4M8 9h4M8 14h4"/></svg>
     </button>
-    <button type="button" class="icon-btn panel-toggle pane-btn" id="browser-btn" aria-pressed="false" aria-label="瀏覽器" title="瀏覽器:預覽開發中的網站,看 HSUAN 操作瀏覽器的畫面">
+    <button type="button" class="icon-btn panel-toggle pane-btn" id="browser-btn" aria-pressed="false" aria-label="瀏覽器" title="瀏覽器:預覽開發中的網站,看 JUSTIN 操作瀏覽器的畫面">
       <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M3 10h14M10 3c2 2.2 3 4.5 3 7s-1 4.8-3 7c-2-2.2-3-4.5-3-7s1-4.8 3-7z"/></svg>
     </button>
     <button type="button" class="icon-btn panel-toggle pane-btn" id="files-btn" aria-pressed="false" aria-label="檔案" title="檔案:瀏覽專案的檔案(唯讀),可以用 @ 附加到問題">
@@ -621,7 +621,7 @@
     <section class="term" id="term" hidden aria-label="終端機">
       <div class="term-head">
         <span class="term-title">終端機</span><span class="term-cwd" id="term-cwd"></span>
-        <button type="button" class="pill" id="term-give" title="把最後一個指令和輸出放進輸入框,看過再送給 HSUAN">交給 HSUAN</button>
+        <button type="button" class="pill" id="term-give" title="把最後一個指令和輸出放進輸入框,看過再送給 JUSTIN">交給 JUSTIN</button>
         <button type="button" class="pill" id="term-stop" hidden>停止</button>
         <button type="button" class="pill" id="term-clear">清除</button>
         <button type="button" class="icon-btn" id="term-close" aria-label="關閉終端機">
@@ -641,15 +641,15 @@
         <button type="button" class="round-btn" id="attach" aria-label="附加檔案或圖片" title="附加圖片,或專案裡的檔案(@檔名)">
           <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>
         </button>
-        <button type="button" class="mode-btn" id="plan-mode" aria-pressed="false" title="開啟後,HSUAN 先只讀不改、交出計畫,你同意才照計畫做">
+        <button type="button" class="mode-btn" id="plan-mode" aria-pressed="false" title="開啟後,JUSTIN 先只讀不改、交出計畫,你同意才照計畫做">
           <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5h10M7 10h10M7 15h10M3 5h.01M3 10h.01M3 15h.01"/></svg>
           先規劃
         </button>
-        <button type="button" class="mode-btn" id="split-mode" aria-pressed="false" title="開啟後,HSUAN 把這一題彼此獨立的部分分給最多 3 個子助理同時查,只交回結論(適合要讀很多檔案的大問題)">
+        <button type="button" class="mode-btn" id="split-mode" aria-pressed="false" title="開啟後,JUSTIN 把這一題彼此獨立的部分分給最多 3 個子助理同時查,只交回結論(適合要讀很多檔案的大問題)">
           <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h5M8 10l4-5h5M8 10h9M8 10l4 5h5"/></svg>
           分工
         </button>
-        <button type="button" class="mode-btn" id="research-mode" aria-pressed="false" hidden title="開啟後,HSUAN 先把問題拆成幾個子問題,問你一次要不要上網,再讓子助理同時上網查、整理成附出處的報告(會花比較多 tokens)">
+        <button type="button" class="mode-btn" id="research-mode" aria-pressed="false" hidden title="開啟後,JUSTIN 先把問題拆成幾個子問題,問你一次要不要上網,再讓子助理同時上網查、整理成附出處的報告(會花比較多 tokens)">
           <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5L17 17M6 8.5h5M8.5 6v5"/></svg>
           深度研究
         </button>
@@ -666,7 +666,7 @@
         </button>
       </div>
     </form>
-    <div class="hint" id="hint">用 @檔名 附上專案裡的檔案 · Enter 送出、Shift+Enter 換行 · HSUAN 也會出錯,重要的結果請自己確認</div>
+    <div class="hint" id="hint">用 @檔名 附上專案裡的檔案 · Enter 送出、Shift+Enter 換行 · JUSTIN 也會出錯,重要的結果請自己確認</div>
   </footer>
 </div>
 <section class="vm" id="vm" hidden aria-label="語音模式">
@@ -705,7 +705,7 @@ let desk = { projects: [], conversations: [] };
 let state = {};           // /api/state(這段對話的狀態)
 let es = null;            // 事件串流
 let page = null;          // 打開中的側邊欄頁面
-// 終端機面板:輸出讀到第幾行、輪詢的計時器、輸出屬於哪段對話、指令紀錄(↑↓)、最後一個指令的輸出(「交給 HSUAN」用)
+// 終端機面板:輸出讀到第幾行、輪詢的計時器、輸出屬於哪段對話、指令紀錄(↑↓)、最後一個指令的輸出(「交給 JUSTIN」用)
 const term = { since: 0, timer: null, conv: null, history: [], hi: 0, last: "", restored: false };
 const SEND_ICON = send.innerHTML;
 const STOP_ICON = '<svg width="14" height="14" viewBox="0 0 20 20"><rect x="3" y="3" width="14" height="14" rx="2.5" fill="currentColor"/></svg>';
@@ -887,7 +887,7 @@ function showEmpty() {
   const box = el("div", "welcome");
   const logo = box.appendChild(el("img", "logo"));
   logo.src = "/icon-192.png"; logo.alt = "";
-  box.appendChild(el("h1", "", "HSUAN"));
+  box.appendChild(el("h1", "", "JUSTIN"));
   box.appendChild(el("p", "tagline", TAGLINE[sideMode]()));
   box.appendChild(form);  // 輸入框搬到中間;開始對話時 dock() 搬回最下面
   const chips = box.appendChild(el("div", "chips"));
@@ -909,14 +909,14 @@ function dock() {  // 開始對話:輸入框回到最下面
 }
 
 // ---------- 送出 / 狀態 ----------
-// 回答中(10/16 使用者要的,像 Claude):輸入框空的 → 按鈕是「停止」;打了字 → 一樣是「送出」,HSUAN 下一步就看到
+// 回答中(10/16 使用者要的,像 Claude):輸入框空的 → 按鈕是「停止」;打了字 → 一樣是「送出」,JUSTIN 下一步就看到
 // 沒在回答、輸入框空的(10/27,像 ChatGPT):按鈕是「語音模式」(有麥克風可用才有)
 function updateSend() {
   const has = !!input.value.trim() || pendingImages.length > 0, stop = busy && !has, talk = !busy && !has && canTalk();
   send.classList.toggle("stop", stop);
   send.innerHTML = stop ? STOP_ICON : talk ? TALK_ICON : SEND_ICON;
-  send.setAttribute("aria-label", stop ? "停止回答" : talk ? "語音模式" : busy ? "送出(HSUAN 下一步就會看到)" : "送出");
-  send.title = stop ? "停止回答" : talk ? "語音模式:用說的跟 HSUAN 對話,回答會唸出來" : busy ? "回答到一半也可以送出:HSUAN 下一步就會看到" : "";
+  send.setAttribute("aria-label", stop ? "停止回答" : talk ? "語音模式" : busy ? "送出(JUSTIN 下一步就會看到)" : "送出");
+  send.title = stop ? "停止回答" : talk ? "語音模式:用說的跟 JUSTIN 對話,回答會唸出來" : busy ? "回答到一半也可以送出:JUSTIN 下一步就會看到" : "";
   send.disabled = !busy && !has && !talk;
 }
 function setBusy(b) {
@@ -973,13 +973,13 @@ function renderPlan(box, steps) {
 const refreshSoon = () => { later("desk", loadDesk); later("pending", loadPending); later("state", loadState); };
 
 // ---------- 事件 ----------
-const heardWaiting = [];  // 回答到一半送出、HSUAN 還沒看到的訊息泡泡
+const heardWaiting = [];  // 回答到一半送出、JUSTIN 還沒看到的訊息泡泡
 function markHeard() {
   for (const m of heardWaiting.splice(0)) { const t = m.querySelector(".mode-tag"); if (t) t.textContent = "回答中送出 · 已收到"; }
 }
 const handlers = {
   user(e) {
-    // 回答到一半送的:正在寫的回答繼續寫在原本的泡泡(不要被切成兩半),HSUAN 看到這則訊息之後(heard / next)才另起一個;
+    // 回答到一半送的:正在寫的回答繼續寫在原本的泡泡(不要被切成兩半),JUSTIN 看到這則訊息之後(heard / next)才另起一個;
     // 前面還在跑的工具結果也要接得上
     if (!e.queued) { bot = null; tools.length = 0; }
     const m = el("div", "msg user");
@@ -1058,7 +1058,7 @@ const handlers = {
     if (li) { li.now.textContent = e.status === "失敗" ? "✗ 沒有完成" : `✓ 完成(${e.status})`; li.classList.add(e.status === "失敗" ? "failed" : "done"); }
   },
   step() { stopThinking(); },
-  heard() { markHeard(); stopThinking(); bot = null; },  // 回答到一半送的訊息:HSUAN 這一步看到了,之後的回答寫在它下面
+  heard() { markHeard(); stopThinking(); bot = null; },  // 回答到一半送的訊息:JUSTIN 這一步看到了,之後的回答寫在它下面
   next() { markHeard(); stopThinking(); bot = null; setBusy(true); },  // 上一輪答完才送到的:接著當下一題回答
   notice(e) { ensureBot().appendChild(el("div", "notice", e.text)); },
   plan(e) {  // 照計畫執行時的進度清單:同一輪只有一份,每次更新就重畫
@@ -1083,7 +1083,7 @@ const handlers = {
     stopThinking();
     const card = add(el("div", "card"));
     const q = card.appendChild(el("div", "q"));
-    q.append(el("span", "tag warn", "需要你同意"), `HSUAN 想要${e.action}:`, el("code", "", e.detail));
+    q.append(el("span", "tag warn", "需要你同意"), `JUSTIN 想要${e.action}:`, el("code", "", e.detail));
     cardButtons(card, [
       ["允許這次", "primary", () => api("/api/confirm", { id: e.id, answer: "y" })],
       ["之後都允許", "", () => api("/api/confirm", { id: e.id, answer: "a" })],
@@ -1140,11 +1140,11 @@ const handlers = {
     const q = card.appendChild(el("div", "q"));
     q.append(el("span", e.passed ? "tag ok" : "tag warn", e.passed ? "測試通過" : "測試沒過"),
              e.passed ? "要把草稿的修改套用到專案嗎?" : "注意:改完後沙箱測試沒有通過。仍要套用嗎?");
-    q.appendChild(el("div", "notice", `修改都先放在 HSUAN 的草稿上,你的檔案還沒動。patch:${e.name}`));
+    q.appendChild(el("div", "notice", `修改都先放在 JUSTIN 的草稿上,你的檔案還沒動。patch:${e.name}`));
     card.appendChild(diffView(e.diff));
     const choose = (action) => async () => {
       const r = await api("/api/apply", { patch: e.patch, action });
-      if (r.data.text && r.data.text.startsWith("HSUAN 還在")) { alert(r.data.text); return false; }
+      if (r.data.text && r.data.text.startsWith("JUSTIN 還在")) { alert(r.data.text); return false; }
     };
     // 每個 patch 都是累積的:有新的出來,舊卡片就不能再按,免得套到舊版本
     for (const [key, old] of Object.entries(cards)) {
@@ -1182,7 +1182,7 @@ function connect() {
   es.onmessage = (m) => {
     if (mine !== conv) return;  // 已經切到別段對話了
     const e = JSON.parse(m.data); (handlers[e.kind] || (() => {}))(e);
-    panelEvent(e);  // 右邊面板跟著更新(HSUAN 用了瀏覽器就切到它的畫面)
+    panelEvent(e);  // 右邊面板跟著更新(JUSTIN 用了瀏覽器就切到它的畫面)
   };
   // 伺服器重啟後 token 會換,舊頁面會一直用舊 token 重連、畫面默默卡住:確認是 403 就重新載入拿新的
   es.onerror = async () => {
@@ -1217,7 +1217,7 @@ function applyMode() {
   $("split-mode").hidden = chat || !!state.guest;
   $("changes-btn").hidden = $("files-btn").hidden = chat;  // 對話模式不綁專案,沒有檔案和變更(面板裡的分頁會說明)
   $("hint").textContent = (chat ? "可以貼上或拖進圖片" : "用 @檔名 附上專案裡的檔案,也可以貼上圖片")
-    + " · Enter 送出、Shift+Enter 換行 · HSUAN 也會出錯,重要的結果請自己確認";
+    + " · Enter 送出、Shift+Enter 換行 · JUSTIN 也會出錯,重要的結果請自己確認";
 }
 function switchMode(m) {  // 切過去就打開那種模式最近的對話,沒有就開一段新的
   if (m === sideMode) return;
@@ -1403,7 +1403,7 @@ function closePage() {
   if (!page) return;
   page = null;
   $("scroller").hidden = false; $("composer-area").hidden = false; $("page").hidden = true; $("back").hidden = true;
-  $("top-title").textContent = "HSUAN";
+  $("top-title").textContent = "JUSTIN";
   document.querySelectorAll(".nav-btn[data-page]").forEach((b) => b.setAttribute("aria-current", "false"));
 }
 document.querySelectorAll(".nav-btn[data-page]").forEach((b) => (b.onclick = () => openPage(b.dataset.page)));
@@ -1439,7 +1439,7 @@ function accountMenu() {
   popup($("account"), items, { above: true });
 }
 function langMenu() {
-  popup($("account"), [{ header: "HSUAN 回答用的語言", sub: "介面文字不變;打開中的對話也馬上換" }, null,
+  popup($("account"), [{ header: "JUSTIN 回答用的語言", sub: "介面文字不變;打開中的對話也馬上換" }, null,
     ...LANGS.map(([code, name]) => [name, () => setLang(code), "", code === state.lang ? "✓" : ""])], { above: true });
 }
 async function setLang(code) {
@@ -1463,39 +1463,41 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["11/01", ["知識庫找得更準:先照意思找出幾段,再請 NVIDIA 新的重新排序模型挑出最相關的(測試 13 題,第一名就找對從 10 題變 13 題,每題多約半秒)"]],
-  ["10/31", ["同一段對話裡之前失敗過的事(例如畫圖剛好碰到平台壞掉),再請 HSUAN 做一次會重新試,不會直接說上次失敗了",
-             "HSUAN 改程式時抄錯原文,工具會指出差在哪幾個字(括號、引號這類符號逐字唸出來),比較快改對",
-             "可以改畫好的圖:說「在剛剛那張圖加一隻獨角獸」,HSUAN 用同一個隨機種子重畫,沒改的地方大致不變(平台不收自己的圖,所以不是真的在原圖上改)"]],
+  ["11/01", ["改名叫 JUSTIN(原本叫 HSUAN),桌面捷徑也換了",
+             "預設改成男生的聲音:語音模式和朗讀都用微軟的自然語音「雲哲」(要唸的文字會送到微軟;在「設定 → 朗讀」可以改回這台電腦的聲音)",
+             "知識庫找得更準:先照意思找出幾段,再請 NVIDIA 新的重新排序模型挑出最相關的(測試 13 題,第一名就找對從 10 題變 13 題,每題多約半秒)"]],
+  ["10/31", ["同一段對話裡之前失敗過的事(例如畫圖剛好碰到平台壞掉),再請 JUSTIN 做一次會重新試,不會直接說上次失敗了",
+             "JUSTIN 改程式時抄錯原文,工具會指出差在哪幾個字(括號、引號這類符號逐字唸出來),比較快改對",
+             "可以改畫好的圖:說「在剛剛那張圖加一隻獨角獸」,JUSTIN 用同一個隨機種子重畫,沒改的地方大致不變(平台不收自己的圖,所以不是真的在原圖上改)"]],
   ["10/30", ["畫圖換成 FLUX.2 klein:平台上原本的 FLUX.1-dev 壞掉,等 3 分多鐘才失敗;現在從問到畫好約 10 秒,原本的模型留著當備援"]],
-  ["10/29", ["修 bug 更仔細:修完會對照函式說明、檢查邊界、補一個測試再回答(改了程式卻沒補測試,HSUAN 會被提醒一次);評測的一般題從 13/16 變 16/16,但每題多花約四分之一的 tokens、時間多一倍", "模型把修改的說明塞進修改清單裡送來時也讀得回來,不會一直重送到步數用完"]],
+  ["10/29", ["修 bug 更仔細:修完會對照函式說明、檢查邊界、補一個測試再回答(改了程式卻沒補測試,JUSTIN 會被提醒一次);評測的一般題從 13/16 變 16/16,但每題多花約四分之一的 tokens、時間多一倍", "模型把修改的說明塞進修改清單裡送來時也讀得回來,不會一直重送到步數用完"]],
   ["10/28", ["地端模式(公司自己的伺服器)不能用聽寫和語音模式:它們會把聲音送到微軟的雲端;朗讀只用這台電腦的聲音",
-             "語音模式更像打電話:第一句寫出來就開口(不用等整則寫完);預設用微軟的自然語音(曉臻,在「設定 → 朗讀」可以換或改回本機);戴耳機時按語音模式畫面左下的耳機,HSUAN 說話時直接開口就能插話,它還在寫也會一起停",
+             "語音模式更像打電話:第一句寫出來就開口(不用等整則寫完);預設用微軟的自然語音(曉臻,在「設定 → 朗讀」可以換或改回本機);戴耳機時按語音模式畫面左下的耳機,JUSTIN 說話時直接開口就能插話,它還在寫也會一起停",
              "語音模式問專案的事(例如「calc.py 有什麼 bug」)會先讀檔再回答;VS Code 外掛裡拿不到麥克風,不再顯示語音按鈕;英文朗讀的句子不再黏在一起"]],
   ["10/27", ["語音模式(像 ChatGPT 手機版):輸入框空的時候按右下角的按鈕,全螢幕一顆球,用說的問,說完停一下就送出;回答短、口語,唸出來之後再換你說。點球打斷、可以關麥克風,Esc 或 × 結束。輸入框的麥克風改成聽寫:說的話變成文字,看過再送"]],
   ["10/26", ["每則回答下面有「朗讀」,用這台裝置的聲音唸出來;在「設定 → 朗讀」選聲音和語速",
-             "可以請 HSUAN 畫圖了(NVIDIA 的 FLUX):說「幫我畫一張…」,畫好直接顯示在對話裡,也能從「成品」下載",
-             "側邊欄多了「排程」:設定時間(每天 / 平日 / 週末),時間到了 HSUAN 自動開一段新對話去做,例如每天早上跑測試、整理失敗原因;HSUAN 要開著才會跑,錯過的今天打開時補跑一次",
-             "輸入框多了「深度研究」(有開上網才有):HSUAN 先把問題拆成幾個子問題、問你一次要不要上網,子助理同時上網查,最後整理成附出處的報告、存成文件",
-             "HSUAN 會記住你說過、以後都適用的事(跨對話的記憶):跟它說「記住…」或「以後都…」就會記,新對話自動帶上;在「設定 → 記憶」可以看、加、刪,也可以整個關掉",
+             "可以請 JUSTIN 畫圖了(NVIDIA 的 FLUX):說「幫我畫一張…」,畫好直接顯示在對話裡,也能從「成品」下載",
+             "側邊欄多了「排程」:設定時間(每天 / 平日 / 週末),時間到了 JUSTIN 自動開一段新對話去做,例如每天早上跑測試、整理失敗原因;JUSTIN 要開著才會跑,錯過的今天打開時補跑一次",
+             "輸入框多了「深度研究」(有開上網才有):JUSTIN 先把問題拆成幾個子問題、問你一次要不要上網,子助理同時上網查,最後整理成附出處的報告、存成文件",
+             "JUSTIN 會記住你說過、以後都適用的事(跨對話的記憶):跟它說「記住…」或「以後都…」就會記,新對話自動帶上;在「設定 → 記憶」可以看、加、刪,也可以整個關掉",
              "視窗比較窄的時候,右邊加寬的面板(變更、檔案、瀏覽器)改成蓋在畫面右邊,不會把對話擠到看不見"]],
   ["10/25", ["日常的模型換成 Nemotron 3.5 Super VL(原本的 Nemotron 3 Super 在 NVIDIA 平台下架了)",
              "難的問題會自動交給 DeepSeek(依難度選模型):17 題修 bug 的評測,這樣做對 16 題,只用 Super 是 12 題",
              "主模型沒回應、改由備援模型回答時,畫面上會提醒"]],
-  ["10/24", ["右邊面板多了「變更」「檔案」「瀏覽器」三個分頁(右上角各一個按鈕):變更看 HSUAN 還沒套用的修改和專案裡還沒 commit 的修改;檔案可以瀏覽專案、打開看內容、用 @ 附加到問題;瀏覽器可以預覽你開發中的網站,HSUAN 用瀏覽器時自動切到它看到的畫面。面板左邊緣可以拖拉調寬度",
-             "右上角多了「工作狀態」面板:這段對話在哪個專案和 git 分支、用了上下文的幾成(快滿時會自動整理成摘要)、HSUAN 還沒套用的修改(每個檔案 +/− 幾行,點開看差異,可以直接套用、捨棄、下載 patch)"]],
-  ["10/23", ["右上角多了「終端機」:在這段對話的專案資料夾裡跑指令(只有這台電腦看得到);按「交給 HSUAN」把輸出放進輸入框,請它幫你看錯誤"]],
-  ["10/16", ["回答中可以按「停止」(輸入框空的時候,送出鍵會變成方塊);也可以直接再傳訊息,HSUAN 下一步就會看到,來不及就接著當下一題回答",
+  ["10/24", ["右邊面板多了「變更」「檔案」「瀏覽器」三個分頁(右上角各一個按鈕):變更看 JUSTIN 還沒套用的修改和專案裡還沒 commit 的修改;檔案可以瀏覽專案、打開看內容、用 @ 附加到問題;瀏覽器可以預覽你開發中的網站,JUSTIN 用瀏覽器時自動切到它看到的畫面。面板左邊緣可以拖拉調寬度",
+             "右上角多了「工作狀態」面板:這段對話在哪個專案和 git 分支、用了上下文的幾成(快滿時會自動整理成摘要)、JUSTIN 還沒套用的修改(每個檔案 +/− 幾行,點開看差異,可以直接套用、捨棄、下載 patch)"]],
+  ["10/23", ["右上角多了「終端機」:在這段對話的專案資料夾裡跑指令(只有這台電腦看得到);按「交給 JUSTIN」把輸出放進輸入框,請它幫你看錯誤"]],
+  ["10/16", ["回答中可以按「停止」(輸入框空的時候,送出鍵會變成方塊);也可以直接再傳訊息,JUSTIN 下一步就會看到,來不及就接著當下一題回答",
              "回答更精簡:長度配合問題、不再結尾客套和表情符號、資訊不夠會先問你;你指定長度或格式就照做",
              "做不到的事(例如幫你在電腦上打開檔案)會直接說,不再一直硬試;存好的文件在對話裡就有「下載」按鈕",
-             "模型偶爾回空白、或做到步數上限還沒回答時,HSUAN 會請它把目前查到的先寫出來"]],
-  ["10/15", ["操作瀏覽器:在「設定」打開後,可以請 HSUAN 測試你正在開發的網站(localhost):打開網頁、點按鈕、填表單、看主控台錯誤、截圖看排版;每次打開網址前會先問你",
-             "在外面也能用:電腦和手機都裝 Tailscale(免費的私人 VPN)、登入同一個帳號,「手機與訪客」就會多一個在外面也能連的網址和 QR code;HSUAN 還是不對網際網路公開",
-             "網頁分享:請 HSUAN 做一個網頁(存成 .html),對話裡就能「預覽」;在「成品」按「分享」,同一個 Wi-Fi 的人用連結或 QR code 就能看(不用登入,隨時可以停止分享)",
-             "連接器(MCP):側邊欄多了「連接器」,貼上 MCP server 的設定就能讓 HSUAN 用外部工具(工單系統、資料庫…);每次使用都會先問你,有示範連接器(虛構的工單系統)可以試",
-             "多 agent 分工:輸入框多了「分工」開關,打開後 HSUAN 把這一題彼此獨立的部分分給最多 3 個子助理同時查,每個只交回結論(對話不會被一大堆檔案塞滿);畫面上看得到每個子助理正在做什麼"]],
+             "模型偶爾回空白、或做到步數上限還沒回答時,JUSTIN 會請它把目前查到的先寫出來"]],
+  ["10/15", ["操作瀏覽器:在「設定」打開後,可以請 JUSTIN 測試你正在開發的網站(localhost):打開網頁、點按鈕、填表單、看主控台錯誤、截圖看排版;每次打開網址前會先問你",
+             "在外面也能用:電腦和手機都裝 Tailscale(免費的私人 VPN)、登入同一個帳號,「手機與訪客」就會多一個在外面也能連的網址和 QR code;JUSTIN 還是不對網際網路公開",
+             "網頁分享:請 JUSTIN 做一個網頁(存成 .html),對話裡就能「預覽」;在「成品」按「分享」,同一個 Wi-Fi 的人用連結或 QR code 就能看(不用登入,隨時可以停止分享)",
+             "連接器(MCP):側邊欄多了「連接器」,貼上 MCP server 的設定就能讓 JUSTIN 用外部工具(工單系統、資料庫…);每次使用都會先問你,有示範連接器(虛構的工單系統)可以試",
+             "多 agent 分工:輸入框多了「分工」開關,打開後 JUSTIN 把這一題彼此獨立的部分分給最多 3 個子助理同時查,每個只交回結論(對話不會被一大堆檔案塞滿);畫面上看得到每個子助理正在做什麼"]],
   ["10/10", ["公司資料保護:用的是 NVIDIA 試用平台時,右上角一直顯示「試用平台 · 不放公司資料」;.env 的 COMPANY_PATHS 寫的公司資料夾一律擋下(加專案、知識庫、拖進來、以前加過的都一樣),其他資料夾第一次加入要先確認不是公司資料",
-             "可以把資料夾直接拖進視窗:放在桌面、文件、下載裡的會自動找到原本的位置(HSUAN 改的東西按「套用」才寫進去);找不到才問路徑,留空就上傳一份副本給它分析",
+             "可以把資料夾直接拖進視窗:放在桌面、文件、下載裡的會自動找到原本的位置(JUSTIN 改的東西按「套用」才寫進去);找不到才問路徑,留空就上傳一份副本給它分析",
              "設定 → 外觀多了 7 種參考車廠官網的配色:黑金、賽道紅、深海藍、碳纖黑、純黑白、黃黑、電光藍;拿掉淺色、跟著系統",
              "回答語言拿掉簡體中文(以前選它的會回到繁體中文)",
              "上網讀到的網頁和訪客的問題先經過安全檢查(Nemotron 3.5 Content Safety),藏著要 AI 照做的指令會被擋下",
@@ -1510,7 +1512,7 @@ const CHANGELOG = [
                  "手機訪客模式:給別人訪客 PIN,訪客有自己的空間、看不到你的對話",
                  "設定頁,以及左下角今天的 token 用量",
                  "新對話畫面置中;輸入框可以選這段對話用的模型",
-                 "改名為 HSUAN",
+                 "改名為 JUSTIN",
                  "自己訓練的小模型:決策樹判斷題目難不難、線性回歸預估要花多少 tokens",
                  "桌面版可以打開手機連線:掃 QR code、輸入 PIN,還能加到手機主畫面"]],
   ["10/9 下午", ["做到步數上限還沒完成時,可以換難題模型接著做",
@@ -1525,9 +1527,9 @@ const CHANGELOG = [
 ];
 
 function section(box, title) { box.appendChild(el("h3", "", title)); return box; }
-// 「排程」頁(10/26,像 ChatGPT 的排程):時間到了自動開一段新對話讓 HSUAN 去做
+// 「排程」頁(10/26,像 ChatGPT 的排程):時間到了自動開一段新對話讓 JUSTIN 去做
 function renderSchedules(box, d) {
-  box.appendChild(el("p", "lead", "時間到了,HSUAN 會自動開一段新對話去做,做完出現在側邊欄最上面。HSUAN 要開著才會跑;"
+  box.appendChild(el("p", "lead", "時間到了,JUSTIN 會自動開一段新對話去做,做完出現在側邊欄最上面。JUSTIN 要開著才會跑;"
     + "錯過的話,今天打開時補跑一次。排程沒有人在旁邊按確認,所以不會上網,改程式也只會留在草稿,要你自己看過按套用。"));
   if (!d.can) { box.appendChild(el("div", "none", "訪客和多人模式不能設排程。")); return; }
   const projName = (id) => d.projects.find((p) => p.id === id)?.name;
@@ -1589,14 +1591,14 @@ function renderSchedules(box, d) {
   })));
 }
 
-// 「設定 → 記憶」(10/26,像 ChatGPT 的記憶):HSUAN 跨對話記得的事,每段對話都會帶上;可以看、加、刪、整個關掉
+// 「設定 → 記憶」(10/26,像 ChatGPT 的記憶):JUSTIN 跨對話記得的事,每段對話都會帶上;可以看、加、刪、整個關掉
 async function renderMemory(box) {
   const x = await api("/api/memory");
   box.innerHTML = "";
   if (!x.ok || !x.data.can) return;  // 訪客沒有記憶
   const d = x.data;
   section(box, "記憶");
-  box.appendChild(el("p", "lead", "HSUAN 會記住你說過、以後都適用的事(例如回答風格、常用的語言和工具),每段對話都會帶上,"
+  box.appendChild(el("p", "lead", "JUSTIN 會記住你說過、以後都適用的事(例如回答風格、常用的語言和工具),每段對話都會帶上,"
     + "不用每次重講。對話裡跟它說「記住…」就會記;存在這台電腦,記憶也會跟著每一題送給模型,所以密碼、金鑰不會記。"));
   const set = async (body) => {
     const y = await api("/api/memory", body);
@@ -1605,7 +1607,7 @@ async function renderMemory(box) {
   };
   box.appendChild(el("div", "actions")).appendChild(button(d.on ? "關閉記憶" : "打開記憶", "pill" + (d.on ? "" : " dark"),
     () => set({ on: !d.on })));
-  if (!d.on) box.appendChild(el("p", "lead", "記憶關著:新的一輪不會帶上記得的事,HSUAN 也不會再記新的(記過的留著,打開又會用)。"));
+  if (!d.on) box.appendChild(el("p", "lead", "記憶關著:新的一輪不會帶上記得的事,JUSTIN 也不會再記新的(記過的留著,打開又會用)。"));
   if (!d.items.length) box.appendChild(el("div", "none", "還沒有記得的事。"));
   else {
     const rows = box.appendChild(el("div", "rows"));
@@ -1636,10 +1638,10 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
     renderPage();
   };
   if (!st.on) {
-    box.appendChild(el("p", "lead", "手機也能用 HSUAN:你的手機和電腦看到的是同一份對話,也可以給別人訪客 PIN。"
+    box.appendChild(el("p", "lead", "手機也能用 JUSTIN:你的手機和電腦看到的是同一份對話,也可以給別人訪客 PIN。"
       + "手機要和電腦連同一個 Wi-Fi;電腦和手機都裝 Tailscale 的話,在外面也能連。"));
     box.appendChild(el("div", "actions")).appendChild(button("打開手機連線", "pill dark", act({ on: true })));
-    box.appendChild(el("p", "lead", "第一次打開時 Windows 會問要不要讓 HSUAN 使用網路:請勾「私人網路」並按「允許」。"
+    box.appendChild(el("p", "lead", "第一次打開時 Windows 會問要不要讓 JUSTIN 使用網路:請勾「私人網路」並按「允許」。"
       + (st.phones ? `已配對 ${st.phones} 支手機。` : "")));
     renderDevices(box, st, act);
     renderGuestUsage(box, st, act);
@@ -1659,7 +1661,7 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
   info.appendChild(el("div", "url", main[0] || ""));
   if (main.length > 1) info.appendChild(el("small", "", `連不上再試:${main.slice(1).join("、")}`));
   info.appendChild(el("small", "", `已配對:你的手機 ${st.phones || 0} 支、訪客 ${st.guests || 0} 支(電腦重開也不用再輸入 PIN)`));
-  // 在外面也能連:Tailscale(私人 VPN)。HSUAN 不對網際網路公開,Tailscale 之外的人連不到
+  // 在外面也能連:Tailscale(私人 VPN)。JUSTIN 不對網際網路公開,Tailscale 之外的人連不到
   if (st.urls.length && st.outside?.length) {
     box.appendChild(el("h3", "", "在外面也能連(Tailscale)"));
     const out = box.appendChild(el("div", "phone"));
@@ -1670,7 +1672,7 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
       + "給訪客用:在 Tailscale 的管理頁把這台電腦「分享」給他(他也要裝 Tailscale),再給他訪客 PIN。"));
   } else if (!st.outside?.length) {
     box.appendChild(el("p", "lead", "想在外面(不在同一個 Wi-Fi)也能用:電腦和手機都裝 Tailscale(免費的私人 VPN)、登入同一個帳號,"
-      + "這裡就會多一個「在外面也能連」的網址和 QR code。HSUAN 不對網際網路公開,只有你的 Tailscale 裡的裝置連得到。"));
+      + "這裡就會多一個「在外面也能連」的網址和 QR code。JUSTIN 不對網際網路公開,只有你的 Tailscale 裡的裝置連得到。"));
   }
   if (st.guest_pin) box.appendChild(el("p", "lead",
     "給別人用就給「訪客 PIN」:訪客有自己的空間,看不到你的對話,也碰不到你電腦上的專案;每支訪客手機每天 20 萬 tokens。"
@@ -1680,7 +1682,7 @@ function renderPhone(box, st) {  // 「更多」的手機連線:打開後顯示 
                    "輸入 PIN(你的手機或訪客的那一組)。",
                    "加到主畫面,之後點圖示就打開:iPhone 用 Safari 按「分享」→「加入主畫面」;Android 用 Chrome 按右上「⋮」→「加到主畫面」。第一次從主畫面打開要再輸入一次 PIN。"])
     steps.appendChild(el("li", "", t));
-  box.appendChild(el("p", "lead", "電腦上的 HSUAN 要開著,手機才連得到。連不到的話:確認 Windows 防火牆有允許,而且這個 Wi-Fi 在 Windows 設成「私人網路」。"));
+  box.appendChild(el("p", "lead", "電腦上的 JUSTIN 要開著,手機才連得到。連不到的話:確認 Windows 防火牆有允許,而且這個 Wi-Fi 在 Windows 設成「私人網路」。"));
   const a = box.appendChild(el("div", "actions"));
   a.appendChild(button("關閉手機連線", "pill", act({ on: false })));
   if (st.guests) a.appendChild(button("忘記所有訪客", "pill", () => {
@@ -1732,7 +1734,7 @@ let kbTimer = null;
 let kbSearch = { q: "" };  // 試搜尋的問題和結果(建索引時每 1.5 秒重畫頁面,不能弄丟)
 function renderKnowledge(box, data) {
   box.appendChild(el("p", "lead", "把一個資料夾的文件(手冊、規章、規格書、會議紀錄…)建成索引。之後在對話裡直接問,"
-    + "HSUAN 會照意思找出相關的段落再回答,並附上出處。支援 Markdown、文字檔、CSV、PDF、Word、Excel;檔案改過按「更新」,只會重算改過的。"));
+    + "JUSTIN 會照意思找出相關的段落再回答,並附上出處。支援 Markdown、文字檔、CSV、PDF、Word、Excel;檔案改過按「更新」,只會重算改過的。"));
   if (data.backend !== "nim") box.appendChild(el("p", "lead", "注意:建索引時文件內容會送到 build.nvidia.com 算向量,"
     + "找到的段落也會送給模型。只放可以公開的文件(例如專案裡的 demo_knowledge 示範資料夾),不要放公司文件。"));
   if (!data.semantic) box.appendChild(el("p", "lead", "這個環境沒有設定 embedding 模型(models.yaml 的 embedding),只能用關鍵字搜尋。"));
@@ -1805,15 +1807,15 @@ function renderKnowledge(box, data) {
   clearTimeout(kbTimer);  // 建索引中:每 1.5 秒看一次進度
   if (data.items.some((it) => it.state === "indexing")) kbTimer = setTimeout(() => page === "knowledge" && renderPage(), 1500);
 }
-// ---------- 連接器頁面(MCP):外部工具接給 HSUAN ----------
+// ---------- 連接器頁面(MCP):外部工具接給 JUSTIN ----------
 const MCP_EXAMPLE = '{\n  "mcpServers": {\n    "名稱": { "command": "python", "args": ["server.py"], "env": { "API_KEY": "..." } }\n  }\n}';
 let mcpDraft = "";  // 還沒按「加入」的設定(頁面重畫不要弄丟)
 function renderConnectors(box, data) {
-  box.appendChild(el("p", "lead", "連接器讓 HSUAN 使用外部的工具,例如工單系統、資料庫、GitHub。用的是 MCP 這個業界標準:"
+  box.appendChild(el("p", "lead", "連接器讓 JUSTIN 使用外部的工具,例如工單系統、資料庫、GitHub。用的是 MCP 這個業界標準:"
     + "很多服務都做好了 MCP server,把它說明文件裡的設定貼到下面就能接上(Claude Desktop 的 mcpServers 格式也可以)。"
-    + "HSUAN 每次要用連接器都會先問你,回傳的內容會先經過安全檢查。"));
+    + "JUSTIN 每次要用連接器都會先問你,回傳的內容會先經過安全檢查。"));
   if (!data.can_add) { box.appendChild(el("div", "none", "只有這台電腦可以設定連接器(連接器是在這台電腦上執行的程式)。")); return; }
-  box.appendChild(el("p", "lead", "連接器是在這台電腦上執行的程式,只加你信任的;HSUAN 啟動它時不會把 .env 裡的金鑰傳給它,"
+  box.appendChild(el("p", "lead", "連接器是在這台電腦上執行的程式,只加你信任的;JUSTIN 啟動它時不會把 .env 裡的金鑰傳給它,"
     + "它要的金鑰請寫在它自己的 env。每個工具的說明每一步都要送給模型,工具越多越花 token。"
     + (data.company_ok ? "" : "現在用的是 NVIDIA 試用平台:連接器回傳的內容會送給模型,只接不會碰到公司資料的連接器。")));
   section(box, "你的連接器");
@@ -1892,9 +1894,9 @@ async function renderPage() {
   box.innerHTML = "";
   box.appendChild(el("h2", "", PAGE_TITLES[name]));
   if (name === "outputs") {
-    box.appendChild(el("p", "lead", "HSUAN 做出來的東西:存成檔案的文件,以及每段對話提過的修改(patch)。"));
+    box.appendChild(el("p", "lead", "JUSTIN 做出來的東西:存成檔案的文件,以及每段對話提過的修改(patch)。"));
     section(box, "文件");
-    if (!r.data.docs?.length) box.appendChild(el("div", "none", "還沒有文件。請 HSUAN「寫成文件並存檔」,就會出現在這裡。"));
+    if (!r.data.docs?.length) box.appendChild(el("div", "none", "還沒有文件。請 JUSTIN「寫成文件並存檔」,就會出現在這裡。"));
     else {
       const list = rows(box);
       for (const d of r.data.docs) {
@@ -1928,7 +1930,7 @@ async function renderPage() {
       }
     }
     section(box, "修改(patch)");
-    if (!r.data.patches?.length) box.appendChild(el("div", "none", "這次打開以來還沒有修改。修程式時 HSUAN 提的 patch 會列在這裡。"));
+    if (!r.data.patches?.length) box.appendChild(el("div", "none", "這次打開以來還沒有修改。修程式時 JUSTIN 提的 patch 會列在這裡。"));
     else {
       const list = rows(box);
       for (const p of r.data.patches) {
@@ -1956,7 +1958,7 @@ async function renderPage() {
             [first, button("捨棄", "pill", act("/api/apply", { patch: it.patch ?? -1, action: "discard" })),
              button("打開對話", "pill", () => openConv(it.conv))]);
       }
-      for (const c of it.confirms) row(list, `HSUAN 想要${c.action}`, c.detail,
+      for (const c of it.confirms) row(list, `JUSTIN 想要${c.action}`, c.detail,
         [button("允許這次", "pill primary", act("/api/confirm", { id: c.id, answer: "y" })),
          button("不要", "pill", act("/api/confirm", { id: c.id, answer: "n" }))]);
       if (it.plan) row(list, "計畫等你同意", "看過計畫後決定要不要照著做",
@@ -1970,16 +1972,16 @@ async function renderPage() {
   } else if (name === "schedules") {
     renderSchedules(box, r.data);
   } else if (name === "custom") {
-    box.appendChild(el("p", "lead", "讓 HSUAN 照你的習慣做事。"));
+    box.appendChild(el("p", "lead", "讓 JUSTIN 照你的習慣做事。"));
     if (r.data.chat) {
       box.appendChild(el("div", "none", "對話模式不綁專案,沒有專案規則。要給專案加規則,請切到左上角的「程式」,打開那個專案的對話再來這裡。"
         + "回答用的語言在左下角的帳號選單換。"));
       return;
     }
     section(box, `專案規則(${r.data.project} 的 ASSISTANT.md)`);
-    box.appendChild(el("p", "lead", "每段對話開始時 HSUAN 都會先讀,例如「回答都要附檔案路徑」、「測試用 pytest」。"));
+    box.appendChild(el("p", "lead", "每段對話開始時 JUSTIN 都會先讀,例如「回答都要附檔案路徑」、「測試用 pytest」。"));
     if (r.data.downloaded) box.appendChild(el("p", "lead",
-      "這是從 GitHub 下載的專案:它自帶的 ASSISTANT.md 是別人寫的,HSUAN 不會照著做;你在這裡加的規則另外存在 HSUAN 自己的資料夾。"));
+      "這是從 GitHub 下載的專案:它自帶的 ASSISTANT.md 是別人寫的,JUSTIN 不會照著做;你在這裡加的規則另外存在 JUSTIN 自己的資料夾。"));
     if (r.data.text) box.appendChild(el("pre", "rules", r.data.text)); else box.appendChild(el("div", "none", "這個專案還沒有規則。"));
     if (r.data.team) box.appendChild(el("p", "lead", state.guest ? "訪客不能改專案規則。" : "多人模式的專案規則由管理者維護。"));
     else {
@@ -2010,7 +2012,7 @@ async function renderPage() {
     for (const [t, label] of THEMES)
       look.appendChild(button(label, "pill" + (theme() === t ? " dark" : ""), () => { setTheme(t); renderPage(); }));
     section(box, "回答語言");
-    box.appendChild(el("p", "lead", "HSUAN 回答用的語言(介面文字不變)。改了之後,打開中的對話也馬上換。"));
+    box.appendChild(el("p", "lead", "JUSTIN 回答用的語言(介面文字不變)。改了之後,打開中的對話也馬上換。"));
     const langs = box.appendChild(el("div", "actions"));
     for (const [code, label] of LANGS) langs.appendChild(button(label, "pill" + (state.lang === code ? " dark" : ""), () => setLang(code)));
     renderMemory(box.appendChild(el("div")));  // 跨對話的記憶(訪客沒有:裡面會自己藏起來)
@@ -2019,10 +2021,10 @@ async function renderPage() {
     section(box, "模型");
     box.appendChild(el("p", "lead", `預設 ${state.model || ""}。每段對話可以在輸入框右下角換模型;要改有哪些模型,改 models.yaml。`));
     section(box, "上網");
-    box.appendChild(el("p", "lead", `${state.status || ""}。要開關請改專案資料夾 .env 的 ALLOW_WEB(true / false),改完重新打開 HSUAN。`));
+    box.appendChild(el("p", "lead", `${state.status || ""}。要開關請改專案資料夾 .env 的 ALLOW_WEB(true / false),改完重新打開 JUSTIN。`));
     if (state.browser?.can) {  // 操作瀏覽器:預設關(工具說明每一步都要送),只有自己的電腦能開
       section(box, "操作瀏覽器");
-      box.appendChild(el("p", "lead", "打開後,在「程式」模式可以請 HSUAN 測試你正在開發的網站:它用一個看不見的 Edge 打開網址、點按鈕、填表單、"
+      box.appendChild(el("p", "lead", "打開後,在「程式」模式可以請 JUSTIN 測試你正在開發的網站:它用一個看不見的 Edge 打開網址、點按鈕、填表單、"
         + "看主控台錯誤,也能截圖給看圖模型看排版。只能開 localhost、127.0.0.1、*.localhost、*.test;用獨立的暫存設定檔,"
         + "沒有你的登入和 cookie;每次打開網址前會先問你。打開後每一步多約 300 tokens。"));
       box.appendChild(el("div", "actions")).appendChild(button(state.browser.on ? "關閉操作瀏覽器" : "打開操作瀏覽器",
@@ -2066,15 +2068,15 @@ async function renderPage() {
     const ul = box.appendChild(el("ul", "help"));
     for (const t of [
       "用 @檔名 附上專案裡的檔案,例如:解釋 @calc.py(程式模式)。",
-      "知識庫:側邊欄的「知識庫」加入一個文件資料夾(手冊、規章、規格書…),之後直接問,HSUAN 會照意思找出相關段落、附上出處再回答。",
-      "附圖片:輸入框的「+」→ 上傳圖片,或直接貼上(Ctrl+V)、拖進輸入框。截圖、圖表、照片都可以,HSUAN 會先用看圖的模型讀懂再回答。",
-      "修改先放在 HSUAN 的草稿上,你按「套用到專案」才會真的改檔案;還沒套用的會出現在「待命」。",
-      "大任務打開「先規劃」:HSUAN 先只讀不改、交出計畫,你同意才照計畫做。",
+      "知識庫:側邊欄的「知識庫」加入一個文件資料夾(手冊、規章、規格書…),之後直接問,JUSTIN 會照意思找出相關段落、附上出處再回答。",
+      "附圖片:輸入框的「+」→ 上傳圖片,或直接貼上(Ctrl+V)、拖進輸入框。截圖、圖表、照片都可以,JUSTIN 會先用看圖的模型讀懂再回答。",
+      "修改先放在 JUSTIN 的草稿上,你按「套用到專案」才會真的改檔案;還沒套用的會出現在「待命」。",
+      "大任務打開「先規劃」:JUSTIN 先只讀不改、交出計畫,你同意才照計畫做。",
       "上網前一定會先問你;公司內網和本機網址一律不准。讀到的網頁會先經過安全檢查,藏著要 AI 照做的指令會被擋下。",
-      "掃描的 PDF(沒有文字層)也讀得到:HSUAN 會用看圖的模型一頁一頁讀出來,可能有錯字。",
-      "想用說的:Windows 按 Win+H、手機用鍵盤上的麥克風,系統的語音輸入比較準(10/10 測過 HSUAN 自己的語音辨識,錯字太多)。",
+      "掃描的 PDF(沒有文字層)也讀得到:JUSTIN 會用看圖的模型一頁一頁讀出來,可能有錯字。",
+      "想用說的:Windows 按 Win+H、手機用鍵盤上的麥克風,系統的語音輸入比較準(10/10 測過 JUSTIN 自己的語音辨識,錯字太多)。",
       "左邊每個專案是一個資料夾,底下是它的對話;「新增專案」可以加你自己的資料夾或公開的 GitHub 專案。",
-      "也可以直接把資料夾拖進視窗:放在桌面、文件、下載裡的會自動找到原本的位置,HSUAN 就能改原本的檔案(套用前一樣會先給你看);找不到才問你路徑,留空就只上傳一份副本給它看。",
+      "也可以直接把資料夾拖進視窗:放在桌面、文件、下載裡的會自動找到原本的位置,JUSTIN 就能改原本的檔案(套用前一樣會先給你看);找不到才問你路徑,留空就只上傳一份副本給它看。",
       "輸入框右下角可以換這段對話用的模型;回答語言在左下角的帳號選單換。",
       "對話會自動存檔,關掉再打開還在。",
     ]) ul.appendChild(el("li", "", t));
@@ -2084,7 +2086,7 @@ async function renderPage() {
       keys.appendChild(el("dt", "", k)); keys.appendChild(el("dd", "", v));
     }
   } else if (name === "changelog") {
-    box.appendChild(el("p", "lead", "HSUAN 最近改了什麼(新的在前)。桌面版要關掉再打開,才會用到新功能。"));
+    box.appendChild(el("p", "lead", "JUSTIN 最近改了什麼(新的在前)。桌面版要關掉再打開,才會用到新功能。"));
     const wrap = box.appendChild(el("div", "changelog"));
     for (const [when, items] of CHANGELOG) {
       section(wrap, when);
@@ -2104,17 +2106,17 @@ async function renderPage() {
         : "現在的模型在 build.nvidia.com:試用條款允許 NVIDIA 收集輸入和輸出,而且不能用在正式工作。不要貼公司的程式碼、客戶資料或密碼。",
       ...(state.company_ok === false ? [(state.company_paths || []).length
         ? `公司資料保護:這些公司資料夾一律不能用(專案、知識庫、拖進來的都擋):${state.company_paths.join("、")}。其他資料夾第一次加入要先確認不是公司資料。`
-        : "公司資料保護:加專案、知識庫、拖資料夾進來之前,要先確認不是公司資料。在 .env 的 COMPANY_PATHS 寫上公司資料夾,HSUAN 就會直接擋下。"] : []),
+        : "公司資料保護:加專案、知識庫、拖資料夾進來之前,要先確認不是公司資料。在 .env 的 COMPANY_PATHS 寫上公司資料夾,JUSTIN 就會直接擋下。"] : []),
       state.guest ? "你是訪客:你的對話只有你看得到,但會存在主人的電腦上。"
                   : "對話、草稿、文件都存在這台電腦的 output 資料夾,只有問題和需要的檔案內容會送給模型。",
-      "HSUAN 不會自己改你的檔案:修改都先放在草稿,你按「套用到專案」才會改。程式只在沒有網路的沙箱裡跑。",
+      "JUSTIN 不會自己改你的檔案:修改都先放在草稿,你按「套用到專案」才會改。程式只在沒有網路的沙箱裡跑。",
       "上網前每次都先問你;公司內網和本機網址一律不准連。",
       "附上的圖片會送給看圖的模型(" + (state.backend === "nim" ? "公司內部的伺服器" : "一樣在 build.nvidia.com") + ");對話裡只留縮圖。",
     ]) ul.appendChild(el("li", "", t));
   }
 }
 
-// ---------- 終端機面板(10/23 使用者要的,只有這台電腦):使用者自己跑指令,輸出可以「交給 HSUAN」----------
+// ---------- 終端機面板(10/23 使用者要的,只有這台電腦):使用者自己跑指令,輸出可以「交給 JUSTIN」----------
 function termOpen(on) {
   $("term").hidden = !on;
   $("term-btn").setAttribute("aria-pressed", String(on));
@@ -2171,8 +2173,11 @@ $("term-give").onclick = () => {  // 最後一個指令和輸出放進輸入框:
   autosize(); updateSend(); input.focus();
 };
 
-// ---------- 朗讀回答(10/26 使用者要的):用電腦本機的語音唸出回答 ----------
-// 只用 localService 的聲音(Windows / iOS 內建的),文字不會送到雲端;使用者在設定頁自己選了「線上」的聲音才用線上的
+// ---------- 朗讀回答(10/26 使用者要的):唸出回答 ----------
+// 11/1 使用者要男生的聲音:預設用微軟的自然語音「雲哲」(線上,要唸的文字會送到微軟),語音模式和朗讀都一樣;
+// 地端(cloud_voice 是 false)、沒有自然語音、唸不出來,就用這台電腦內建的(有男聲先用男聲)。設定頁可以改
+const MALE_VOICE = /YunJhe|Zhiwei|Yunxi|Yunyang|Andrew|Brian|Guy|Davis|Christopher|Eric|Roger|Steffan|David|Mark|Keita|Naoki|Ichiro/i;
+const maleVoice = (v) => MALE_VOICE.test(v.name);
 const speech = { voice: store.get("voice", ""), rate: Number(store.get("voiceRate", "1")) || 1, btn: null, run: 0, queue: [], cur: null };
 const VOICE_LANG = { "zh-TW": "zh", en: "en", ja: "ja" };
 const canSpeak = () => "speechSynthesis" in window;
@@ -2184,9 +2189,10 @@ function speechVoices() {  // 回答語言的聲音:本機的在前、台灣的�
   return speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith(want) && (v.localService || cloudVoice()))
     .sort((a, b) => (b.localService - a.localService) || (tw(b) - tw(a)));
 }
-function pickVoice() {
-  const vs = speechVoices();
-  return vs.find((v) => v.voiceURI === speech.voice) || vs.find((v) => v.localService) || null;
+function pickVoice() {  // 使用者選的 → 自然語音(男聲在前)→ 本機的男聲 → 本機的;線上的唸不出來過就只用本機的
+  const vs = speechVoices().filter((v) => v.localService || !speech.naturalFailed);
+  return vs.find((v) => v.voiceURI === speech.voice) || (speech.naturalFailed ? null : naturalVoices()[0])
+    || vs.find((v) => v.localService && maleVoice(v)) || vs.find((v) => v.localService) || null;
 }
 function spokenText(src) {  // Markdown 整理成唸得出來的文字:程式碼不唸、網址不唸、表格和清單的符號拿掉
   return src.replace(/```[\s\S]*?(```|$)/g, "\n(程式碼省略)\n")
@@ -2222,14 +2228,14 @@ function stopSpeaking() {
 }
 const VOICE_NAME = { "zh-TW": "中文(台灣)", en: "英文", ja: "日文" };
 const NO_VOICE_TEXT = () => `這台裝置沒有${VOICE_NAME[state.lang] || "這個語言"}的本機語音。Windows 可以到「設定 → 時間與語言 → 語音」`
-  + `加${VOICE_NAME[state.lang] || "這個語言"}的語音,或到 HSUAN 的「設定 → 朗讀」選一個線上的聲音。`;
+  + `加${VOICE_NAME[state.lang] || "這個語言"}的語音,或到 JUSTIN 的「設定 → 朗讀」選一個線上的聲音。`;
 function markSpeaking(btn) {  // 回答下面的「朗讀」:唸的時候變「停止朗讀」
   if (!btn || !speech.cur) return;
   speech.btn = btn; btn.setAttribute("aria-pressed", "true"); btn.textContent = "停止朗讀";
 }
 // 唸分成三步(10/28,語音模式要邊寫邊唸):speechBegin 選聲音 → speechAdd 一段一段排進去 → speechEnd 不會再排了,排的唸完才 after。
 // after 只在自然唸完時呼叫(中途停掉不會);onPart / onWord:語音模式的字幕和球(開始唸某一段、唸到一個詞)
-// onIdle:排的都唸完了、但還會再排(語音模式:HSUAN 說「我先看看檔案」之後去跑工具,中間沒聲音)
+// onIdle:排的都唸完了、但還會再排(語音模式:JUSTIN 說「我先看看檔案」之後去跑工具,中間沒聲音)
 function speechBegin({ btn = null, after = null, onPart = null, onWord = null, onIdle = null, onFallback = null, voice = null } = {}) {
   stopSpeaking();
   const v = voice || pickVoice();
@@ -2263,8 +2269,8 @@ function speechAdd(text) {  // 排進一段 Markdown(整理成唸得出來的句
 // 線上的聲音唸不出來(沒網路、微軟的服務掛了;10/28 無頭 Edge 的曉臻就是 synthesis-failed):這一段和後面還沒唸的
 // 改用這台電腦的聲音重排,這次開著的頁面之後也都用本機的,不然語音模式會一直沒聲音
 function speechFallback(cur, failed) {
+  speech.naturalFailed = true;  // 先記下來,pickVoice 才不會又挑回線上的
   const local = pickVoice();
-  speech.naturalFailed = true;
   if (!local) return failed.onend();
   const at = speech.queue.indexOf(failed), rest = at < 0 ? [] : speech.queue.slice(at).map((u) => u.text);
   speech.run++; speech.queue = []; speechSynthesis.cancel();  // 換編號:被取消的那幾段觸發的事件不算
@@ -2288,7 +2294,7 @@ function speak(text, opts = {}) {  // 一次排完(朗讀按鈕、試聽);回傳
 }
 function speakButton(text) {
   const b = button("朗讀", "speak", () => speak(text, { btn: b }));
-  b.setAttribute("aria-pressed", "false"); b.title = "用這台裝置的語音唸出這則回答(文字不會送到雲端)";
+  b.setAttribute("aria-pressed", "false"); b.title = "唸出這則回答(聲音在「設定 → 朗讀」換)";
   return b;
 }
 // 語音模式預設用微軟的自然語音(Edge 的線上聲音,10/28 這台有曉臻、雲哲、曉雨):比本機的聲音自然很多,但要唸的文字會送到微軟。
@@ -2297,7 +2303,8 @@ const NATURAL_LANG = { "zh-TW": "zh-tw", en: "en-us", ja: "ja-jp" };
 function naturalVoices() {
   if (!canSpeak() || !cloudVoice()) return [];
   const want = NATURAL_LANG[state.lang] || "zh-tw";
-  return speechSynthesis.getVoices().filter((v) => !v.localService && /natural/i.test(v.name) && v.lang.toLowerCase() === want);
+  return speechSynthesis.getVoices().filter((v) => !v.localService && /natural/i.test(v.name) && v.lang.toLowerCase() === want)
+    .sort((a, b) => maleVoice(b) - maleVoice(a));  // 男聲在前:台灣的是雲哲
 }
 function voiceModeVoice() {
   const pick = store.get("vmVoice", "");
@@ -2324,7 +2331,7 @@ function canTalk() {
 async function consentVoice() {  // 第一次用麥克風:說清楚聲音和文字會送到哪裡,同意才開(存在這台裝置)
   if (store.get("voiceOk2", "") === "1") return true;
   const where = /Edg\//.test(navigator.userAgent) ? "微軟" : "瀏覽器廠商(Chrome 是 Google、Safari 是 Apple)";
-  if (!confirm(`用說的:你說的話由瀏覽器轉成文字,聲音會送到${where}的雲端辨識,轉好的文字跟打字一樣送給 HSUAN。`
+  if (!confirm(`用說的:你說的話由瀏覽器轉成文字,聲音會送到${where}的雲端辨識,轉好的文字跟打字一樣送給 JUSTIN。`
     + "語音模式的回答預設用微軟的自然語音唸,要唸的文字也會送到微軟(「設定 → 朗讀」可以改回這台電腦的聲音)。"
     + "不要用它講公司機密或客戶資料。")) return false;
   store.set("voiceOk2", "1");
@@ -2332,7 +2339,7 @@ async function consentVoice() {  // 第一次用麥克風:說清楚聲音和文�
 }
 function micError(err) {  // 瀏覽器語音辨識的錯誤 → 給人看的原因;沒聽到聲音、被我們中止的不算
   if (err === "not-allowed" || err === "service-not-allowed")
-    return "拿不到麥克風:請允許 HSUAN 使用麥克風(網址列或視窗上方的權限圖示;Windows 的「設定 → 隱私權與安全性 → 麥克風」也要允許)";
+    return "拿不到麥克風:請允許 JUSTIN 使用麥克風(網址列或視窗上方的權限圖示;Windows 的「設定 → 隱私權與安全性 → 麥克風」也要允許)";
   if (err === "audio-capture") return "找不到麥克風";
   if (err === "network") return "語音辨識要連網路(瀏覽器的雲端服務),現在連不上";
   return "";
@@ -2363,7 +2370,7 @@ async function dictate() {
 }
 
 // 語音模式:全螢幕、中間一顆球。你說 → 停一下自動送出(voice: true,回答會短、口語)→ 回答邊寫邊唸 → 唸完再換你說
-// phase:listen 在聽、wait 等 HSUAN 開口、speak 在唸、idle 麥克風關著;muted:使用者關了麥克風(唸完不會再聽)
+// phase:listen 在聽、wait 等 JUSTIN 開口、speak 在唸、idle 麥克風關著;muted:使用者關了麥克風(唸完不會再聽)
 // waiting:在等自己送出的那一題的回答(打斷之後才結束的那一輪不唸、也不打擾正在聽的);spoken:處理過的 done 事件編號
 // stream:這一題邊寫邊唸 —— raw 收到的文字、at 已經排進去唸到哪、started 開始唸了沒
 // barge:戴耳機時唸的時候麥克風也開著,聽到你說話就停下來聽你(沒戴耳機會聽到自己的聲音,預設關)
@@ -2379,12 +2386,12 @@ function voiceUi() {
     ? (voice.barge && !voice.muted ? "正在說 · 直接開口就能插話" : "正在說 · 點球打斷") : VM_STATE[voice.phase] || "");
   mute.setAttribute("aria-pressed", String(voice.muted));
   mute.setAttribute("aria-label", voice.muted ? "打開麥克風" : "關麥克風");
-  mute.title = voice.muted ? "打開麥克風" : "關麥克風(HSUAN 說完不會再聽)";
+  mute.title = voice.muted ? "打開麥克風" : "關麥克風(JUSTIN 說完不會再聽)";
   mute.innerHTML = voice.muted ? MIC_OFF_ICON : MIC_ICON;
   barge.innerHTML = HEADSET_ICON;
   barge.setAttribute("aria-pressed", String(voice.barge));
-  barge.title = voice.barge ? "戴耳機模式:HSUAN 說話時直接開口就能插話(沒戴耳機它會聽到自己的聲音)。按一下關掉"
-    : "戴耳機的話打開:HSUAN 說話時直接開口就能插話,不用點球";
+  barge.title = voice.barge ? "戴耳機模式:JUSTIN 說話時直接開口就能插話(沒戴耳機它會聽到自己的聲音)。按一下關掉"
+    : "戴耳機的話打開:JUSTIN 說話時直接開口就能插話,不用點球";
   $("vm-orb").setAttribute("aria-label", voice.phase === "speak" ? "打斷,換你說" : voice.phase === "idle" ? "打開麥克風" : "語音模式");
 }
 function caption(text, mine = false) {  // 球下面的字幕:你說的話(亮)/ 正在唸的那一段(暗)
@@ -2439,7 +2446,7 @@ function toggleBarge() {
   if (voice.phase === "speak") { if (voice.barge && !voice.muted) listen(true); else if (voice.rec?.over) stopListening(); }
   voiceUi();
 }
-// 聽。over:HSUAN 還在唸(戴耳機模式),聽到你說話才停下來換你說;唸完時 listen() 直接接著用這一次的聽寫
+// 聽。over:JUSTIN 還在唸(戴耳機模式),聽到你說話才停下來換你說;唸完時 listen() 直接接著用這一次的聽寫
 function listen(over = false) {
   if (!voice.on) return;
   if (!over && voice.rec?.over) {  // 唸完了,插話用的那次聽寫還開著:接著用它聽
@@ -2491,7 +2498,7 @@ const idle = () => new Promise((ok) => {
   const t0 = Date.now(), tick = () => (!busy || Date.now() - t0 > 15000 ? ok() : setTimeout(tick, 100));
   tick();
 });
-function cutIn() {  // 插話:不唸了;HSUAN 還在寫就一起停(像 ChatGPT,打斷之後它不會接著講完)
+function cutIn() {  // 插話:不唸了;JUSTIN 還在寫就一起停(像 ChatGPT,打斷之後它不會接著講完)
   stopSpeaking(); voice.stream = null;
   if (voice.waiting) { voice.waiting = false; api("/api/stop", {}); }
 }
@@ -2545,7 +2552,7 @@ function voiceAnswer(e, btn) {  // handlers.done:剩下的排進去唸,唸完再
 function voiceError(e) {  // handlers.error:麥克風先關,畫面說出錯了
   if (voice.on && e.seq > pane.liveSeq) {
     voice.waiting = false; voice.stream = null; stopSpeaking(); stopListening();
-    voice.phase = "idle"; micOff("HSUAN 出錯了 · 按麥克風再說一次");
+    voice.phase = "idle"; micOff("JUSTIN 出錯了 · 按麥克風再說一次");
   }
 }
 $("voice").hidden = !canTalk();
@@ -2561,8 +2568,9 @@ function renderVoice(box) {  // 設定頁的「朗讀」
   section(box, "朗讀");
   if (!cloudVoice()) box.appendChild(el("p", "lead", "現在是地端模式:聽寫和語音模式要把說話的聲音送到雲端辨識,公司資料不能出去,所以關掉了;"
     + "朗讀只用這台電腦的聲音。公司核准了雲端語音服務,再請管理者在 models.yaml 把 cloud_voice 改成 true。"));
-  box.appendChild(el("p", "lead", "每則回答下面有「朗讀」按鈕。預設用這台裝置內建的聲音(本機),文字不會送到雲端;"
-    + "選了標「線上」的聲音,要唸的文字會送到瀏覽器廠商的伺服器。"
+  box.appendChild(el("p", "lead", "每則回答下面有「朗讀」按鈕。"
+    + (naturalVoices().length ? "預設用微軟的自然語音(男聲「雲哲」,線上:要唸的文字會送到微軟);也可以改成這台裝置內建的聲音(本機,文字不出這台電腦)。"
+      : "用這台裝置內建的聲音(本機),文字不會送到雲端;選了標「線上」的聲音,要唸的文字會送到瀏覽器廠商的伺服器。")
     + (canTalk() ? "輸入框的麥克風是聽寫(說的話變成文字,看過再送);輸入框空的時候,右下角的按鈕是語音模式:用說的對話,回答唸完再換你說。"
       + "聽你說話用的是瀏覽器的雲端辨識。" : "")));
   const vs = speechVoices();
@@ -2576,11 +2584,11 @@ function renderVoice(box) {  // 設定頁的「朗讀」
   for (const r of [0.8, 1, 1.2, 1.5]) rate.appendChild(new Option(`語速 ${r}×`, String(r)));
   rate.value = String(speech.rate);
   rate.onchange = () => { speech.rate = Number(rate.value); store.set("voiceRate", rate.value); };
-  f.appendChild(button("試聽", "pill", () => speak("你好,我是 HSUAN。這是朗讀回答的聲音。")));
+  f.appendChild(button("試聽", "pill", () => speak("你好,我是 JUSTIN。這是朗讀回答的聲音。")));
   if (!canTalk()) return;
   // 語音模式的聲音:預設微軟的自然語音(線上),也可以改回本機
   const ns = naturalVoices();
-  box.appendChild(el("p", "lead", "語音模式的聲音" + (ns.length ? ":預設用微軟的自然語音,比較像真人,但要唸的文字會送到微軟。" : ":這個瀏覽器沒有自然語音,用上面選的聲音。")));
+  box.appendChild(el("p", "lead", "語音模式的聲音" + (ns.length ? ":預設用微軟的自然語音(男聲「雲哲」),比較像真人,但要唸的文字會送到微軟。" : ":這個瀏覽器沒有自然語音,用上面選的聲音。")));
   if (!ns.length) return;
   const g = box.appendChild(el("div", "field"));
   const vm = g.appendChild(el("select")); vm.className = "config"; vm.style.minHeight = "auto";
@@ -2588,7 +2596,7 @@ function renderVoice(box) {  // 設定頁的「朗讀」
   vm.appendChild(new Option("跟上面一樣(本機,文字不出這台電腦)", "local"));
   vm.value = store.get("vmVoice", "") === "local" ? "local" : voiceModeVoice()?.voiceURI || ns[0].voiceURI;
   vm.onchange = () => store.set("vmVoice", vm.value);
-  g.appendChild(button("試聽", "pill", () => speak("你好,我是 HSUAN。語音模式會用這個聲音跟你說話。", { voice: voiceModeVoice() })));
+  g.appendChild(button("試聽", "pill", () => speak("你好,我是 JUSTIN。語音模式會用這個聲音跟你說話。", { voice: voiceModeVoice() })));
 }
 
 // ---------- 右邊的面板(10/24 使用者要的,像 Claude 桌面版):狀態 / 變更 / 檔案 / 瀏覽器 ----------
@@ -2641,7 +2649,7 @@ async function loadPanel() {
     loadBrowser();
   }
 }
-// 事件來了:目前的分頁需要才重新整理;HSUAN 剛用了瀏覽器就切到它看到的畫面(手機上不自動打開,會蓋住對話)
+// 事件來了:目前的分頁需要才重新整理;JUSTIN 剛用了瀏覽器就切到它看到的畫面(手機上不自動打開,會蓋住對話)
 function panelEvent(e) {
   const done = (name) => e.kind === "tool_done" && e.name === name;
   if (done("browser") && e.seq > pane.liveSeq && (!$("panel").hidden || !phoneWidth())) {
@@ -2725,7 +2733,7 @@ function renderStatus(d) {
   if (!d.changes) return;
   const ch = d.changes, chg = pcard(box, "變更");
   if (!ch.files.length) {
-    chg.card.appendChild(el("p", "pnote", "HSUAN 還沒有改任何檔案。它的修改會先放在草稿,你按「套用到專案」才會改到檔案。"));
+    chg.card.appendChild(el("p", "pnote", "JUSTIN 還沒有改任何檔案。它的修改會先放在草稿,你按「套用到專案」才會改到檔案。"));
     return;
   }
   chg.right.append(...plusMinus(ch.files.reduce((s, f) => s + f.added, 0), ch.files.reduce((s, f) => s + f.removed, 0)));
@@ -2733,15 +2741,15 @@ function renderStatus(d) {
   draftActions(chg.card, ch);
 }
 
-// 變更:HSUAN 草稿裡還沒套用的(上面)、專案裡還沒 commit 的(下面,git diff,只讀)
+// 變更:JUSTIN 草稿裡還沒套用的(上面)、專案裡還沒 commit 的(下面,git diff,只讀)
 function renderChanges(p, g) {
   const box = paneBox("changes"), first = !box.childElementCount;
   const open = first ? null : new Set([...box.querySelectorAll(".pfile[open]")].map((x) => x.dataset.key));
   box.innerHTML = "";
   if (!p || !p.changes) { box.appendChild(el("p", "pnote", "對話模式不綁專案,沒有檔案的變更。")); return; }
-  const ch = p.changes, draft = pcard(box, "HSUAN 的草稿(還沒套用)");
+  const ch = p.changes, draft = pcard(box, "JUSTIN 的草稿(還沒套用)");
   if (!ch.files.length) {
-    draft.card.appendChild(el("p", "pnote", "沒有還沒套用的修改。HSUAN 的修改會先放在這裡,你按「套用到專案」才會改到檔案。"));
+    draft.card.appendChild(el("p", "pnote", "沒有還沒套用的修改。JUSTIN 的修改會先放在這裡,你按「套用到專案」才會改到檔案。"));
   } else {
     draft.right.append(...plusMinus(ch.files.reduce((s, f) => s + f.added, 0), ch.files.reduce((s, f) => s + f.removed, 0)));
     for (const f of ch.files) fileDiff(draft.card, f, "d:", open, ch.files.length <= 5);
@@ -2769,7 +2777,7 @@ function renderChanges(p, g) {
   if (state.terminal) git.card.appendChild(el("p", "pnote", "要 commit 可以用右上角的終端機(git add、git commit)。"));
 }
 
-// 檔案:專案的檔案樹(唯讀),點開看內容;草稿改過的看到的是草稿版本(跟 HSUAN 讀到的一樣)
+// 檔案:專案的檔案樹(唯讀),點開看內容;草稿改過的看到的是草稿版本(跟 JUSTIN 讀到的一樣)
 async function loadFiles() {
   const x = await api("/api/files");
   const box = paneBox("files");
@@ -2844,7 +2852,7 @@ async function openFile(path) {
   const bar = box.appendChild(el("div", "pbar"));
   bar.appendChild(button("← 檔案", "pill", () => { pane.file = null; pane.files ? renderFiles() : loadFiles(); }));
   bar.appendChild(el("span", "spacer")).style.flex = "1";
-  const at = bar.appendChild(button("@ 附加到問題", "pill", () => {  // 跟自己打 @檔名 一樣:送出時 HSUAN 會讀這個檔案
+  const at = bar.appendChild(button("@ 附加到問題", "pill", () => {  // 跟自己打 @檔名 一樣:送出時 JUSTIN 會讀這個檔案
     input.value = input.value.replace(/\s*$/, input.value.trim() ? " " : "") + `@${path} `;
     autosize(); updateSend(); input.focus();
     if (phoneWidth()) panelOpen(false);
@@ -2856,9 +2864,9 @@ async function openFile(path) {
   if (pane.file !== path || pane.tab !== "files") return;  // 等的時候已經換了
   if (!x.ok) { box.appendChild(el("p", "pnote", x.data.error || "打不開這個檔案")); return; }
   const d = x.data;
-  if (d.draft) { head.prepend(el("span", "tag warn", "草稿")); box.appendChild(el("p", "pnote", "這是 HSUAN 草稿裡的版本(還沒套用到專案)。")); }
+  if (d.draft) { head.prepend(el("span", "tag warn", "草稿")); box.appendChild(el("p", "pnote", "這是 JUSTIN 草稿裡的版本(還沒套用到專案)。")); }
   if (d.binary) {
-    box.appendChild(el("p", "pnote", "二進位檔(圖片、PDF、Office 檔…),這裡不能顯示。可以用 @ 附加,HSUAN 讀得懂 PDF、Word、Excel 和圖片。"));
+    box.appendChild(el("p", "pnote", "二進位檔(圖片、PDF、Office 檔…),這裡不能顯示。可以用 @ 附加,JUSTIN 讀得懂 PDF、Word、Excel 和圖片。"));
     return;
   }
   const lines = d.text.split("\n"), w = String(lines.length).length;
@@ -2867,8 +2875,8 @@ async function openFile(path) {
   if (d.truncated) box.appendChild(el("p", "pnote", `檔案很大(${fmtSize(d.size)}),只顯示前面的部分。`));
 }
 
-// 瀏覽器:「你的網站」在面板裡預覽開發中的網站(可以點、打字);「HSUAN 的畫面」是它用瀏覽器工具時每個動作後的截圖
-// 網址只收開發用的位址(跟 HSUAN 的瀏覽器工具同一套規則)
+// 瀏覽器:「你的網站」在面板裡預覽開發中的網站(可以點、打字);「JUSTIN 的畫面」是它用瀏覽器工具時每個動作後的截圖
+// 網址只收開發用的位址(跟 JUSTIN 的瀏覽器工具同一套規則)
 function isDevUrl(u) {
   try {
     const x = new URL(u);
@@ -2879,7 +2887,7 @@ function buildBrowser() {  // 只建一次:iframe 重建就會重新載入,使�
   const box = paneBox("browser");
   if (box.childElementCount) return;
   const seg = box.appendChild(el("div", "seg"));
-  for (const [v, label] of [["mine", "你的網站"], ["hsuan", "HSUAN 的畫面"]]) seg.appendChild(button(label, "", () => setBrowserView(v))).dataset.view = v;
+  for (const [v, label] of [["mine", "你的網站"], ["hsuan", "JUSTIN 的畫面"]]) seg.appendChild(button(label, "", () => setBrowserView(v))).dataset.view = v;
   const mine = box.appendChild(el("div", "bview")); mine.dataset.view = "mine";
   const form = mine.appendChild(el("form", "pbar"));
   const url = form.appendChild(el("input")); url.id = "preview-url";
@@ -2893,7 +2901,7 @@ function buildBrowser() {  // 只建一次:iframe 重建就會重新載入,使�
   out.innerHTML = icon('<path d="M11 3.5h5.5V9M16.5 3.5L9 11M14 12v4.5H3.5V6H8"/>');
   const note = mine.appendChild(el("p", "pnote"));
   const frame = mine.appendChild(el("iframe", "bframe")); frame.id = "preview-frame"; frame.title = "網站預覽";
-  // 預覽的網站跟 HSUAN 不同來源(port 不同),讀不到 HSUAN 的 token;不給 allow-top-navigation,不能把整頁換掉
+  // 預覽的網站跟 JUSTIN 不同來源(port 不同),讀不到 JUSTIN 的 token;不給 allow-top-navigation,不能把整頁換掉
   frame.setAttribute("sandbox", "allow-scripts allow-forms allow-same-origin allow-popups allow-modals allow-downloads");
   const go = (u) => {
     u = u.trim();
@@ -2909,8 +2917,8 @@ function buildBrowser() {  // 只建一次:iframe 重建就會重新載入,使�
   go(pane.url);
   const hs = box.appendChild(el("div", "bview")); hs.dataset.view = "hsuan";
   hs.appendChild(el("p", "pnote")).id = "shot-meta";
-  const img = hs.appendChild(el("img", "bshot")); img.id = "shot-img"; img.alt = "HSUAN 的瀏覽器畫面"; img.hidden = true;
-  hs.appendChild(el("p", "pnote", "HSUAN 用瀏覽器工具時會自動更新(每個動作後一張截圖,不能點)。要自己操作請切到「你的網站」。"));
+  const img = hs.appendChild(el("img", "bshot")); img.id = "shot-img"; img.alt = "JUSTIN 的瀏覽器畫面"; img.hidden = true;
+  hs.appendChild(el("p", "pnote", "JUSTIN 用瀏覽器工具時會自動更新(每個動作後一張截圖,不能點)。要自己操作請切到「你的網站」。"));
 }
 function setBrowserView(v) {
   pane.view = v; store.set("browserView", v);
@@ -2926,7 +2934,7 @@ async function loadBrowser() {
   img.hidden = !shot;
   $("shot-meta").textContent = shot
     ? `${shot.url} · ${new Date(shot.at * 1000).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
-    : "這段對話 HSUAN 還沒用過瀏覽器。在「設定」打開「操作瀏覽器」,再請它測你的網站。";
+    : "這段對話 JUSTIN 還沒用過瀏覽器。在「設定」打開「操作瀏覽器」,再請它測你的網站。";
   if (shot) img.src = `/api/browser/shot?token=${encodeURIComponent(TOKEN)}&c=${encodeURIComponent(conv)}&t=${shot.at}`;
 }
 
@@ -2963,7 +2971,7 @@ function setResearchMode(on) {
   if (on) { setPlanMode(false); setSplitMode(false); }
   input.placeholder = on ? "要研究什麼?例如:2026 年企業導入 AI 程式助理的資安風險" : planMode ? "要規劃什麼任務?" : "請輸入訊息…";
 }
-let splitMode = false;  // 「分工」:這一題請 HSUAN 分給子助理(agent.SPLIT_NOTE),送出後自動關掉
+let splitMode = false;  // 「分工」:這一題請 JUSTIN 分給子助理(agent.SPLIT_NOTE),送出後自動關掉
 function setSplitMode(on) {
   splitMode = on;
   $("split-mode").setAttribute("aria-pressed", String(on));
@@ -3052,8 +3060,8 @@ document.addEventListener("drop", (ev) => {
 });
 
 // ---------- 把資料夾拖進來(像 Claude):瀏覽器拿不到資料夾原本的位置,只拿得到裡面的檔案 ----------
-// 所以先問路徑:貼了(而且裡面的檔案對得上)就直接用原本的資料夾,HSUAN 改的東西套用時會寫回去;
-// 留空就把檔案傳一份副本給 HSUAN(只看、分析,原本的不會變)
+// 所以先問路徑:貼了(而且裡面的檔案對得上)就直接用原本的資料夾,JUSTIN 改的東西套用時會寫回去;
+// 留空就把檔案傳一份副本給 JUSTIN(只看、分析,原本的不會變)
 const UP_SKIP_DIRS = new Set(["node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build", ".next", "target", ".idea", ".vs"]);
 const UP_BINARY = /\.(exe|dll|so|dylib|zip|7z|rar|gz|tar|iso|mp4|mov|avi|mkv|mp3|wav|bin|pyc|class|jar|psd|ai)$/i;
 const UP_FILE = 5e6, UP_TOTAL = 50e6, UP_COUNT = 2000, UP_BATCH = 6e6;  // 跟伺服器的 UPLOAD_MAX_* 一樣
@@ -3089,18 +3097,18 @@ async function dropFolder(root) {
     files.push(x); total += x.file.size;
   }
   if (!files.length) return alert(`「${root.name}」裡沒有可以讀的檔案`);
-  // 抽樣幾個檔案的大小:HSUAN 用它在這台電腦上找原本的資料夾、或檢查使用者貼的路徑對不對
+  // 抽樣幾個檔案的大小:JUSTIN 用它在這台電腦上找原本的資料夾、或檢查使用者貼的路徑對不對
   const expect = files.filter((_, i) => i % Math.ceil(files.length / 20) === 0).map((x) => ({ path: x.path, size: x.file.size }));
   const decl = {};  // 試用平台上「這不是公司資料」只問一次
   const found = await apiDeclared("/api/project/locate", { name: root.name, expect }, decl);
   if (found.cancelled) return;
   if (found.status === 400) return alert(found.data.error);  // 例如找到了,但在公司資料夾裡
   if (found.ok && found.data.project) {  // 自己找到了:直接用原本的資料夾,不用問(10/10 使用者嫌每次都要貼路徑)
-    return openDropped(found.data.project, `已找到「${root.name}」:${found.data.project.path}(HSUAN 改的東西,你按「套用到專案」才會寫進去)`);
+    return openDropped(found.data.project, `已找到「${root.name}」:${found.data.project.path}(JUSTIN 改的東西,你按「套用到專案」才會寫進去)`);
   }
-  const path = prompt(`HSUAN 在桌面、文件、下載裡找不到「${root.name}」。\n要讓 HSUAN 能直接修改裡面的檔案,請貼上這個資料夾的完整路徑\n`
+  const path = prompt(`JUSTIN 在桌面、文件、下載裡找不到「${root.name}」。\n要讓 JUSTIN 能直接修改裡面的檔案,請貼上這個資料夾的完整路徑\n`
     + "(在檔案總管上方的網址列按右鍵 →「複製位址」)。\n\n"
-    + `留空按「確定」= 只上傳一份副本給 HSUAN 看(${files.length} 個檔案、${fmtSize(total)}),原本的檔案不會被改。`
+    + `留空按「確定」= 只上傳一份副本給 JUSTIN 看(${files.length} 個檔案、${fmtSize(total)}),原本的檔案不會被改。`
     + (skipped ? `\n(會略過 ${skipped} 個隱藏檔、執行檔或太大的檔案)` : ""), "");
   if (path === null) return;  // 按了取消
   let proj;

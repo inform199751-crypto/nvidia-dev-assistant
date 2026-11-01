@@ -6,8 +6,8 @@
 安全:
 - 只有這台電腦能用(webui 檢查:不是本機、訪客、多人模式一律 403)—— 不然手機 / 訪客就能在主人電腦上執行指令。
 - 環境變數拿掉 .env 讀進來的和名字像金鑰的(跟 MCP 連接器同一套,mcp_client.child_env):
-  不然 `env` 會把 NVIDIA 金鑰印在畫面上,一按「交給 HSUAN」就送給模型了。
-- 模型碰不到:輸出只有使用者按「交給 HSUAN」、自己看過再送出,才會進對話。
+  不然 `env` 會把 NVIDIA 金鑰印在畫面上,一按「交給 JUSTIN」就送給模型了。
+- 模型碰不到:輸出只有使用者按「交給 JUSTIN」、自己看過再送出,才會進對話。
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ class Terminal:
         self.cwd = Path(cwd)
         self.lines: deque[str] = deque(maxlen=MAX_LINES)
         self.count = 0           # 到現在總共寫過幾行(包含已經丟掉的)
-        self.last_start = 0      # 最近一個指令從第幾行開始(「交給 HSUAN」拿這之後的)
+        self.last_start = 0      # 最近一個指令從第幾行開始(「交給 JUSTIN」拿這之後的)
         self.proc: subprocess.Popen | None = None
         self.lock = threading.Lock()
 

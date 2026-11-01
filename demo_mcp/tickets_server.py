@@ -1,6 +1,6 @@
-"""示範用的 MCP server:虛構的客服工單系統(資料是編的)。HSUAN「連接器」的實測和離線測試都用它。
+"""示範用的 MCP server:虛構的客服工單系統(資料是編的)。JUSTIN「連接器」的實測和離線測試都用它。
 
-只用標準函式庫,stdio 傳輸(一行一個 JSON-RPC 訊息)。在 HSUAN 的「連接器」頁按「加入示範連接器」就會接上。
+只用標準函式庫,stdio 傳輸(一行一個 JSON-RPC 訊息)。在 JUSTIN 的「連接器」頁按「加入示範連接器」就會接上。
 """
 from __future__ import annotations
 

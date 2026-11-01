@@ -98,7 +98,7 @@ def edit_image(image: str, prompt: str) -> str:
     name = Path(str(image).strip()).name
     meta = _drawings().get(name)
     if not meta:
-        return f"錯誤:找不到 {name} 的畫圖紀錄,只能改 HSUAN 畫的圖;可以用 generate_image 照使用者的意思重新畫一張"
+        return f"錯誤:找不到 {name} 的畫圖紀錄,只能改 JUSTIN 畫的圖;可以用 generate_image 照使用者的意思重新畫一張"
     prompt = " ".join(str(prompt).split())[:MAX_PROMPT_CHARS]
     if not prompt:
         return "錯誤:prompt 是空的,請寫改好之後完整的描述"

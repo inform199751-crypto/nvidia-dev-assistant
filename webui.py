@@ -1,4 +1,4 @@
-"""網頁介面:在瀏覽器裡跟 HSUAN 聊天(像 Claude 的網頁版)。
+"""網頁介面:在瀏覽器裡跟 JUSTIN 聊天(像 Claude 的網頁版)。
 
     python webui.py            → 開 http://127.0.0.1:8765 並自動打開瀏覽器(只有這台電腦連得到)
     python webui.py --lan      → 同一個 Wi-Fi 的手機也能開:終端機會印出網址和 6 位數 PIN
@@ -316,7 +316,7 @@ class PhoneLink:
             (self.store / "phone.json").write_text(json.dumps({"on": on}), encoding="utf-8")
 
     def resume(self) -> None:
-        """上次關掉 HSUAN 時是開著的,就再打開。"""
+        """上次關掉 JUSTIN 時是開著的,就再打開。"""
         try:
             on = json.loads((self.store / "phone.json").read_text(encoding="utf-8")).get("on") if self.store else False
         except (OSError, ValueError, AttributeError):
@@ -345,7 +345,7 @@ class PhoneLink:
         return ""
 
     def close(self) -> None:
-        """關掉伺服器(HSUAN 結束時用:不改記住的開關狀態)。"""
+        """關掉伺服器(JUSTIN 結束時用:不改記住的開關狀態)。"""
         with self.lock:
             server, self.server = self.server, None
             self.lan.open = False  # 連著的手機在下一次檢查時斷開
@@ -399,7 +399,7 @@ PUBLIC_FILES = {"/favicon.ico": ("assistant.ico", "image/x-icon"),
                 "/icon-maskable-512.png": ("icon-maskable-512.png", "image/png"),
                 "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png")}
 # 手機「加到主畫面」:有這個 manifest,主畫面的圖示點開就是全螢幕的小助理(沒有網址列)
-MANIFEST = {"name": "HSUAN", "short_name": "HSUAN", "id": "/", "start_url": "/", "scope": "/",
+MANIFEST = {"name": "JUSTIN", "short_name": "JUSTIN", "id": "/", "start_url": "/", "scope": "/",
             "display": "standalone", "background_color": "#121212", "theme_color": "#0a0a0a",
             "icons": [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
                       {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"},
@@ -409,8 +409,8 @@ MANIFEST = {"name": "HSUAN", "short_name": "HSUAN", "id": "/", "start_url": "/",
 LOGIN_PAGE = """<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#121212">
 <link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="HSUAN">
-<title>HSUAN · 登入</title>
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="JUSTIN">
+<title>JUSTIN · 登入</title>
 <style>
 :root{color-scheme:dark;--bg:#121212;--text:#ececec;--muted:#b4b4b4;--line:#2a2a2a;--btn:#fff;--btn-ink:#0d0d0d;--error:#f87171}
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--text);
@@ -423,7 +423,7 @@ button{margin-top:14px;width:100%;padding:12px;border:0;border-radius:999px;back
 .err{color:var(--error);min-height:1.6em;margin-top:10px;font-size:14px}
 .note{margin-top:18px;font-size:12px;line-height:1.6}
 </style></head><body>
-<form id="f"><h1>HSUAN</h1><p>輸入電腦上顯示的 6 位數 PIN</p>
+<form id="f"><h1>JUSTIN</h1><p>輸入電腦上顯示的 6 位數 PIN</p>
 <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required autofocus aria-label="PIN">
 <button type="submit">登入</button><div class="err" id="err" role="alert"></div>
 <p class="note">用訪客 PIN 登入的話,你的對話只有你看得到,但會存在這台電腦上。</p></form>
@@ -589,7 +589,7 @@ class Hub:
             return "沒有這個模型"
         with self.cond:
             if self.busy:
-                return "HSUAN 還在回答,等這一輪結束再換"
+                return "JUSTIN 還在回答,等這一輪結束再換"
             self.session.requested_role = role
         return ""
 
@@ -599,7 +599,7 @@ class Hub:
             return "沒有這個努力程度"
         with self.cond:
             if self.busy:
-                return "HSUAN 還在回答,等這一輪結束再換"
+                return "JUSTIN 還在回答,等這一輪結束再換"
             self.session.effort = effort
         return ""
 
@@ -730,7 +730,7 @@ class Hub:
         before, planned, offer = len(patches), False, None
         try:
             if self.screen and (v := guard.screen(text)).safe is False:
-                raise guard.Blocked(f"這個問題沒有通過安全檢查({v.categories or '不當內容'}),HSUAN 不會回答。")
+                raise guard.Blocked(f"這個問題沒有通過安全檢查({v.categories or '不當內容'}),JUSTIN 不會回答。")
             if not self.chat:  # 公司資料夾(.env 的 COMPANY_PATHS)在試用平台上不能用,以前加過的專案也一樣
                 try:
                     guard.check_folder(self.workspace, public=True)
@@ -795,7 +795,7 @@ class Hub:
     def compact(self) -> str:
         with self.cond:
             if self.busy:
-                return "HSUAN 還在回答,等這一輪結束再整理"
+                return "JUSTIN 還在回答,等這一輪結束再整理"
             self.busy = True  # 整理摘要要呼叫模型,期間不接新問題
         try:
             return "" if self.session.compact() else "還沒有可以整理的對話"
@@ -852,7 +852,7 @@ class Hub:
         """action:apply 套用草稿 / keep 先不要(草稿留著繼續改)/ discard 捨棄草稿。"""
         with self.cond:
             if self.busy:
-                return "HSUAN 還在回答,等這一輪結束再處理"
+                return "JUSTIN 還在回答,等這一輪結束再處理"
         if index == -1:  # 「待命」頁面:最新的那份(包含草稿全部修改)
             index = len(self.bench.patches) - 1
         if not 0 <= index < len(self.bench.patches):
@@ -870,7 +870,7 @@ class Hub:
                 result = toolbox.discard_draft()
                 self.note += "<note>使用者已捨棄你草稿裡的所有修改,檔案回到原本的內容。</note>\n"
             else:
-                result = "沒有套用。草稿留著,可以繼續請 HSUAN 改,之後再套用。"
+                result = "沒有套用。草稿留著,可以繼續請 JUSTIN 改,之後再套用。"
         self.publish("applied", {"patch": index, "text": result})
         return result
 
@@ -892,7 +892,7 @@ class Hub:
                               "added": sum(1 for x in lines if x.startswith("+") and not x.startswith("+++")),
                               "removed": sum(1 for x in lines if x.startswith("-") and not x.startswith("---"))})
         patches, shot = self.bench.patches, self.bench.browser_shot
-        # 拖進來的副本放在 HSUAN 的 output 裡:往上找到的是 HSUAN 自己的 git,不是這個專案的
+        # 拖進來的副本放在 JUSTIN 的 output 裡:往上找到的是 JUSTIN 自己的 git,不是這個專案的
         branch = None if self.copy else git_branch(self.workspace)
         return {"env": None if self.chat else {"project": self.workspace.name, "branch": branch,
                                                "path": str(self.workspace) if paths else "", "copy": self.copy},
@@ -926,7 +926,7 @@ class Hub:
         return {"root": root.name, "files": out, "more": more}
 
     def source(self, rel: str) -> dict:
-        """「檔案」分頁打開一個檔案:草稿改過的給草稿版本(跟 HSUAN 讀到的一樣)。機密檔、工作區外丟 PermissionError / ValueError。"""
+        """「檔案」分頁打開一個檔案:草稿改過的給草稿版本(跟 JUSTIN 讀到的一樣)。機密檔、工作區外丟 PermissionError / ValueError。"""
         with toolbox.using(self.bench):
             p = toolbox._safe_path(rel)
             rel = toolbox._rel(p)
@@ -1035,7 +1035,7 @@ def doc_path(d: Path, name: str) -> Path | None:
 
 
 PAGE_SUFFIXES = {".html"}  # 「成品」裡可以預覽、分享的網頁
-# HSUAN 做的網頁(預覽、分享)用沙箱打開:跟 HSUAN 不同來源(網頁裡的程式拿不到 token、cookie),也不能連網
+# JUSTIN 做的網頁(預覽、分享)用沙箱打開:跟 JUSTIN 不同來源(網頁裡的程式拿不到 token、cookie),也不能連網
 # (不能把看的人的資料送出去、不能載外部資源)。模型寫的網頁可能被網頁內容、連接器回傳的指令影響,不能信任
 PAGE_HEADERS = {
     "Content-Security-Policy": "sandbox allow-scripts allow-modals allow-popups; default-src 'none'; "
@@ -1475,7 +1475,7 @@ class Desk:
             return proj
 
     def locate_project(self, name: str, expect: list, public: bool = False) -> dict | None:
-        """拖進來的資料夾在這台電腦的哪裡:瀏覽器不給路徑,但 HSUAN 就跑在同一台電腦上,可以自己找(10/10 使用者嫌
+        """拖進來的資料夾在這台電腦的哪裡:瀏覽器不給路徑,但 JUSTIN 就跑在同一台電腦上,可以自己找(10/10 使用者嫌
         每次都要貼路徑)。找到就直接當專案(之後「套用」改原本的檔案),找不到回 None,再問使用者。"""
         if not self.can_add_projects:
             raise PermissionError("這裡不能加資料夾")
@@ -1690,7 +1690,7 @@ class Desk:
         return next((c for c, h in self.hubs.items() if h is hub), None)
 
     def run_schedule(self, item: dict) -> str:
-        """排程時間到了(或按了「立刻跑」):開一段新對話,標題「名稱 · 時間」,讓 HSUAN 去做;跑完記下結果。回傳對話 id。"""
+        """排程時間到了(或按了「立刻跑」):開一段新對話,標題「名稱 · 時間」,讓 JUSTIN 去做;跑完記下結果。回傳對話 id。"""
         pid = item.get("project") if self.project(item.get("project") or "") else None
         cid = self.new_conversation(pid, item.get("kind", "code"))
         self.rename(cid, f"{item['name']} · {time.strftime('%m/%d %H:%M')}")
@@ -1764,7 +1764,7 @@ class Desk:
     def doc_file(self, name: str) -> Path | None:
         return doc_path(self.docs_dir or toolbox.OUTPUT_DIR, name)
 
-    # ---------- 分享網頁(10/15):HSUAN 做的 .html 給同一個 Wi-Fi 的人看 ----------
+    # ---------- 分享網頁(10/15):JUSTIN 做的 .html 給同一個 Wi-Fi 的人看 ----------
 
     def _save_shares(self) -> None:
         if self.store:
@@ -2024,13 +2024,13 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                         self._json(404, {"error": f"打不開:{e}"})
             elif url.path == "/api/gitdiff":  # 「變更」分頁:專案裡還沒 commit 的修改
                 if self._token_ok(self.headers.get("X-Token")):
-                    # 訪客的空間在 HSUAN 自己的資料夾裡,往上找到的是 HSUAN 的 git,不給看
+                    # 訪客的空間在 JUSTIN 自己的資料夾裡,往上找到的是 JUSTIN 的 git,不給看
                     self._json(200, {"git": False} if self._guest() else self._hub().git_changes())
-            elif url.path == "/api/browser/shot":  # 「瀏覽器」分頁:HSUAN 的瀏覽器最後的畫面(<img> 不能帶標頭,token 放網址)
+            elif url.path == "/api/browser/shot":  # 「瀏覽器」分頁:JUSTIN 的瀏覽器最後的畫面(<img> 不能帶標頭,token 放網址)
                 if self._token_ok((qs.get("token") or [None])[0]):
                     shot = self._hub().bench.browser_shot
                     if not shot:
-                        return self._json(404, {"error": "HSUAN 還沒用過瀏覽器"})
+                        return self._json(404, {"error": "JUSTIN 還沒用過瀏覽器"})
                     self._send(200, shot[2], "image/jpeg", {"Cache-Control": "no-store"})
             elif url.path == "/api/phone":  # 手機連線的狀態(含 PIN):只給這台電腦自己看
                 if self._token_ok(self.headers.get("X-Token")):
@@ -2227,7 +2227,7 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                         desk.set_lang(str(body.get("lang", "")))
                     if "browser" in body:
                         if team or self._guest():
-                            raise PermissionError("訪客和多人模式不能讓 HSUAN 操作瀏覽器")
+                            raise PermissionError("訪客和多人模式不能讓 JUSTIN 操作瀏覽器")
                         desk.set_browser(bool(body["browser"]))
                 except (ValueError, PermissionError) as e:
                     return self._json(400, {"error": str(e)})
@@ -2296,7 +2296,7 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 expect = body.get("expect") if isinstance(body.get("expect"), list) else None
                 return self._guarded(lambda: desk.add_project(str(body.get("path", "")), str(body.get("name", "")),
                                                               expect, public))
-            if path == "/api/project/locate":  # 拖進來的資料夾:HSUAN 自己在這台電腦上找原本的位置(只給這台電腦用)
+            if path == "/api/project/locate":  # 拖進來的資料夾:JUSTIN 自己在這台電腦上找原本的位置(只給這台電腦用)
                 if team or not self._local():
                     return self._json(403, {"error": "只有這台電腦可以找資料夾"})
                 expect = body.get("expect") if isinstance(body.get("expect"), list) else []
@@ -2435,7 +2435,7 @@ def local_desk(registry, quota, tools: list, status: str, model: str, role: str 
                    status=status, model=model, workspace=workspace)
     desk = Desk(make_hub, toolbox.WORKSPACE, store=toolbox.OUTPUT_DIR / "state", repos_dir=toolbox.OUTPUT_DIR / "repos",
                 embed=registry.embedder(), uploads_dir=toolbox.OUTPUT_DIR / "uploads")
-    desk.start_scheduler()  # 排程任務:HSUAN 開著才會跑(桌面版和 VS Code 外掛都開著也只會跑一份,見 Schedules.claim)
+    desk.start_scheduler()  # 排程任務:JUSTIN 開著才會跑(桌面版和 VS Code 外掛都開著也只會跑一份,見 Schedules.claim)
     return desk
 
 
@@ -2477,7 +2477,7 @@ def guest_desks(registry, tools: list, status: str, model: str, base: Path | Non
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="HSUAN 的網頁介面")
+    ap = argparse.ArgumentParser(description="JUSTIN 的網頁介面")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true", help="不要自動打開瀏覽器")
     ap.add_argument("--lan", action="store_true", help="讓同一個 Wi-Fi 的手機也能開(要輸入啟動時顯示的 PIN)")
@@ -2524,15 +2524,15 @@ def main() -> None:
     try:
         server = serve(hubs, args.port, token=args.token, lan=lan, host=host, team=team)
     except OSError:
-        raise SystemExit(f"port {args.port} 已經被占用:可能已經有一個 HSUAN 在跑了(請先關掉它),"
+        raise SystemExit(f"port {args.port} 已經被占用:可能已經有一個 JUSTIN 在跑了(請先關掉它),"
                          f"或用 --port 換一個")
     url = f"http://127.0.0.1:{args.port}/"
     if team:
-        print(f"HSUAN 多人模式:{host}:{args.port}  (工作區 {toolbox.WORKSPACE},身分標頭 {team.user_header},"
+        print(f"JUSTIN 多人模式:{host}:{args.port}  (工作區 {toolbox.WORKSPACE},身分標頭 {team.user_header},"
               f"同時執行上限 {args.max_concurrent})")
         server.serve_forever()
         return
-    print(f"HSUAN 網頁介面:{url}  (工作區 {toolbox.WORKSPACE};按 Ctrl+C 結束)")
+    print(f"JUSTIN 網頁介面:{url}  (工作區 {toolbox.WORKSPACE};按 Ctrl+C 結束)")
     if lan:
         print("\n手機連線(手機要連同一個 Wi-Fi):")
         print(f"  http://{lan.ips[0]}:{args.port}")

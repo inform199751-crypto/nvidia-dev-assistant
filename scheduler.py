@@ -1,6 +1,6 @@
-"""排程任務(10/26,像 ChatGPT 的排程):時間到了自動開一段新對話,讓 HSUAN 去做(例如每天早上跑測試、整理失敗原因)。
+"""排程任務(10/26,像 ChatGPT 的排程):時間到了自動開一段新對話,讓 JUSTIN 去做(例如每天早上跑測試、整理失敗原因)。
 
-跑在 HSUAN 自己的行程裡(webui / 桌面版):HSUAN 要開著才會跑;今天的時間已經過了、今天還沒跑過的,一打開就補跑一次。
+跑在 JUSTIN 自己的行程裡(webui / 桌面版):JUSTIN 要開著才會跑;今天的時間已經過了、今天還沒跑過的,一打開就補跑一次。
 排程沒有人在旁邊按確認:上網這類要確認的動作會被拒絕,改程式也只會留在草稿,要使用者自己看過按套用。
 設定存在 store/schedules.json;桌面版和 VS Code 外掛可能同時開著(共用 store),用 claim() 的鎖檔保證一次只跑一份。
 """
@@ -172,7 +172,7 @@ class Scheduler:
 
     def start(self) -> "Scheduler":
         def loop():
-            while True:  # 一開始就先看一次:HSUAN 關著時錯過的,打開就補跑
+            while True:  # 一開始就先看一次:JUSTIN 關著時錯過的,打開就補跑
                 try:
                     self.tick()
                 except Exception:  # 一個排程壞掉不能讓整個排程器停掉

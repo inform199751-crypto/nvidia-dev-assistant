@@ -46,7 +46,7 @@ class Workbench:
     lang: str | None = None         # 回答語言(網頁帳號選單選的,見 agent.ANSWER_LANGS);None = 繁中
     knowledge: list = field(default_factory=list)  # 這個人的知識庫(knowledge.KnowledgeBase),search_knowledge 搜這些
     browser: object | None = None   # 這段對話的瀏覽器分頁(browser.Tab,第一次用 browser 工具才開)
-    browser_shot: tuple | None = None  # HSUAN 瀏覽器最後的畫面 (時間, 網址, JPEG):網頁右邊面板的「瀏覽器」分頁顯示
+    browser_shot: tuple | None = None  # JUSTIN 瀏覽器最後的畫面 (時間, 網址, JPEG):網頁右邊面板的「瀏覽器」分頁顯示
     memory: object | None = None    # 跨對話的記憶(memory.Memory);None = 沒開(關掉、訪客)
 
 
@@ -237,7 +237,7 @@ def _sandbox_copy():
 # 沙箱自己的限制造成的錯誤。10/15 實測:模型把唯讀錯誤當成使用者電腦的問題,叫使用者用系統管理員身分執行、關防毒
 _SANDBOX_LIMITS = re.compile(r"Read-only file system|Network is unreachable|Temporary failure in name resolution"
                              r"|Name or service not known|Could not resolve host")
-RUN_IT_YOURSELF = "會寫檔、連網或一直開著的程式(例如網站伺服器)請使用者在自己的電腦上執行:HSUAN 的終端機面板或命令列。"
+RUN_IT_YOURSELF = "會寫檔、連網或一直開著的程式(例如網站伺服器)請使用者在自己的電腦上執行:JUSTIN 的終端機面板或命令列。"
 SANDBOX_HINT = f"(這是沙箱的限制:專案複本唯讀、沒有網路,不是使用者電腦的問題,不要叫使用者檢查權限、防毒或網路。{RUN_IT_YOURSELF})"
 
 

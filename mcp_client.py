@@ -1,11 +1,11 @@
-"""MCP 連接器(10/15):HSUAN 當 MCP client,把外部 MCP server 提供的工具接給模型(像 Claude 的「連接器」)。
+"""MCP 連接器(10/15):JUSTIN 當 MCP client,把外部 MCP server 提供的工具接給模型(像 Claude 的「連接器」)。
 
 只用標準函式庫自己寫 JSON-RPC(跟 qr.py 一樣不多裝套件):stdio 傳輸是一行一個 JSON 訊息,
 用到的只有 initialize → notifications/initialized → tools/list → tools/call(還有回應伺服器的 ping)。
 
 安全:
-- 連接器是會在這台電腦上執行的程式:只有這台電腦能新增(webui 檢查),設定存在 HSUAN 自己的資料夾。
-- 啟動時不把 HSUAN 的金鑰傳下去:環境變數拿掉 .env 讀進來的、名字像金鑰的(NVIDIA_API_KEY、TAVILY_API_KEY…);
+- 連接器是會在這台電腦上執行的程式:只有這台電腦能新增(webui 檢查),設定存在 JUSTIN 自己的資料夾。
+- 啟動時不把 JUSTIN 的金鑰傳下去:環境變數拿掉 .env 讀進來的、名字像金鑰的(NVIDIA_API_KEY、TAVILY_API_KEY…);
   連接器自己要的金鑰寫在它的 env。不然等於把 NVIDIA 金鑰交給第三方程式。
 - 每次呼叫都先問使用者(跟上網一樣);回傳的是第三方的資料,先過安全模型(guard.web_content)。
 - 試用平台上新增要先聲明不會碰到公司資料(guard.check_source)。
@@ -44,7 +44,7 @@ class McpError(RuntimeError):
 
 
 def _dotenv_keys() -> set[str]:
-    """.env 裡有哪些變數(只取名字):這些是 HSUAN 自己的設定和金鑰,不給連接器。"""
+    """.env 裡有哪些變數(只取名字):這些是 JUSTIN 自己的設定和金鑰,不給連接器。"""
     try:
         from dotenv import dotenv_values
         return set(dotenv_values(Path(__file__).with_name(".env")))
@@ -53,7 +53,7 @@ def _dotenv_keys() -> set[str]:
 
 
 def child_env(extra: dict | None) -> dict[str, str]:
-    """連接器的環境變數:這台電腦的(PATH 等,程式要找得到)拿掉 HSUAN 的設定和像金鑰的,再加上連接器自己設定的。"""
+    """連接器的環境變數:這台電腦的(PATH 等,程式要找得到)拿掉 JUSTIN 的設定和像金鑰的,再加上連接器自己設定的。"""
     hidden = _dotenv_keys()
     env = {k: v for k, v in os.environ.items() if k not in hidden and not SECRET_ENV.search(k)}
     env.update({str(k): str(v) for k, v in (extra or {}).items()})
@@ -94,7 +94,7 @@ class McpServer:
         threading.Thread(target=self._read, daemon=True).start()
         try:
             init = self.request("initialize", {"protocolVersion": PROTOCOL_VERSION, "capabilities": {},
-                                               "clientInfo": {"name": "HSUAN", "version": "1.0"}}, START_TIMEOUT)
+                                               "clientInfo": {"name": "JUSTIN", "version": "1.0"}}, START_TIMEOUT)
             self.info = init.get("serverInfo") or {}
             self.notify("notifications/initialized")
             tools, cursor = [], None
@@ -148,7 +148,7 @@ class McpServer:
                 continue
             if "method" in msg and "id" in msg:  # 伺服器發給我們的請求
                 reply = {"result": {}} if msg["method"] == "ping" else \
-                    {"error": {"code": -32601, "message": f"HSUAN 不支援 {msg['method']}"}}
+                    {"error": {"code": -32601, "message": f"JUSTIN 不支援 {msg['method']}"}}
                 try:
                     self._send({"jsonrpc": "2.0", "id": msg["id"], **reply})
                 except Exception:
@@ -221,7 +221,7 @@ def slug(text: str) -> str:
 
 
 def make_tools(server: McpServer, label: str, prefix: str) -> list[StructuredTool]:
-    """伺服器的工具 → HSUAN 的工具。名稱加上連接器的前綴(不同連接器可能有同名工具;API 只收英數字、_、-,最多 64 字)。"""
+    """伺服器的工具 → JUSTIN 的工具。名稱加上連接器的前綴(不同連接器可能有同名工具;API 只收英數字、_、-,最多 64 字)。"""
     out = []
     for t in server.tools[:MAX_TOOLS]:
         name = f"{prefix}__{slug(t['name']) or 'tool'}"[:64]
@@ -285,7 +285,7 @@ class Connectors:
         self.servers: dict[str, McpServer] = {}
         self.errors: dict[str, str] = {}
         self.lock = threading.RLock()
-        atexit.register(self.close)  # HSUAN 結束時一起關掉(stdin 關了,連接器自己也會結束)
+        atexit.register(self.close)  # JUSTIN 結束時一起關掉(stdin 關了,連接器自己也會結束)
         if self.file and self.file.is_file():
             try:
                 self.items = [x for x in json.loads(self.file.read_text(encoding="utf-8")) if isinstance(x, dict)]
@@ -401,6 +401,6 @@ class Connectors:
 
 
 def demo_config() -> str:
-    """「加入示範連接器」:專案裡的 demo_mcp/tickets_server.py(虛構的工單系統),用跑 HSUAN 的這個 Python 執行。"""
+    """「加入示範連接器」:專案裡的 demo_mcp/tickets_server.py(虛構的工單系統),用跑 JUSTIN 的這個 Python 執行。"""
     script = Path(__file__).with_name("demo_mcp") / "tickets_server.py"
     return json.dumps({"mcpServers": {"tickets": {"command": sys.executable, "args": [str(script)]}}})

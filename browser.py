@@ -1,11 +1,11 @@
-"""操作瀏覽器(10/15):HSUAN 用無頭的 Edge / Chrome 測試使用者自己開發中的網站(像 Claude 的「操作瀏覽器」)。
+"""操作瀏覽器(10/15):JUSTIN 用無頭的 Edge / Chrome 測試使用者自己開發中的網站(像 Claude 的「操作瀏覽器」)。
 
 不裝 Playwright(還要另外下載約 150 MB 的瀏覽器):直接用電腦上的 Edge,透過 DevTools 協定(CDP)控制,
-連線用已經裝好的 websockets。每段對話一個分頁(Workbench.browser),整個 HSUAN 共用一個瀏覽器行程。
+連線用已經裝好的 websockets。每段對話一個分頁(Workbench.browser),整個 JUSTIN 共用一個瀏覽器行程。
 
 安全:
 - 只開開發用的位址(is_dev_url):localhost、127.0.0.1、[::1]、*.localhost、*.test;點了導到別的網站就停下來、回到空白頁。
-- 獨立的暫存設定檔:沒有使用者的登入、cookie、擴充功能;HSUAN 結束時刪掉。
+- 獨立的暫存設定檔:沒有使用者的登入、cookie、擴充功能;JUSTIN 結束時刪掉。
 - 打開網址前先問使用者(跟上網一樣可以「之後都允許」);試用平台上提醒畫面內容會送到 NVIDIA。
 - 工具說明要求只用測試資料,不輸入真的密碼或個資。
 - 畫面內容是使用者自己的開發網站,不另外過安全模型(每個動作都檢查太慢);導到外部網站已經擋了。
@@ -374,7 +374,7 @@ def browser(action: Literal["open", "click", "type", "press", "back", "look", "c
 
 
 def _keep_shot(wb: toolbox.Workbench, tab: Tab, url: str) -> None:
-    """每個動作後留一張截圖,網頁右邊的「瀏覽器」分頁讓使用者看 HSUAN 現在看到什麼(10/24)。截不到不影響工具。"""
+    """每個動作後留一張截圖,網頁右邊的「瀏覽器」分頁讓使用者看 JUSTIN 現在看到什麼(10/24)。截不到不影響工具。"""
     try:
         wb.browser_shot = (time.time(), url, tab.screenshot())
     except Exception:

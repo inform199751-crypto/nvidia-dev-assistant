@@ -522,7 +522,7 @@ def test_sandbox_runs_on_copy_without_secrets(workspace, tmp_path_factory, monke
 
 
 def test_sandbox_errors_say_they_come_from_the_sandbox(monkeypatch, tmp_path):
-    """10/15 實測:使用者請 HSUAN 跑點餐系統,沙箱裡寫 設定.json 撞到唯讀,模型卻叫使用者用系統管理員身分執行、關防毒;
+    """10/15 實測:使用者請 JUSTIN 跑點餐系統,沙箱裡寫 設定.json 撞到唯讀,模型卻叫使用者用系統管理員身分執行、關防毒;
     連不到網路也說成使用者的網路問題。撞到沙箱限制的輸出後面要說明是沙箱的限制;逾時要提到一直開著的程式請使用者自己跑。"""
     import subprocess
     results = iter([(1, "", "OSError: [Errno 30] Read-only file system: '/ws/app/設定.json'"),
@@ -3221,7 +3221,7 @@ def test_dropped_folder_path_must_match_its_files(workspace, tmp_path_factory):
 
 
 def test_dropped_folder_is_found_on_this_computer(workspace, tmp_path_factory, monkeypatch):
-    """10/10 使用者嫌拖資料夾每次都要貼路徑:HSUAN 跑在同一台電腦上,先自己在桌面、文件、下載裡找同名、
+    """10/10 使用者嫌拖資料夾每次都要貼路徑:JUSTIN 跑在同一台電腦上,先自己在桌面、文件、下載裡找同名、
     抽樣檔案大小都對得上的資料夾,找到就直接當專案;同名但內容不同的不算、太深的不找、沒有檔案可比對不猜。
     只有這台電腦自己能用(手機連進來不行)。"""
     import httpx
@@ -3665,7 +3665,7 @@ def test_connectors_page_api_and_tools_reach_the_model(workspace, tmp_path_facto
 
 def test_share_html_pages_with_people_on_the_same_wifi(workspace, tmp_path_factory, monkeypatch):
     """10/15 網頁分享:「成品」裡的 .html 可以預覽、分享;分享連結 /s/<代碼> 不用登入(連結就是鑰匙),
-    網頁一律用沙箱打開(拿不到 HSUAN 的 token / cookie、不能連網);只有網頁能分享、路徑不能亂給;
+    網頁一律用沙箱打開(拿不到 JUSTIN 的 token / cookie、不能連網);只有網頁能分享、路徑不能亂給;
     同一個網頁沿用同一個連結,存檔重開還在;停止分享後連結失效;訪客不能分享。"""
     import httpx
     import webui
@@ -3734,7 +3734,7 @@ def test_tailscale_status_is_read_from_its_cli(monkeypatch):
 
 
 def test_phone_link_also_works_over_tailscale(workspace, tmp_path_factory, monkeypatch):
-    """10/15 使用者問「一定要連同一個 Wi-Fi 嗎」:電腦和手機都裝 Tailscale(私人 VPN)就能在外面連,HSUAN 不對網際網路開 port。
+    """10/15 使用者問「一定要連同一個 Wi-Fi 嗎」:電腦和手機都裝 Tailscale(私人 VPN)就能在外面連,JUSTIN 不對網際網路開 port。
     手機連線打開之後才連上的 Tailscale 位址、這台電腦在 Tailscale 上的名稱都收(Host 檢查),別的網域名稱照樣擋;
     設定頁把 Wi-Fi 和 Tailscale 的網址分開、各有 QR code。"""
     import httpx
@@ -3842,7 +3842,7 @@ def test_browser_tests_a_local_dev_site(workspace):
         assert run(action="open", url=base + "/") == browser.DENIED and asked[0][1] == base + "/"
         page = run(action="open", url=base + "/")
         assert "標題:測試商店" in page and "input(text) 「名字」" in page
-        shot = tools.bench().browser_shot  # 10/24:每個動作後留一張截圖,網頁右邊「瀏覽器」分頁看 HSUAN 看到什麼
+        shot = tools.bench().browser_shot  # 10/24:每個動作後留一張截圖,網頁右邊「瀏覽器」分頁看 JUSTIN 看到什麼
         assert shot[1] == base + "/" and shot[2][:2] == b"\xff\xd8"
         run(action="type", ref=_ref(page, "名字"), text="小明")
         page = run(action="type", ref=_ref(page, "密碼"), text="test-only-pass")
@@ -4043,7 +4043,7 @@ def _wait(term):
 
 def test_terminal_runs_commands_in_the_project_folder(tmp_path, monkeypatch):
     """10/23 使用者要的終端機(簡單版):一行一個指令,在專案資料夾裡跑、輸出逐行收進來(中文不亂碼)、結束代碼照傳;
-    cd 會記住;按停止整個行程樹一起關;環境變數拿掉 .env 讀進來的和像金鑰的(不然一按「交給 HSUAN」金鑰就送出去了)。"""
+    cd 會記住;按停止整個行程樹一起關;環境變數拿掉 .env 讀進來的和像金鑰的(不然一按「交給 JUSTIN」金鑰就送出去了)。"""
     import terminal
     (tmp_path / "sub").mkdir()
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-should-not-show")
@@ -4120,7 +4120,7 @@ def test_terminal_only_on_this_computer(workspace, tmp_path_factory, monkeypatch
 # ---------- 端到端評測(run_evals.py,10/23) ----------
 
 def _host_pytest(root):
-    """只拿來跑題目原本的程式和參考解答(都是自己寫的);HSUAN 改過的程式一律在 Docker 裡驗收(run_evals.docker_tests)。"""
+    """只拿來跑題目原本的程式和參考解答(都是自己寫的);JUSTIN 改過的程式一律在 Docker 裡驗收(run_evals.docker_tests)。"""
     r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"], cwd=root,
                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
                        env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"})  # 不載入 langsmith 等外掛:每次 1.8 → 0.5 秒
@@ -4131,7 +4131,7 @@ def _host_pytest(root):
 def test_eval_task_is_well_formed(task):
     """每一題:原本的程式過不了驗收(真的有 bug)、題目說測試會失敗的就真的會失敗,套上參考解答全部通過(題目沒寫錯)。"""
     assert task.level in ("normal", "hard") and task.kind
-    assert not task.history or task.history[-1]["dir"] == "repo"  # 最後一個提交就是 HSUAN 看到的工作區
+    assert not task.history or task.history[-1]["dir"] == "repo"  # 最後一個提交就是 JUSTIN 看到的工作區
     for rel in task.files:
         assert (task.root / "repo" / rel).is_file()
     assert not run_evals.verify(task, {}, _host_pytest)["passed"]
@@ -4185,7 +4185,7 @@ def test_eval_runner_scores_with_hidden_tests_and_original_tests(tmp_path, monke
     assert rows[0]["passed"] and rows[0]["self_passed"] and rows[0]["error"] is None
     assert (rows[0]["files_changed"], rows[0]["steps"], rows[0]["tokens"]) == (1, 3, 300)
     assert rows[0]["lines_changed"] > 0 and rows[0]["roles"] == ["code"]
-    assert "7 passed" in rows[0]["tests"]  # 驗收跑的是原本 3 個 + 隱藏 4 個測試,不是 HSUAN 的沙箱結果
+    assert "7 passed" in rows[0]["tests"]  # 驗收跑的是原本 3 個 + 隱藏 4 個測試,不是 JUSTIN 的沙箱結果
     assert not rows[1]["passed"] and rows[1]["self_passed"]
     assert rows[1]["ignored"] == ["tests/test_views.py", "tests/conftest.py"]
     assert not (tmp_path / "retry" / "ws" / ".agent_patches").exists()  # patch 存在工作區外面
@@ -4206,7 +4206,7 @@ def test_eval_runner_records_errors_and_classifier(tmp_path, routing_log, monkey
     config["routing"]["difficulty"] = {"mode": "off", "classifier_role": "code", "hard_role": "deep"}
     reg, _ = scripted_registry([ai('{"level": "hard"}'), RuntimeError("503 忙線")], config)
     row = run_evals.run_one(task, run_evals.CONFIGS["routed"], reg, TokenQuota(10**6, 2), tmp_path / "w", _host_pytest)
-    assert row["error"] == "RuntimeError: 503 忙線" and not row["passed"] and row["tests"] == "(HSUAN 沒有提出修改)"
+    assert row["error"] == "RuntimeError: 503 忙線" and not row["passed"] and row["tests"] == "(JUSTIN 沒有提出修改)"
     assert row["judged"] == "hard"
     assert os.environ.get("DIFFICULTY_ROUTING") is None  # 這一題用完就還原
     report = run_evals.summarize([dict(row, rep=1)])
@@ -4283,7 +4283,7 @@ def test_parse_git_diff_splits_files_and_hides_secrets():
 def test_panel_files_source_git_changes_and_browser_shot(workspace, fake_sandbox, tmp_path_factory):
     """右邊面板的分頁(10/24):「檔案」不列機密檔、.git、node_modules,草稿改過 / 新增的標出來,打開看到草稿版本,
     .env 拿不到、二進位檔不給內容;「變更」的 git 修改只讀、機密檔只給名字、列出還沒加入 git 的檔案,不是 git 專案就說沒有;
-    「瀏覽器」拿得到 HSUAN 最後的截圖;對話模式沒有檔案。"""
+    「瀏覽器」拿得到 JUSTIN 最後的截圖;對話模式沒有檔案。"""
     import httpx
     import webui
     for rel, text in {"calc.py": "def add(a, b):\n    return a - b\n", "notes.md": "待辦\n", ".env": "TOKEN=old\n",
@@ -4614,7 +4614,7 @@ def _at(day, hh, mm=0):
 
 
 def test_schedule_due_rules_and_single_claim(tmp_path):
-    """排程:時間到、今天是要跑的日子、今天這個時間之後還沒跑過才跑;HSUAN 關著錯過的,今天打開補跑一次、不會跑兩次;
+    """排程:時間到、今天是要跑的日子、今天這個時間之後還沒跑過才跑;JUSTIN 關著錯過的,今天打開補跑一次、不會跑兩次;
     週末的排程平日不跑;新加的排程今天時間已過就從下一次開始。桌面版和 VS Code 外掛同時開著(兩份 Schedules 同一個檔案)
     只有先認領的那個跑。"""
     import scheduler
@@ -4646,7 +4646,7 @@ def test_schedule_due_rules_and_single_claim(tmp_path):
 
 
 def test_scheduled_run_opens_a_conversation_and_never_waits_for_confirmation(workspace, tmp_path_factory, monkeypatch):
-    """排程時間到了:開一段新對話(標題「名稱 · 時間」)讓 HSUAN 去做,跑完記下結果和對話;排程跑的時候沒有人能按確認,
+    """排程時間到了:開一段新對話(標題「名稱 · 時間」)讓 JUSTIN 去做,跑完記下結果和對話;排程跑的時候沒有人能按確認,
     要上網的動作直接拒絕(不會卡 5 分鐘);跑完之後使用者在這段對話接著問,確認又會跳出來。訪客、多人模式不能設。"""
     import httpx
     import webui
@@ -4786,7 +4786,7 @@ def test_generate_image_tool_saves_and_web_shows_it(workspace, tmp_path_factory,
 def test_edit_image_redraws_with_the_same_seed(workspace, tmp_path_factory, monkeypatch):
     """10/31 使用者想在畫好的圖上加東西。catalog 上的 Kontext 和 klein 改圖只收網頁的範例圖(自己的圖回 422),
     所以畫圖時記下描述、尺寸、種子、模型,改圖用同一顆模型、同一個種子、改過的描述重畫(實測沒改的地方幾乎不動)。
-    紀錄存在 .images.json:「成品」不列、也下載不到;只能改 HSUAN 畫過的圖;改過的圖可以再改;訪客不能改。"""
+    紀錄存在 .images.json:「成品」不列、也下載不到;只能改 JUSTIN 畫過的圖;改過的圖可以再改;訪客不能改。"""
     import httpx
     import imagegen
     import webui
@@ -4811,7 +4811,7 @@ def test_edit_image_redraws_with_the_same_seed(workspace, tmp_path_factory, monk
     imagegen.edit_image.invoke({"image": edited, "prompt": "a rainbow, a cute pink unicorn"})  # 改過的再改
     assert calls[2]["seed"] == calls[0]["seed"] and calls[2]["size"] == (1344, 768)
     assert imagegen.edit_image.invoke({"image": "照片.jpg", "prompt": "x"}).startswith("錯誤:找不到 照片.jpg 的畫圖紀錄")
-    assert len(calls) == 3  # 不是 HSUAN 畫的就不畫
+    assert len(calls) == 3  # 不是 JUSTIN 畫的就不畫
     monkeypatch.setattr(imagegen, "GENERATE", lambda *a, **k: (b"x", "black-forest-labs/flux.1-dev"))
     assert "換了一顆,構圖會跟" in imagegen.edit_image.invoke({"image": name, "prompt": "a rainbow"})
     reg, _ = scripted_registry([])
