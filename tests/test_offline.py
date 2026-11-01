@@ -3957,8 +3957,14 @@ def test_empty_answer_gets_one_reminder(workspace):
     reg, seen = scripted_registry([ai(""), ai("程式要先裝 Python 3.10 以上")])
     r = AgentSession(reg, TokenQuota(10**6, 2)).ask("為什麼打不開")
     assert r.answer == "程式要先裝 Python 3.10 以上" and r.steps == 2 and seen[1][1][-1].content == agent.EMPTY_NOTE
+    # 11/1 錄示範影片時以為卡住:DeepSeek 提醒前後都回空白,畫面上只有開頭那句和工具列。現在說清楚(也送 text 事件,
+    # 網頁已經有開頭那句時 done 不會再畫 answer);對話紀錄裡留的還是空白,免得之後照抄這句
     reg2, seen2 = scripted_registry([ai(""), ai("")])
-    assert AgentSession(reg2, TokenQuota(10**6, 2)).ask("嗨").answer == "" and len(seen2) == 2
+    events = []
+    session = AgentSession(reg2, TokenQuota(10**6, 2), on_event=lambda kind, data: events.append((kind, data)))
+    r = session.ask("嗨")
+    assert r.answer == agent.BLANK_ANSWER and len(seen2) == 2
+    assert ("text", {"text": agent.BLANK_ANSWER}) in events and agent.BLANK_ANSWER not in str(session.messages[-1].content)
 
 
 def test_delegate_accepts_a_task_list_written_as_a_string():

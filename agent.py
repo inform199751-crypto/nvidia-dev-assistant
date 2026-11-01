@@ -319,6 +319,8 @@ STOPPED_NOTE = "<note>使用者停止了上一題「{task}」,那一題沒有做
 HEARD_NOTE = "<note>使用者在你做事的時候又傳了訊息,請一併考慮,需要時調整你正在做的事:</note>\n"
 # 10/16 使用者的對話:Super 偶爾回一則空白(答案只寫在思考裡,force_nonempty_content 也擋不住),使用者什麼都沒看到
 EMPTY_NOTE = "<note>你剛才的回覆是空的,使用者什麼都沒看到。請直接寫出給使用者的回答。</note>"
+# 11/1 使用者錄示範影片時以為 HSUAN 卡住:DeepSeek 提醒前後連兩次回空白,這一輪就結束了,畫面上只有開頭那句和工具列
+BLANK_ANSWER = "(這次模型連續兩次回了空白,沒有給出回答。請再問一次,或在「選模型」換一個模型試試。)"
 # 10/29 評測:系統提示寫了「修完要補測試」,16 次裡還是有 7 次沒補就回答;有補測試的 12 次全部通過,
 # 沒過的都是只修了題目點名的那個測試(漏了函式說明寫的規則、邊界)。所以改了程式卻沒補測試,程式提醒一次
 REVIEW_NOTE = ("<note>你改了程式,但這一輪沒有補測試。回答之前先做完:1. 重讀你改過的每個函式的說明或規格,"
@@ -836,6 +838,9 @@ class AgentSession:
                         self.messages.append(HumanMessage(REVIEW_NOTE))
                         self._notice("改了程式但沒有補測試:請它對照函式說明、檢查邊界、補一個測試再回答")
                         continue
+                    if not answer.strip():  # 提醒過還是空白:畫面上說清楚,不然看起來像卡住(對話紀錄裡留空白,免得之後照抄)
+                        answer = BLANK_ANSWER
+                        self._emit("text", text=answer)
                     return AgentResult(answer, role, step, used + self.sub_tokens)
                 for call in ai.tool_calls:
                     tool = tool_map.get(call["name"])
