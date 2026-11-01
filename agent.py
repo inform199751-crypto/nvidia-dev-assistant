@@ -469,6 +469,8 @@ class AgentSession:
                  tools: list = ALL_TOOLS, on_event: EventHandler | None = None):
         self.registry, self.quota, self.user = registry, quota, user
         self.requested_role, self.thinking, self.whole = role, thinking, whole
+        # 回答到一半換模型(網頁的「選模型」):(新的角色,),None 是自動;下一步開頭就換,不用從頭重來
+        self.switch: tuple[str | None] | None = None
         self.tools = [] if whole else list(tools)
         self.overhead = tool_tokens(self.tools)  # 工具定義每步都送,是固定成本;不算進來會被誤判成估算偏低
         self.chat = False  # 「對話」模式,見 to_chat()
@@ -779,6 +781,12 @@ class AgentSession:
                 if not self.sub and (heard := self.take_inbox()):  # 回答到一半又傳來的訊息:這一步就交給模型
                     self.messages.append(HumanMessage(HEARD_NOTE + "\n\n".join(heard)))
                     self._emit("heard", count=len(heard))
+                if not self.sub and self.switch is not None:  # 回答到一半換了模型:這一步起用新的(放不下照樣升級)
+                    (wanted,), self.switch = self.switch, None
+                    new_role = reg.pick_role(prompt_tokens=self.sized(), needs_tools=bool(tools), requested=wanted or routed)
+                    if new_role != role:
+                        role, llm = new_role, reg.agent_model(new_role, tools, thinking=thinking)
+                        self._notice("換成 %s 接著做", reg.spec(new_role).model.split("/")[-1])
                 # 每一步送出前的三道檢查:清掉舊思考 → 瘦身 → 還放不下就升級模型
                 self.messages = strip_stale_reasoning(self.messages)
                 budget = reg.budget(role)

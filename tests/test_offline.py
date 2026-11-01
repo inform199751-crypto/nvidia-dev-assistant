@@ -2286,9 +2286,34 @@ def test_train_models_end_to_end(tmp_path, monkeypatch):
     assert "不存模型" in train_models.write_report(out, clf, reg, len(noise)).read_text(encoding="utf-8")
 
 
+def test_switching_model_mid_turn_takes_effect_next_step(workspace):
+    """11/1 使用者錄示範影片時被交給 DeepSeek,等很久只能按停止重問:回答中換模型,下一步就由新的接著做(不用從頭重來),
+    畫面上說換成了誰;換回「自動」照這一輪的判斷;子 agent 不受影響。"""
+    cfg = copy.deepcopy(CONFIG)
+    cfg["roles"]["code_deep"] = {"model": "deepseek-ai/deepseek-v4.1-flash", "context_window": 131072, "max_output": 8192}
+    reg, seen = scripted_registry([ai(tool_calls=[{"name": "list_files", "id": "c1", "args": {}}]), ai("DeepSeek 接著做完"),
+                                   ai(tool_calls=[{"name": "list_files", "id": "c2", "args": {}}]), ai("換回自動")], cfg)
+    notices = []
+
+    def on_event(kind, data):
+        if kind == "tool":  # 第一步的工具執行時,使用者在網頁上換了模型
+            session.switch = switch_to
+        if kind == "notice":
+            notices.append(data["text"])
+
+    session = AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event)
+    switch_to = ("code_deep",)
+    r = session.ask("看一下有哪些檔案")
+    assert [role for role, _, _ in seen] == ["code", "code_deep"] and r.role == "code_deep" and r.answer == "DeepSeek 接著做完"
+    assert "換成 deepseek-v4.1-flash 接著做" in notices and session.switch is None
+    session.requested_role, switch_to = "code_deep", (None,)  # 這一輪從 DeepSeek 開始,中途換回自動
+    session.ask("再看一次")
+    assert [role for role, _, _ in seen][2:] == ["code_deep", "code"]
+
+
 def test_webui_model_picker_per_conversation(workspace, tmp_path_factory):
     """輸入框的「選模型」:列出自動 + 能用工具的角色(地端才有的 code_writer 不列);選了之後這段對話都用它,
-    「新對話」也保留;存檔重開還在;回答中不能換;null 回到自動。"""
+    「新對話」也保留;存檔重開還在;回答中換的話這一輪下一步就換;null 回到自動。"""
     import threading
     import httpx
     import webui
@@ -2330,9 +2355,10 @@ def test_webui_model_picker_per_conversation(workspace, tmp_path_factory):
         httpx.post(base + "/api/ask", json={"text": "新對話"}, headers=h)
         wait_done(base, cid, 1)
         assert [role for role, _, _ in seen] == ["code", "code_deep", "code_deep"]
-        desk.hubs[cid].busy = True
-        assert httpx.post(base + "/api/role", json={"role": None}, headers=h).status_code == 409  # 回答中不能換
-        desk.hubs[cid].busy = False
+        desk.hubs[cid].busy = True  # 回答中也能換:這一輪下一步就換(11/1 起)
+        assert httpx.post(base + "/api/role", json={"role": "code_deep"}, headers=h).json() == {"role": "code_deep"}
+        assert desk.hubs[cid].session.switch == ("code_deep",)
+        desk.hubs[cid].busy, desk.hubs[cid].session.switch = False, None
     finally:
         server.shutdown()
         server.server_close()

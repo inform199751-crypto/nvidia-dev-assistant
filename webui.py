@@ -584,13 +584,13 @@ class Hub:
         return out
 
     def set_role(self, role: str | None) -> str:
-        """這段對話之後都用 role(None = 自動);回傳錯誤訊息,空字串 = 成功。"""
+        """這段對話之後都用 role(None = 自動);回答中換的話,這一輪下一步就換。回傳錯誤訊息,空字串 = 成功。"""
         if role not in {r["role"] for r in self.roles()}:
             return "沒有這個模型"
         with self.cond:
-            if self.busy:
-                return "JUSTIN 還在回答,等這一輪結束再換"
             self.session.requested_role = role
+            if self.busy:  # 回答到一半:下一步就換(11/1 使用者要的,DeepSeek 慢的時候可以換回 Super 接著做)
+                self.session.switch = (role,)
         return ""
 
     def set_effort(self, effort: str) -> str:
