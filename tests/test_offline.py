@@ -4814,6 +4814,15 @@ def test_prompt_lets_the_model_retry_a_tool_that_failed_in_an_earlier_turn():
     assert "when the user asks again, call the tool again" in SYSTEM_PROMPT
 
 
+def test_prompts_keep_the_new_name_in_old_conversations():
+    """11/1 改名 JUSTIN 之後,使用者在改名前的舊對話用語音問「你叫什麼名字」,它回「我叫就廷」。新對話 20/20 都說 JUSTIN;
+    模擬舊對話(前面自稱過 HSUAN、語音模式關思考)10/10 照抄「我叫 HSUAN」,提示寫明改過名、舊訊息還寫 HSUAN、
+    一律用英文字母寫 JUSTIN 之後 9/10。對話模式也一樣。"""
+    from agent import CHAT_PROMPT
+    for prompt in (SYSTEM_PROMPT, CHAT_PROMPT):
+        assert "renamed from HSUAN" in prompt and "never transliterate it into Chinese characters" in prompt
+
+
 def test_generate_image_tool_saves_and_web_shows_it(workspace, tmp_path_factory, monkeypatch):
     """generate_image 存成「圖片-描述.jpg」(同名加編號),對話裡用 /api/file?view=1 直接顯示(只有圖片能這樣看,
     網頁還是下載);成品頁列得出來;沒有畫圖模型就說沒有;訪客不能畫。"""

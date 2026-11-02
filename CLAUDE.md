@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 專案是什麼
 
-助理叫 **JUSTIN**(11/1 從 HSUAN 改名)。小寫 `hsuan` 的內部代號刻意沒改:網頁存在 localStorage 的 `browserView` 值 `"hsuan"`、`browser.py` 的 `data-hsuan-ref`、暫存資料夾前綴 —— 改了會重設使用者的設定。
+助理叫 **JUSTIN**(11/1 從 HSUAN 改名)。兩份系統提示最後都有一句「renamed from HSUAN… never transliterate」:改名前的舊對話會照抄舊名字(11/2 回「我叫就廷」,模擬 10/10 → 1/10)。小寫 `hsuan` 的內部代號刻意沒改:網頁存在 localStorage 的 `browserView` 值 `"hsuan"`、`browser.py` 的 `data-hsuan-ref`、暫存資料夾前綴 —— 改了會重設使用者的設定。
 
 企業內部的程式碼助理 agent(找 bug、提 patch、寫技術文件),走 NVIDIA NIM:開發期打 build.nvidia.com(`LLM_BACKEND=catalog`),正式環境換地端 NIM 容器(`LLM_BACKEND=nim`)。重點是依 token 數動態切換模型、控制 token / 顯存、agent 只能在沙箱裡動手。程式註解、文件、agent 回答都用繁體中文;`agent.SYSTEM_PROMPT` 刻意用英文寫(再指定回答用 zh-TW)。
 
