@@ -1273,6 +1273,7 @@ class Desk:
         # 對話 id → {"id","title","project","kind","created","updated"};kind:code(綁專案)/ chat(對話模式,project 是 None)
         self.meta: dict[str, dict] = {}
         self.projects: list[dict] = []
+        self.removed_projects: set[str] = set()  # 移除過的專案(id 和路徑):存檔合併硬碟上的時不要再加回來
         self.settings: dict = {}  # 這個人的設定(帳號選單的回答語言),存在 store/settings.json
         self.focus: str | None = None  # 畫面上最近打開的對話(開事件串流時記下)
         # MCP 連接器(會在這台電腦上執行程式):只有自己的桌面有,訪客、多人模式沒有
@@ -1394,7 +1395,7 @@ class Desk:
                 on_disk = json.loads((self.store / "projects.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 on_disk = []
-            known = {p["id"] for p in self.projects} | {p["path"] for p in self.projects}
+            known = {p["id"] for p in self.projects} | {p["path"] for p in self.projects} | self.removed_projects
             self.projects += [p for p in on_disk if p.get("id") not in known and p.get("path") not in known]
             self.store.mkdir(parents=True, exist_ok=True)
             (self.store / "projects.json").write_text(json.dumps(self.projects, ensure_ascii=False, indent=1),
@@ -1424,6 +1425,28 @@ class Desk:
     def project(self, pid: str) -> dict | None:
         return next((p for p in self.projects if p["id"] == pid), None)
 
+    def remove_project(self, pid: str) -> str:
+        """從側邊欄拿掉一個專案,連同它的對話(11/1 使用者把文件資料夾加成了專案,拿不掉)。電腦上的資料夾和檔案都不動,
+        拖進來的副本、下載的 repo 也留著。預設專案(AGENT_WORKSPACE,每次啟動都會加回來)不能拿掉;有對話還在回答就先不拿。
+        回傳錯誤訊息,空字串 = 成功。"""
+        with self.lock:
+            proj = self.project(pid)
+            if not self.can_add_projects:
+                return "這裡不能管理專案"
+            if not proj:
+                return "沒有這個專案"
+            if pid == self.default_pid:
+                return f"「{proj['name']}」是預設專案(.env 的 AGENT_WORKSPACE),不能移除"
+            convs = [cid for cid, m in self.meta.items() if m.get("project") == pid]
+            if any(self.hubs.get(cid) and self.hubs[cid].busy for cid in convs):
+                return "這個專案有對話還在回答中,等結束再移除"
+            for cid in convs:
+                self.delete(cid)
+            self.projects = [p for p in self.projects if p["id"] != pid]
+            self.removed_projects |= {pid, proj["path"]}
+            self._save_projects()
+            return ""
+
     def add_project(self, path: str, name: str = "", expect: list | None = None, public: bool = False) -> dict:
         """加一個專案:電腦上的資料夾,或公開的 GitHub 網址(下載到 repos_dir)。
         expect:拖資料夾進來時,瀏覽器量到的幾個檔案 [{path, size}]。使用者貼的路徑裡要真的有這些檔案、大小一樣,
@@ -1448,6 +1471,7 @@ class Desk:
             proj ={"id": f"p{secrets.token_hex(3)}", "name": name.strip() or p.name, "path": str(p)}
             if public and not guard.COMPANY_OK:
                 proj["declared"] = "not-company"  # 記下:使用者在試用平台上聲明過不是公司資料
+            self.removed_projects.discard(proj["path"])  # 移除過又加回來
             self.projects.append(proj)
             self._save_projects()
             return proj
@@ -1470,6 +1494,7 @@ class Desk:
             # 規則檔放在 repo 外面:repo 自帶的 ASSISTANT.md 是別人寫的,不能直接進系統提示
             proj = {"id": f"p{secrets.token_hex(3)}", "name": name.strip() or repo, "path": str(dest),
                     "source": url, "rules": str(dest.with_name(dest.name + ".rules.md"))}
+            self.removed_projects.discard(proj["path"])
             self.projects.append(proj)
             self._save_projects()
             return proj
@@ -2292,6 +2317,9 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                     return self._json(400, {"error": "要搜尋什麼?"})
                 hits, how = knowledge.search_all(desk.ready_knowledge(), q)
                 return self._json(200, {"how": how, "hits": [{**h, "where": knowledge.label(h)} for h in hits]})
+            if path == "/api/project/remove":  # 側邊欄專案的「移除專案」:只從清單拿掉(連同對話),資料夾不動
+                msg = desk.remove_project(str(body.get("id", "")))
+                return self._json(409 if msg else 200, {"error": msg} if msg else {})
             if path == "/api/project/add":  # expect:拖資料夾進來後貼的路徑,要跟拖進來的檔案對得上
                 expect = body.get("expect") if isinstance(body.get("expect"), list) else None
                 return self._guarded(lambda: desk.add_project(str(body.get("path", "")), str(body.get("name", "")),

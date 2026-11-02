@@ -1329,8 +1329,23 @@ function renderSide() {
     const plus = head.appendChild(button("", "icon-btn", () => newConv(p.id)));
     plus.title = `在 ${p.name} 開新對話`; plus.setAttribute("aria-label", plus.title);
     plus.innerHTML = '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>';
-    const list = sec.appendChild(el("div", "conv-list"));
     const convs = desk.conversations.filter((c) => kindOf(c) === "code" && c.project === p.id);
+    if (desk.can_add_projects && !isDefault(p)) {  // 11/1:加錯的專案要拿得掉(預設專案每次啟動都會加回來,不給移除)
+      const more = head.appendChild(button("", "icon-btn menu-btn", (ev) => {
+        ev.stopPropagation();
+        popup(more, [["移除專案", async () => {
+          if (!confirm(`移除專案「${p.name}」?\n只從側邊欄拿掉,電腦上的資料夾和檔案不會動;`
+            + (convs.length ? `這個專案的 ${convs.length} 段對話會一起刪掉。` : "這個專案還沒有對話。"))) return;
+          const r = await api("/api/project/remove", { id: p.id });
+          if (!r.ok) return alert(r.data.error || "移除失敗");
+          if (convs.some((c) => c.id === conv)) conv = null;
+          loadDesk();
+        }, "danger"]]);
+      }));
+      more.title = `${p.name} 的選項`; more.setAttribute("aria-label", more.title);
+      more.innerHTML = '<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>';
+    }
+    const list = sec.appendChild(el("div", "conv-list"));
     if (!convs.length) list.appendChild(el("div", "empty-proj", "還沒有對話"));
     for (const c of convs) convRow(list, c, waiting);
   }
@@ -1465,6 +1480,7 @@ document.addEventListener("keydown", (ev) => {
 const CHANGELOG = [
   ["11/01", ["改名叫 JUSTIN(原本叫 HSUAN),桌面捷徑也換了",
              "預設改成男生的聲音:語音模式和朗讀都用微軟的自然語音「雲哲」(要唸的文字會送到微軟;在「設定 → 朗讀」可以改回這台電腦的聲音)",
+             "側邊欄的專案可以移除了:按專案旁邊的「⋯」→「移除專案」(只從清單拿掉、連同它的對話,電腦上的資料夾不會動)",
              "回答到一半也能換模型:在「選模型」換了,下一步就由新的模型接著做(不用按停止從頭重來)",
              "知識庫找得更準:先照意思找出幾段,再請 NVIDIA 新的重新排序模型挑出最相關的(測試 13 題,第一名就找對從 10 題變 13 題,每題多約半秒)"]],
   ["10/31", ["同一段對話裡之前失敗過的事(例如畫圖剛好碰到平台壞掉),再請 JUSTIN 做一次會重新試,不會直接說上次失敗了",

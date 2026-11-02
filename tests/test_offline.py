@@ -1876,6 +1876,47 @@ def test_desk_shared_store_keeps_each_default(workspace, tmp_path_factory):
     assert len({p["id"] for p in again.projects}) == 3 and again.default_pid == desktop.default_pid
 
 
+def test_desk_remove_project(workspace, tmp_path_factory):
+    """11/1 使用者把文件資料夾加成了專案,側邊欄拿不掉:「移除專案」只從清單拿掉(連同它的對話),電腦上的資料夾不動;
+    預設專案不能拿(每次啟動都會加回來);有對話在回答就先不拿;另一個行程存檔時不會又合併回來;移除後還能再加;訪客不能。"""
+    import httpx
+    import webui
+    store, extra = tmp_path_factory.mktemp("state"), tmp_path_factory.mktemp("docs")
+    (extra / "手冊.md").write_text("# 手冊", encoding="utf-8")
+    reg, _ = scripted_registry([])
+
+    def make(ws):
+        return webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event), workspace=ws)
+
+    desk = webui.Desk(make, workspace, store=store)
+    proj = desk.add_project(str(extra), public=True)
+    cid, keep = desk.new_conversation(proj["id"]), desk.new_conversation()
+    desk.save(cid)
+    stale = json.loads((store / "projects.json").read_text(encoding="utf-8"))  # 另一個行程(VS Code 外掛)手上的舊清單
+    desk.hubs[cid].busy = True
+    assert desk.remove_project(proj["id"]) == "這個專案有對話還在回答中,等結束再移除"
+    desk.hubs[cid].busy = False
+    assert "預設專案" in desk.remove_project(desk.default_pid) and desk.remove_project("nope") == "沒有這個專案"
+    server, base = _serve(desk)
+    try:
+        r = httpx.post(base + "/api/project/remove", json={"id": proj["id"]}, headers={"X-Token": "t0k"})
+        assert r.status_code == 200
+        listing = httpx.get(base + "/api/desk", headers={"X-Token": "t0k"}).json()
+        assert [p["id"] for p in listing["projects"]] == [desk.default_pid]
+        assert [c["id"] for c in listing["conversations"]] == [keep]
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert (extra / "手冊.md").exists() and not (store / "conversations" / f"{cid}.json").exists()
+    (store / "projects.json").write_text(json.dumps(stale), encoding="utf-8")  # 另一個行程用舊清單存了檔
+    desk._save_projects()
+    assert [p["id"] for p in desk.projects] == [desk.default_pid]
+    assert [p["id"] for p in webui.Desk(make, workspace, store=store).projects] == [desk.default_pid]  # 重開也沒有
+    assert desk.add_project(str(extra), public=True)["path"] == str(extra.resolve())  # 移除後還能再加
+    guest = webui.Desk(make, workspace, can_add_projects=False)
+    assert guest.remove_project(guest.default_pid) == "這裡不能管理專案"
+
+
 def test_clone_public_never_uses_saved_logins(tmp_path, monkeypatch):
     """從 GitHub 加專案只能抓公開 repo:電腦上存的 GitHub 登入(系統的 Git Credential Manager、gh 設的
     credential.https://github.com.helper)一律不用,私人 repo 直接失敗 —— 不然公司程式碼會被抓下來送到 build.nvidia.com。
