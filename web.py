@@ -101,6 +101,42 @@ def html_to_text(html: str) -> tuple[str, str]:
     return " ".join(p.title.split()), "\n".join(line for line in lines if line)
 
 
+# 11/5 使用者給 JUSTIN 一個 MixerBox 歌單網址,它只讀到網址:這類網頁(Next.js、Nuxt…)的內容是 JavaScript 載入的,
+# 原始 HTML 幾乎沒有字,資料放在 <script> 裡的 JSON(歌名在 __NEXT_DATA__ 裡)。看得到的字太少時,改從這些 JSON
+# 挑出像人寫的文字(有中日韓文字、或英文字之間有空格;網址、代碼、日期、金鑰這類沒有空格的不要)。不執行網頁的程式。
+THIN_PAGE = 200  # 看得到的字少於這麼多,就去讀網頁附帶的資料
+_DATA_SCRIPT = re.compile(r'<script\b[^>]*(?:id=["\']?__NEXT_DATA__|type=["\']?application/(?:ld\+)?json)[^>]*>(.*?)</script>',
+                          re.S | re.I)
+_HUMAN = re.compile(r"[぀-ヿ㐀-鿿가-힯]|[A-Za-z]{2,}\S*\s+\S")
+_NOT_TEXT = re.compile(r"(https?:|data:|/|www\.)\S*$|[\w.-]+@[\w.-]+$")
+EMBEDDED_NOTE = "[這個網頁的內容是用 JavaScript 載入的,以下是網頁裡附帶的資料(可能不完整:往下捲才載入的部分沒有)]"
+
+
+def embedded_text(html: str) -> str:
+    """網頁 <script> 裡 JSON 資料的文字,一行一個、照出現順序、重複的只留一次。"""
+    seen, out = set(), []
+
+    def walk(x) -> None:
+        if isinstance(x, dict):
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+        elif isinstance(x, str):
+            s = " ".join(x.split())
+            if 2 <= len(s) <= 500 and s not in seen and _HUMAN.search(s) and not _NOT_TEXT.match(s):
+                seen.add(s)
+                out.append(s)
+
+    for m in _DATA_SCRIPT.finditer(html):
+        try:
+            walk(json.loads(m.group(1)))
+        except ValueError:
+            continue
+    return "\n".join(out)
+
+
 class _Fail(Exception):
     """讀網頁失敗,訊息直接回給模型。"""
 
@@ -178,7 +214,10 @@ def fetch_url(url: str) -> str:
                 url, ctype, text = _get(client, url)
                 title = ""
                 if "html" in ctype:
-                    title, text = html_to_text(text)
+                    raw = text
+                    title, text = html_to_text(raw)
+                    if len(text) < THIN_PAGE and (data := embedded_text(raw)):  # 內容是 JavaScript 載入的網頁
+                        text = "\n\n".join(p for p in (text, EMBEDDED_NOTE, data) if p)
     except _Fail as e:
         return f"錯誤:{e}"
     parts = documents.split_parts(text, PAGE_TOKENS)

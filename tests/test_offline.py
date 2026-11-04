@@ -3234,6 +3234,33 @@ def test_web_content_with_hidden_instructions_is_blocked(fake_web, monkeypatch):
     assert "安全檢查擋下了搜尋結果" in web.web_search.invoke({"query": "pytest"})
 
 
+def test_pages_built_by_javascript_are_read_from_their_embedded_data(fake_web):
+    """11/5 使用者給 JUSTIN 一個 MixerBox 歌單網址,它只讀到網址:內容是 JavaScript 載入的(Next.js),原始 HTML 沒有字,
+    歌名在 <script id="__NEXT_DATA__"> 的 JSON 裡。看得到的字太少時改讀這些資料(JSON-LD 也算),只挑像人寫的文字;
+    網址、代碼、日期、重複的不要。一般有內容的網頁照舊,不多附資料。"""
+    import httpx
+    next_data = {"props": {"pageProps": {"ogmeta": {"ownerName": "Mixer 163773402", "image": "https://i.ytimg.com/vi/x/sd.jpg"},
+                 "payload": {"getVector": {"id": "200147342", "created": "2024-08-30T23:33:35.632Z", "items": [
+                     {"t": "yt", "f": "p1RbaSOb1VY", "tt": "Rixton - Me and My Broken Heart (Lyrics)", "_id": "219470807",
+                      "trace": {"item_tt": "Rixton - Me and My Broken Heart (Lyrics)", "id": "ClickMusicItem"}},
+                     {"t": "yt", "f": "vSajpNUctPk", "tt": "吉星出租 - 暮色回響", "_id": "249730824"}]}}}},
+                 "buildId": "a1b2c3", "apiKey": "AIzaSyD-not-real"}
+    ld = {"@context": "https://schema.org", "@type": "Event", "name": "週五 demo 發表會", "url": "https://example.com/e"}
+    pages = {"/app": ('<html><head><title></title></head><body><div id="__next"></div>'
+                      f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(next_data, ensure_ascii=False)}</script>'
+                      f'<script type="application/ld+json">{json.dumps(ld, ensure_ascii=False)}</script>'
+                      '<script>window.x = {"tt": "不是資料的程式"}</script></body></html>'),
+             "/article": ("<html><body><p>" + "這是一篇很長的文章。" * 40 + "</p>"
+                          f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(next_data)}</script></body></html>')}
+    fake_web["handler"] = lambda req: httpx.Response(200, text=pages[req.url.path], headers={"content-type": "text/html"})
+    out = web.fetch_url.invoke({"url": "http://93.184.216.34/app"})
+    assert web.EMBEDDED_NOTE in out
+    body = out.split(web.EMBEDDED_NOTE)[1].strip().splitlines()
+    assert body == ["Mixer 163773402", "Rixton - Me and My Broken Heart (Lyrics)", "吉星出租 - 暮色回響", "週五 demo 發表會"]
+    article = web.fetch_url.invoke({"url": "http://93.184.216.34/article"})
+    assert web.EMBEDDED_NOTE not in article and "Rixton" not in article
+
+
 def test_guest_questions_are_screened(workspace, monkeypatch):
     """訪客(screen=True)的問題先過安全模型:不安全就不回答、模型沒有收到;正常的照常回答。主人自己的不檢查。"""
     import guard
