@@ -124,9 +124,12 @@ UPLOAD_INLINE_TOKENS = 30_000  # 一個檔案最多放多少進問題(約 15 頁
 UPLOAD_NOTE = "uploaded by the user; not in the project folder, so file tools cannot read it"
 
 
-def upload_block(name: str, kind: str, payload) -> str:
-    """一個上傳的檔案 → 放在問題前面的區塊。kind="doc":payload 是 PDF / Word / Excel 的內容(bytes),這裡才轉文字
-    (掃描頁要請看圖模型讀,所以在 ask 裡做,用量才算得到這段對話);kind="text":payload 是解碼好的文字。"""
+def upload_block(name: str, kind: str, payload, budget: int = UPLOAD_INLINE_TOKENS) -> str:
+    """一個上傳的檔案 → 放在問題前面的區塊。kind="doc":payload 是 PDF / Word / Excel / PowerPoint 的內容(bytes),
+    這裡才轉文字(掃描頁要請看圖模型讀,所以在 ask 裡做,用量才算得到這段對話);kind="text":payload 是解碼好的文字;
+    kind="zip":payload 是 {"files": [(路徑, kind, 內容)], "skipped": [...]}(documents.read_zip)。budget:最多放多少 tokens。"""
+    if kind == "zip":
+        return _archive_block(name, payload["files"], payload["skipped"], budget)
     if kind == "doc" and isinstance(payload, bytes):  # 訪客的檔案在安全檢查時已經轉好文字(webui.Hub._screened)
         try:
             text = documents.extract_bytes(name, payload)
@@ -136,17 +139,47 @@ def upload_block(name: str, kind: str, payload) -> str:
         text = payload
     body = text if kind == "doc" else _numbered(text)  # 文字檔加行號(回答可以指第幾行);行號也佔 token,算在裡面
     tokens, tail = estimate_tokens(body), ""
-    if tokens > UPLOAD_INLINE_TOKENS:
-        body = body[:int(len(body) * UPLOAD_INLINE_TOKENS / tokens)]
+    if tokens > budget:
+        body = body[:int(len(body) * budget / tokens)]
         if kind != "doc":
-            body = body[:body.rfind("\n")]  # 只放完整的行
-        tail = (f"\n[檔案太長,只放了前面約 {UPLOAD_INLINE_TOKENS:,} tokens,後面還有約 {tokens - UPLOAD_INLINE_TOKENS:,}"
+            body = body[:max(body.rfind("\n"), 0)]  # 只放完整的行
+        tail = (f"\n[檔案太長,只放了前面約 {budget:,} tokens,後面還有約 {tokens - budget:,}"
                 " tokens 沒放;回答時跟使用者說明,要全部請把檔案放進專案資料夾用 @檔名,或只傳需要的部分]")
     if kind == "doc":
         return f'<document name="{name}" note="{UPLOAD_NOTE}">\n{body}{tail}\n</document>'
     shown, total = body.count("\n") + 1, max(1, len(text.splitlines()))  # 跟 _numbered 一樣算(最後的換行不算一行)
     lines = f'lines="1-{shown}"' + (f' total_lines="{total}"' if shown < total else "")
     return f'<file name="{name}" {lines} note="{UPLOAD_NOTE}">\n{body}{tail}\n</file>'
+
+
+ARCHIVE_MIN_TOKENS = 400  # 壓縮檔剩下的額度少於這個,後面的檔案只列名字
+ARCHIVE_LIST = 80         # 沒放進來 / 略過的檔案最多列幾個名字
+
+
+def _archive_block(name: str, files: list, skipped: list[str], budget: int) -> str:
+    """拖進來的 .zip:裡面的檔案共用一個額度(不然一個專案幾百個檔案就塞爆),README 和上層的先放;
+    放不下的、略過的列出名字,模型才知道有哪些沒看到。"""
+    def first(f):
+        inner = f[0].split("/", 1)[-1]
+        return not re.search(r"(^|/)readme[^/]*$", inner, re.I), inner.count("/"), inner.lower()
+
+    blocks, left, missed = [], budget, []
+    for path, kind, payload in sorted(files, key=first):
+        if left < ARCHIVE_MIN_TOKENS:
+            missed.append(path.split("/", 1)[-1])
+            continue
+        block = upload_block(path, kind, payload, left)
+        blocks.append(block)
+        left -= estimate_tokens(block)
+
+    def listed(label: str, items: list[str]) -> str:
+        more = f"…還有 {len(items) - ARCHIVE_LIST} 個" if len(items) > ARCHIVE_LIST else ""
+        return f"{label}:" + "、".join(items[:ARCHIVE_LIST]) + more if items else ""
+
+    head = f"壓縮檔裡讀得了的檔案有 {len(files)} 個,放了 {len(blocks)} 個。"
+    notes = [n for n in (listed("太多放不下(回答時跟使用者說明)", missed), listed("略過", skipped)) if n]
+    return (f'<archive name="{name}" note="{UPLOAD_NOTE}">\n' + "\n".join([head, *notes]) + "\n\n"
+            + "\n\n".join(blocks) + "\n</archive>")
 
 
 def file_mentions(text: str) -> list[str]:

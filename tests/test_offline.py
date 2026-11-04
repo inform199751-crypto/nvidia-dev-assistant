@@ -2859,6 +2859,126 @@ def test_upload_block_cuts_long_files_and_explains_unreadable_ones():
     assert "已經轉好的文字" in agent.upload_block("x.docx", "doc", "已經轉好的文字")  # 訪客的檔案先轉好再檢查
 
 
+def _make_pptx(path, slides: list[tuple[list[str], str | None]], order: list[int]) -> None:
+    """手做一份 .pptx(跟 PowerPoint 存的結構一樣:presentation.xml 的投影片清單 → rels → slideN.xml,備忘稿另一個檔)。
+    slides[i] = (段落, 備忘稿);order 是投影片清單的順序(用 slides 的索引),檔名編號跟順序故意不一樣。"""
+    import zipfile
+    P = 'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
+    A = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+    R = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+    PKG = 'xmlns="http://schemas.openxmlformats.org/package/2006/relationships"'
+    T = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+    def body(paras):  # 一段可以有好幾個 run(粗體的字會切開)
+        return "".join("<a:p>" + "".join(f"<a:r><a:t>{run}</a:t></a:r>" for run in p.split("|")) + "</a:p>" for p in paras)
+
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("[Content_Types].xml", "<Types/>")
+        ids = "".join(f'<p:sldId id="{256 + n}" r:id="rId{i + 1}"/>' for n, i in enumerate(order))
+        z.writestr("ppt/presentation.xml", f"<p:presentation {P} {R}><p:sldIdLst>{ids}</p:sldIdLst></p:presentation>")
+        rels = "".join(f'<Relationship Id="rId{i + 1}" Type="{T}/slide" Target="slides/slide{i + 1}.xml"/>' for i in range(len(slides)))
+        z.writestr("ppt/_rels/presentation.xml.rels", f"<Relationships {PKG}>{rels}</Relationships>")
+        for i, (paras, notes) in enumerate(slides, 1):
+            z.writestr(f"ppt/slides/slide{i}.xml", f"<p:sld {P} {A}><p:cSld><p:spTree><p:sp><p:txBody>{body(paras)}"
+                                                  "</p:txBody></p:sp></p:spTree></p:cSld></p:sld>")
+            if notes:
+                z.writestr(f"ppt/slides/_rels/slide{i}.xml.rels", f'<Relationships {PKG}><Relationship Id="rId2" '
+                           f'Type="{T}/notesSlide" Target="../notesSlides/notesSlide{i}.xml"/></Relationships>')
+                z.writestr(f"ppt/notesSlides/notesSlide{i}.xml", f"<p:notes {P} {A}><p:cSld><p:spTree><p:sp><p:txBody>"
+                           f"{body([notes])}</p:txBody></p:sp><p:sp><p:txBody><a:p><a:fld type=\"slidenum\"><a:t>{i}</a:t>"
+                           "</a:fld></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:notes>")
+
+
+def test_powerpoint_text_is_read_in_slide_order(tmp_path):
+    """11/5:.pptx 以前請使用者另存 PDF。現在直接讀每張投影片和備忘稿(不另外裝套件),順序照簡報的投影片清單
+    (投影片搬動過,檔名編號就跟順序對不上);粗體切開的字接回一段、備忘稿的頁碼拿掉。知識庫、@附檔也一起支援。"""
+    import documents
+    import knowledge
+    deck = tmp_path / "報告.pptx"
+    _make_pptx(deck, [(["結論", "營收|成長 12%"], "記得講 Q4"), (["第一頁:專案介紹"], None), (["目錄"], None)], order=[1, 2, 0])
+    text = documents.extract_text(deck)
+    assert text.index("專案介紹") < text.index("目錄") < text.index("結論")
+    assert "## 第 3 張投影片\n結論\n營收成長 12%\n備忘稿:記得講 Q4" in text
+    assert "\n1\n" not in text and not text.rstrip().endswith("1")  # 備忘稿的頁碼不算
+    assert ".pptx" in documents.DOC_SUFFIXES and ".pptx" in knowledge.SUFFIXES
+    (tmp_path / "壞掉.pptx").write_bytes(b"PK\x03\x04 not really")
+    with pytest.raises(Exception):
+        documents.extract_text(tmp_path / "壞掉.pptx")
+
+
+def test_dropped_zip_is_unpacked_with_a_shared_budget(monkeypatch, tmp_path):
+    """11/5:.zip 以前直接擋。現在解開讀裡面的文字檔和文件(不寫到硬碟):相依套件、.git、macOS 的附加檔不看也不列;
+    機密檔、圖片、巢狀壓縮檔、二進位、太大的列在略過(不相信標頭寫的大小,實際只解到上限);全部都讀不了就擋。
+    放進問題時共用一個額度,README 和上層的先放,放不下的列出名字。"""
+    import io
+    import zipfile
+    import agent
+    import documents
+    import tools
+    import webui
+    from docx import Document
+    doc = io.BytesIO()
+    Document().add_paragraph("規格:登入要兩步驗證").part.package.save(doc)
+    _make_pptx(tmp_path / "s.pptx", [(["簡報第一頁"], None)], [0])
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("proj/src/deep/util.py", "def helper():\n    return 1\n")
+        z.writestr("proj/README.md", "# 專案說明\n點餐系統")
+        z.writestr("proj/docs/規格.docx", doc.getvalue())
+        z.writestr("proj/docs/簡報.pptx", (tmp_path / "s.pptx").read_bytes())
+        z.writestr("proj/node_modules/x/index.js", "module.exports = 1")
+        z.writestr("proj/.git/config", "[core]")
+        z.writestr("__MACOSX/proj/._README.md", "junk")
+        z.writestr("proj/.env", "NVIDIA_API_KEY=nvapi-secret")
+        z.writestr("proj/logo.png", b"\x89PNG\r\n")
+        z.writestr("proj/old.zip", b"PK")
+        z.writestr("proj/data.bin2", b"\x00\x01")
+        z.writestr("proj/big.log", "x" * 200_000)  # 壓縮後很小,解開才知道太大
+    monkeypatch.setattr(documents, "ZIP_MAX_FILE", 100_000)
+    files, skipped = documents.read_zip("proj.zip", buf.getvalue(), lambda p: tools._is_secret(Path(p)))
+    assert sorted(f[0] for f in files) == ["proj.zip/proj/README.md", "proj.zip/proj/docs/簡報.pptx", "proj.zip/proj/docs/規格.docx",
+                                           "proj.zip/proj/src/deep/util.py"]
+    assert sorted(skipped) == ["proj/.env(機密檔)", "proj/big.log(太大)", "proj/data.bin2(不是文字檔)", "proj/logo.png(圖片請直接傳)",
+                               "proj/old.zip(壓縮檔裡的壓縮檔不解開)"]
+    block = agent.upload_block("proj.zip", "zip", {"files": files, "skipped": skipped})
+    assert block.startswith('<archive name="proj.zip"') and "讀得了的檔案有 4 個,放了 4 個" in block
+    assert block.index("proj/README.md") < block.index("規格.docx") < block.index("util.py")  # README、上層的先放
+    assert "兩步驗證" in block and "簡報第一頁" in block and "nvapi-secret" not in block and "略過:" in block
+    tight = agent.upload_block("proj.zip", "zip", {"files": files, "skipped": skipped}, budget=agent.ARCHIVE_MIN_TOKENS + 10)
+    assert "放了 1 個" in tight and "專案說明" in tight  # 只放得下 README
+    assert "src/deep/util.py" in tight.split("太多放不下")[1] and "兩步驗證" not in tight
+    with pytest.raises(ValueError, match="沒有 JUSTIN 讀得了的檔案"):
+        only_junk = io.BytesIO()
+        with zipfile.ZipFile(only_junk, "w") as z:
+            z.writestr("a.png", b"\x89PNG")
+        documents.read_zip("圖.zip", only_junk.getvalue(), lambda p: False)
+    # 經過 /api/ask 的檢查:一樣是一個檔案(大小算壓縮後的)
+    parsed = webui.parse_uploads([{"name": "proj.zip", "data": _b64(buf.getvalue())}])
+    assert parsed[0]["kind"] == "zip" and len(parsed[0]["payload"]["files"]) == 4
+
+
+def test_guests_cannot_send_zip_files(workspace, tmp_path_factory):
+    """訪客的檔案要逐一過安全檢查,壓縮檔裡可能幾百個檔案:訪客不能傳 .zip(網頁也會先擋)。"""
+    import io
+    import zipfile
+    import httpx
+    import webui
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("a.txt", "hello")
+    reg, seen = scripted_registry([ai("好")])
+    desk = webui.Desk(lambda ws: webui.Hub(lambda on_event: AgentSession(reg, TokenQuota(10**6, 2), on_event=on_event),
+                                           workspace=ws, screen=True), workspace, store=tmp_path_factory.mktemp("state"))
+    server, base = _serve(desk)
+    try:
+        r = httpx.post(base + "/api/ask", json={"text": "看", "files": [{"name": "a.zip", "data": _b64(buf.getvalue())}]},
+                       headers={"X-Token": "t0k"})
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert r.status_code == 400 and "訪客不能傳壓縮檔" in r.json()["error"] and seen == []
+
+
 def test_guest_files_are_screened_like_questions(workspace, monkeypatch, tmp_path):
     """訪客(screen=True)的問題本來就先過安全模型;檔案也要,不然把問題藏在檔案裡就繞過了。Word 檔先轉文字再檢查。"""
     import guard

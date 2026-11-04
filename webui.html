@@ -1494,7 +1494,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["11/05", ["每種檔案都可以丟進來了:PDF、Word、Excel、程式碼、CSV、純文字…拖進視窗、貼上或按「+」,JUSTIN 轉成文字一起看(以前只收圖片,其他檔案會被默默丟掉);壓縮檔、影音、舊版 .doc / .ppt 讀不了,會直接說原因",
+  ["11/05", ["PowerPoint(.pptx)和 .zip 也能丟進來了:簡報讀每張投影片和備忘稿;.zip 解開讀裡面的程式碼和文件(相依套件、.git、機密檔會跳過,放不下的會列出名字)。PowerPoint 也能放進知識庫、用 @檔名 附上",
+             "每種檔案都可以丟進來了:PDF、Word、Excel、程式碼、CSV、純文字…拖進視窗、貼上或按「+」,JUSTIN 轉成文字一起看(以前只收圖片,其他檔案會被默默丟掉);壓縮檔、影音、舊版 .doc / .ppt 讀不了,會直接說原因",
              "讀得到內容用 JavaScript 載入的網頁了(例如 MixerBox 歌單):以前只讀到網址,現在會讀網頁附帶的資料,並說明可能不完整"]],
   ["11/04", ["跑測試時不會再跳出黑色的 Docker 視窗(桌面版)",
              "語音模式和朗讀真的換成男聲「雲哲」了:11/1 改了預設,但 Edge 把聲音名字寫成中文,沒挑到,還是用女聲曉臻"]],
@@ -2107,7 +2108,7 @@ async function renderPage() {
       "用 @檔名 附上專案裡的檔案,例如:解釋 @calc.py(程式模式)。",
       "知識庫:側邊欄的「知識庫」加入一個文件資料夾(手冊、規章、規格書…),之後直接問,JUSTIN 會照意思找出相關段落、附上出處再回答。",
       "附圖片:輸入框的「+」→ 上傳檔案或圖片,或直接貼上(Ctrl+V)、拖進視窗。截圖、圖表、照片都可以,JUSTIN 會先用看圖的模型讀懂再回答。",
-      "附其他檔案:PDF、Word、Excel、程式碼、CSV、純文字…一樣拖進視窗或按「+」,JUSTIN 會轉成文字一起看(一題最多 5 個、一個 8 MB;太長的只看前面約 15 頁)。壓縮檔、影音、舊版 .doc / .ppt 讀不了,會直接告訴你。",
+      "附其他檔案:PDF、Word、Excel、PowerPoint、程式碼、CSV、純文字、.zip…一樣拖進視窗或按「+」,JUSTIN 會轉成文字一起看(一題最多 5 個、一個 8 MB;太長的只看前面約 15 頁,.zip 裡的檔案共用這個長度,README 先看)。影音、執行檔、舊版 .doc / .xls / .ppt、.rar / .7z 讀不了,會直接告訴你。",
       "修改先放在 JUSTIN 的草稿上,你按「套用到專案」才會真的改檔案;還沒套用的會出現在「待命」。",
       "大任務打開「先規劃」:JUSTIN 先只讀不改、交出計畫,你同意才照計畫做。",
       "上網前一定會先問你;公司內網和本機網址一律不准。讀到的網頁會先經過安全檢查,藏著要 AI 照做的指令會被擋下。",
@@ -3026,7 +3027,7 @@ function insertAt() {
 }
 $("attach").onclick = () => {
   if (sideMode === "chat") return $("file-input").click();
-  popup($("attach"), [[["上傳檔案或圖片", "PDF、Word、Excel、程式碼、文字檔、截圖;也可以直接拖進來或貼上"], () => $("file-input").click()],
+  popup($("attach"), [[["上傳檔案或圖片", "PDF、Word、Excel、PowerPoint、程式碼、.zip、截圖;也可以直接拖進來或貼上"], () => $("file-input").click()],
                       [["附加專案裡的檔案", "輸入 @檔名"], insertAt]]);
 };
 
@@ -3071,9 +3072,10 @@ async function addImages(files) {
 // ---------- 其他檔案(11/5 使用者要「每個檔案都可以丟進去」;以前只收圖片,其他的默默丟掉) ----------
 // 原檔(base64)跟問題一起送,伺服器轉成文字(webui.parse_uploads → agent.upload_block)。讀不了的這裡先說原因
 const MAX_FILES = 5, FILE_MAX = 8e6, FILES_TOTAL = 10e6;  // 跟伺服器的 MAX_UPLOAD_* 一樣
-const FILE_DOCS = /\.(pdf|docx|xlsx|xlsm)$/i;
-const FILE_OLD = { doc: ".docx", xls: ".xlsx", ppt: "PDF", pptx: "PDF" };
-const FILE_BINARY = /\.(zip|7z|rar|gz|tgz|tar|bz2|xz|exe|dll|msi|so|dylib|bin|iso|img|dmg|apk|jar|class|pyc|mp4|mov|avi|mkv|webm|wmv|mp3|wav|m4a|flac|aac|ogg|psd|ai|sketch|fig|sqlite|db|mdb|accdb|ttf|otf|woff2?)$/i;
+const FILE_DOCS = /\.(pdf|docx|xlsx|xlsm|pptx|zip)$/i;  // 伺服器轉文字 / 解開(不是純文字,不檢查 NUL)
+const FILE_OLD = { doc: ".docx", xls: ".xlsx", ppt: ".pptx" };
+const FILE_ARCHIVE = /\.(7z|rar|gz|tgz|tar|bz2|xz)$/i;
+const FILE_BINARY = /\.(exe|dll|msi|so|dylib|bin|iso|img|dmg|apk|jar|class|pyc|mp4|mov|avi|mkv|webm|wmv|mp3|wav|m4a|flac|aac|ogg|psd|ai|sketch|fig|sqlite|db|mdb|accdb|ttf|otf|woff2?)$/i;
 const FILE_SECRET = /^(\.env(\..*)?|id_(rsa|ed25519|ecdsa).*|.*\.(pem|key|p12|pfx|jks|keystore))$/i;
 const FILE_ICON = icon('<path d="M5.5 2.5h6l3.5 3.5v11.5h-9.5z"/><path d="M11.5 2.5V6H15"/>');
 function fileChip(name, size, onRemove) {
@@ -3087,11 +3089,13 @@ async function fileProblem(f) {  // 讀不了就回原因(跟伺服器 documents
   const ext = (f.name.match(/\.([^.]+)$/) || [])[1]?.toLowerCase() || "";
   if (/^\.env(\.(example|sample|template))$/i.test(f.name)) return "";
   if (FILE_SECRET.test(f.name)) return "看起來是金鑰、憑證或 .env,不會送給模型";
-  if (FILE_OLD[ext]) return `.${ext} 請先另存成 ${FILE_OLD[ext]} 再傳`;
-  if (FILE_BINARY.test(f.name)) return "JUSTIN 讀不了壓縮檔、影音和執行檔";
+  if (FILE_OLD[ext]) return `.${ext} 是舊版 Office 格式,請先另存成 ${FILE_OLD[ext]} 再傳`;
+  if (FILE_ARCHIVE.test(f.name)) return "只解得開 .zip,請改壓成 .zip 再傳";
+  if (FILE_BINARY.test(f.name)) return "JUSTIN 讀不了影音、執行檔和這類二進位檔";
+  if (ext === "zip" && state.guest) return "訪客不能傳壓縮檔;請把裡面要看的檔案直接傳";
   if (f.size > FILE_MAX) return `檔案太大(一個最多 ${FILE_MAX / 1e6} MB);大的檔案請放進專案資料夾,用 @檔名`;
   if (!FILE_DOCS.test(f.name) && new Uint8Array(await f.slice(0, 8192).arrayBuffer()).includes(0))
-    return "不是文字檔,JUSTIN 讀不了(可以傳 PDF、Word、Excel、圖片、程式碼或其他文字檔)";
+    return "不是文字檔,JUSTIN 讀不了(可以傳 PDF、Word、Excel、PowerPoint、圖片、程式碼、.zip 或其他文字檔)";
   return "";
 }
 async function addFiles(files) {

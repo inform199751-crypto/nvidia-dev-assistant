@@ -1240,6 +1240,10 @@ def parse_uploads(raw) -> list[dict]:
                              f"一題加起來最多 {MAX_UPLOAD_TOTAL // 1_000_000} MB);大的檔案請放進專案資料夾,用 @檔名")
         if toolbox._is_secret(Path(name)):
             raise ValueError(f"{name}:看起來是金鑰、憑證或 .env,不會送給模型")
+        if Path(name).suffix.lower() == ".zip":  # 解開來讀裡面的文字檔和文件(機密檔一樣不給)
+            files, skipped = documents.read_zip(name, data, lambda p: toolbox._is_secret(Path(p)))
+            out.append({"name": name, "size": len(data), "kind": "zip", "payload": {"files": files, "skipped": skipped}})
+            continue
         text = documents.check_upload(name, data)
         out.append({"name": name, "size": len(data), "kind": "text" if text is not None else "doc",
                     "payload": data if text is None else text})
@@ -2442,6 +2446,8 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                         "research" if mode == "research" and hub.can_research else "normal")
                 if mode == "research" and (images or uploads):
                     return self._json(400, {"error": "深度研究只上網查,不看附上的圖片和檔案;請關掉「深度研究」再送"})
+                if hub.screen and any(u["kind"] == "zip" for u in uploads):  # 訪客的檔案要逐一過安全檢查,壓縮檔太多了
+                    return self._json(400, {"error": "訪客不能傳壓縮檔;請把裡面要看的檔案直接傳"})
                 ok = hub.ask(text, mode, images=images, split=bool(body.get("split")) and not hub.chat and mode != "research",
                              voice=bool(body.get("voice")) and mode == "normal", uploads=uploads)
                 self._json(202 if ok else 409, {} if ok else
