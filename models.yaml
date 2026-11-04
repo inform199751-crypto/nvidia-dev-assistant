@@ -70,9 +70,14 @@ rerank:
 # 2026-10-10 實測 5 題(正常網頁 / 惡意網頁 / 隱晦的提示注入 / 不當請求 / 正常請求):
 #   Nemotron 3.5 Content Safety 全對,每次約 0.7 秒;NemoGuard 8B content safety、Llama Guard 4 全部逾時(60 秒);
 #   Safety Guard 8B v3 對了 3 題、4–28 秒,其他逾時
-# 檢查失敗(逾時、忙線)不擋,只提醒模型(guard.py 開頭有寫為什麼)
+# 2026-11-05:Nemotron 3.5 Content Safety 還在 catalog 的模型清單上,但每次都回 404(Function id … not found),
+#   網頁內容和訪客的問題其實都沒檢查到(試 JUSTIN 讀歌單網址時發現)。同樣 5 題(隱晦注入換成要使用者裝假更新)各跑 2 輪:
+#   Safety Guard 8B v3 10/10、0.8–1.3 秒;Llama Guard 4 10/10、0.6–0.7 秒;NemoGuard 8B 全部逾時
+#   → 主力 Safety Guard 8B v3(會給類別名稱),Llama Guard 4 當備援(回 safe / unsafe + S 代碼,guard.parse 認得)
+# 檢查失敗(逾時、忙線、全部備援都掛)不擋,只提醒模型(guard.py 開頭有寫為什麼)
 safety:
-  model: nvidia/nemotron-3.5-content-safety
+  model: nvidia/llama-3.1-nemotron-safety-guard-8b-v3
+  fallbacks: [meta/llama-guard-4-12b]
   nim_base_url: http://nim-content-safety:8000/v1
   timeout_s: 10
 

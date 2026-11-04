@@ -278,14 +278,16 @@ class ModelRegistry:
             return None
         base = (cfg.get("nim_base_url") or self._backend_cfg["base_url"]) if self.backend == "nim" else self._backend_cfg["base_url"]
         key_env = self._backend_cfg.get("api_key_env")
+        # 11/5:主力模型在清單上卻一直 404,檢查默默失效(只在網頁內容前面提醒)。跟聊天模型一樣有備援:這顆失敗換下一顆
+        models = [cfg["model"], *cfg.get("fallbacks", [])]
 
-        def check(text: str) -> tuple[str, str]:
+        def ask(model: str, text: str) -> tuple[str, str]:
             import httpx
 
             import guard
 
             api_key = os.getenv(key_env) if key_env else None
-            body = {"model": cfg["model"], "messages": [{"role": "user", "content": text}], "max_tokens": 64, "temperature": 0}
+            body = {"model": model, "messages": [{"role": "user", "content": text}], "max_tokens": 64, "temperature": 0}
             for attempt in range(2):
                 r = httpx.post(base.rstrip("/") + "/chat/completions", json=body, timeout=cfg.get("timeout_s", 10),
                                headers={"Authorization": f"Bearer {api_key}"} if api_key else {})
@@ -296,6 +298,17 @@ class ModelRegistry:
                     raise RuntimeError(f"[{r.status_code}] {r.text[:120]}")
                 return guard.parse(r.json()["choices"][0]["message"]["content"] or "")
             raise AssertionError("unreachable")
+
+        def check(text: str) -> tuple[str, str]:
+            import httpx
+
+            failed = []
+            for model in models:
+                try:
+                    return ask(model, text)
+                except (RuntimeError, ValueError, KeyError, IndexError, httpx.HTTPError) as e:  # 下架、逾時、看不懂的回答
+                    failed.append(f"{model.split('/')[-1]} {str(e).splitlines()[0][:80] if str(e) else type(e).__name__}")
+            raise RuntimeError(";".join(failed))
 
         check.model = cfg["model"]
         return check

@@ -36,12 +36,23 @@ class Verdict:
     error: str = ""
 
 
+# Llama Guard 4(備援)回「unsafe\nS2,S14」:代碼照 Meta 的分類表換成名稱
+LLAMA_GUARD = {"S1": "Violent Crimes", "S2": "Non-Violent Crimes", "S3": "Sex-Related Crimes", "S4": "Child Sexual Exploitation",
+               "S5": "Defamation", "S6": "Specialized Advice", "S7": "Privacy", "S8": "Intellectual Property",
+               "S9": "Indiscriminate Weapons", "S10": "Hate", "S11": "Suicide & Self-Harm", "S12": "Sexual Content",
+               "S13": "Elections", "S14": "Code Interpreter Abuse"}
+
+
 def parse(content: str) -> tuple[str, str]:
     """安全模型的回答 → ("safe" | "unsafe", 類別)。Nemotron 3.5 回「User Safety: unsafe」,
-    Safety Guard 8B 回 JSON {"User Safety": "unsafe", "Safety Categories": "Malware"}。"""
+    Safety Guard 8B 回 JSON {"User Safety": "unsafe", "Safety Categories": "Malware"},Llama Guard 4 回「unsafe\nS2」。"""
     m = re.search(r'User Safety"?\s*:\s*"?(safe|unsafe)', content, re.I)
     if not m:
-        raise ValueError(f"看不懂安全模型的回答:{content[:80]}")
+        lg = re.fullmatch(r"\s*(safe|unsafe)\s*(?:\n\s*(S\d+(?:\s*,\s*S\d+)*))?\s*", content, re.I)
+        if not lg:
+            raise ValueError(f"看不懂安全模型的回答:{content[:80]}")
+        codes = re.findall(r"S\d+", lg[2] or "")
+        return lg[1].lower(), ", ".join(LLAMA_GUARD.get(c, c) for c in codes)
     cats = re.search(r'Safety Categories"?\s*:\s*"?([^"\n}]+)', content)
     return m[1].lower(), cats[1].strip() if cats else ""
 

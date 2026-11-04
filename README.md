@@ -31,7 +31,7 @@
 | **它做什麼** | 把 bug 丟給它:自己讀程式、在 Docker 沙箱跑測試、提出修正,**人按確認才真的改檔案**。也能寫技術文件、讀公司文件和截圖 |
 | **技術重點** | 依長度和難度自動換模型(Nemotron 3.5 Super / DeepSeek / 1M 上下文的 Nemotron 3 Ultra)、每一步送出前控制 token、沙箱沒有網路也看不到機密檔 |
 | **效果** | 17 題自己寫的修 bug 評測,驗收含它看不到的隱藏測試:依難度選模型 **32/34(94%)**、平均約 5.3 萬 tokens;同一版程式只用 Super 29/34(85%)、約 6.6 萬,差別都在難題 |
-| **品質** | 用真模型實測與審查抓到 **90 個問題**,每一個都寫了怎麼發現、怎麼修([見下方](#實測與審查抓到的-90-個問題));228 個離線測試(假模型,不需金鑰) |
+| **品質** | 用真模型實測與審查抓到 **91 個問題**,每一個都寫了怎麼發現、怎麼修([見下方](#實測與審查抓到的-91-個問題));229 個離線測試(假模型,不需金鑰) |
 | **用法** | 命令列、網頁、桌面版、手機、VS Code 外掛、多人部署(Docker Compose + Redis + oauth2-proxy) |
 | **規模** | 約 9,700 行 Python、3,200 行網頁介面、4,700 行測試;2026-10-06 – 10-30 |
 | **還沒做** | 沒有 GPU,地端 NIM 只用 CPU 上的小模型模擬,驗證了切換不用改程式([限制](#還沒做--限制)) |
@@ -42,7 +42,7 @@
 
 - **出題與取捨**:起點是一題架構題(對內研發助理改用 NVIDIA、要能地端)。做哪些功能、遇到取捨選哪邊由我決定,
   例如寫進跨對話記憶前要先問使用者、地端相容性不花錢,改用 CPU 模擬。
-- **自己當使用者**:90 個問題裡有 17 個來自我自己用的時候,例如只打「沒反應」它回了 3,878 字、畫圖等了 3 分多鐘還是沒有圖。
+- **自己當使用者**:91 個問題裡有 17 個來自我自己用的時候,例如只打「沒反應」它回了 3,878 字、畫圖等了 3 分多鐘還是沒有圖。
 - **不相信「修好了」**:AI 說修好不算數,要在沙箱裡真的跑過測試;評測另外有模型看不到的隱藏測試。每個問題都附上怎麼發現、怎麼驗證。
 
 > **In English** — An internal coding assistant (find bugs, propose patches, write docs) built on NVIDIA models so source
@@ -50,7 +50,7 @@
 > config change only. It picks a model per turn by length and difficulty (Nemotron 3.5 Super / DeepSeek / Nemotron 3 Ultra
 > with 1M context), checks the token budget before every step, and can only run code in a network-less Docker sandbox;
 > patches are applied only after a human confirms. On 17 self-written bug-fix tasks with hidden tests, difficulty routing
-> passed 32/34 (Super alone: 29/34, using 24% more tokens). Testing with real models surfaced 90 problems, each documented with how it was found and fixed.
+> passed 32/34 (Super alone: 29/34, using 24% more tokens). Testing with real models surfaced 91 problems, each documented with how it was found and fixed.
 > Written with Claude Code; I set the direction, used it with real models, and verified the results.
 
 ## 架構
@@ -142,9 +142,9 @@ flowchart LR
 | 重問之前失敗過的工具(10/31) | 使用者說「無法畫圖」:那段對話 10/29 畫圖失敗過,今天再問一模一樣的話。畫圖模型本身正常(klein 3.5 秒、4.9 秒),拿那段對話重問 Super | 系統提示舊寫法 **17/20** 重新呼叫 generate_image,3 次沒試就說失敗(「我再試一次也畫不出來」);寫明只限同一輪之後 **20/20**。對話模式沒有這條規則,兩種寫法都 15/15 |
 | 自己訓練的模型 · 真實使用(10/31) | 真實使用的紀錄第一次夠訓練回歸(32 輪);決策樹另外用交叉驗證的折外預測,只看真實問題(33 題,Super 判成難題的 4 題) | **決策樹抓不到真實的難題**:10/9 只用範例題訓練的那棵,真實問題每題都猜「一般」(一致 29/33、難題 0/4);加進真實紀錄重練,交叉驗證整體 0.89(大多是範例題),真實問題還是 0/4。**回歸輸給猜平均**:tokens 的 MAE 30.9k(猜平均 28.4k)、秒數 59.8(猜平均 56.3);係數最大的是「很短的接話」「前面幾輪」(對話越長每步送得越多)。選模型還是問 Super(classifier: llm)。**回歸模型存下來之後,JUSTIN 每一輪開頭在畫面上顯示「預估這一輪約 18.8 萬 tokens」,實際只有 1.5 萬**:拿掉模型檔,訓練程式改成比猜平均準才存(再訓練一次:tokens 21,174 對猜平均 21,006,沒存)。決策樹只寫進紀錄,重練的留著,之後的紀錄就是它沒看過的測試資料 |
 | 回答中換模型(11/1) | 使用者錄示範影片時被交給 DeepSeek、等很久只能按停止重問。改成回答中也能換:先指定 DeepSeek 修 `demo_workspace` 的 bug,它第一步跑測試時換成 Super | 19 秒 DeepSeek 做完第一步(列檔案、跑測試),22 秒畫面出現「換成 nemotron-3.5-super-vl-120b-a12b 接著做」,Super 讀檔、提修改,29 秒做完、出現「套用」卡片;前面做的不用重來 |
-| 離線測試 | 假模型,不需金鑰 | 228 個全過 |
+| 離線測試 | 假模型,不需金鑰 | 229 個全過 |
 
-## 實測與審查抓到的 90 個問題
+## 實測與審查抓到的 91 個問題
 
 | # | 問題 | 怎麼發現 | 處理 |
 |---|---|---|---|
@@ -238,6 +238,7 @@ flowchart LR
 | 88 | 桌面版跑測試時,畫面上跳出黑色的 Docker 命令列視窗、蓋住 JUSTIN:桌面版用 pythonw 跑(沒有主控台),叫 docker、git 這類命令列程式時 Windows 會另外開一個視窗 | 使用者錄的示範影片(11/4,17 秒和 25 秒各跳一次) | 會在桌面版裡執行的 docker、git、powershell 呼叫一律帶 `CREATE_NO_WINDOW`(`tools.NO_WINDOW`;終端機、MCP、看 git 變更本來就有,漏的是沙箱、git_log / git_blame、套用 patch、下載 GitHub、讀版本);離線測試掃過這幾個檔案,之後新加的呼叫沒帶也會被抓到 |
 | 89 | 11/1 把語音模式和朗讀的預設改成男聲「雲哲」,錄示範影片時語音模式畫面卻寫「回答用微軟的「曉臻」唸」,唸的是女聲:Edge 給線上語音取的是中文名字(「Microsoft 雲哲 Online (Natural)」、云希、圭太),挑男聲的規則只寫了英文名 YunJhe,一個都對不到,「男聲在前」沒作用,排第一個的曉臻就被選上;11/1 是在名字是英文的瀏覽器上看的,所以沒發現 | 使用者錄的示範影片(11/4,語音模式那段) | 挑男聲的規則加上 Edge 的中文名字(雲哲、云希、云健、云扬、雲龍、圭太…);名字是從桌面版用的 Edge 讀出來的,在 Edge 裡跑頁面挑聲音的程式,第一個變成雲哲;離線測試照 Edge 列出來的順序檢查 |
 | 90 | 給 JUSTIN 一個 MixerBox 歌單網址,它只讀到網址本身、一首歌都沒有:這類網頁(Next.js 等)的內容是 JavaScript 載入的,原始 HTML 幾乎沒有字,歌名放在 `<script id="__NEXT_DATA__">` 的 JSON 裡,而讀網頁時 script 整段拿掉 | 使用者回報(11/5) | 看得到的字太少時,改讀網頁附帶的 JSON(`__NEXT_DATA__`、JSON-LD),只挑像人寫的文字(有中文、或英文字之間有空格),網址、代碼、日期、金鑰不要,並註明「是 JavaScript 載入的網頁、可能不完整」;不執行網頁的程式。那個歌單讀得到 100 多首歌名 |
+| 91 | 檢查網頁內容和訪客問題的安全模型(Nemotron 3.5 Content Safety)還在 NVIDIA 的模型清單上,但每次都回 404(Function id … not found)。檢查失敗本來就設計成不擋、只在網頁內容前面提醒,所以沒人發現:這段時間網頁內容和訪客的問題其實都沒檢查到 | 實測(11/5,試 JUSTIN 讀歌單網址時看到工具結果開頭寫「安全檢查這次沒有完成:[404]」) | 清單上另外 3 個安全模型各跑 2 輪(正常 / 惡意網頁 / 隱晦注入 / 不當請求 / 正常請求):Safety Guard 8B v3 10/10、約 1 秒,Llama Guard 4 10/10、約 0.7 秒,NemoGuard 8B 全部逾時 → 換 Safety Guard 8B v3,Llama Guard 4 當備援(安全模型以前沒有備援);解析多認 Llama Guard 的格式;冒煙測試通過 |
 
 ## 執行
 
