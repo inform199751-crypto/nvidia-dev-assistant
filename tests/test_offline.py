@@ -3390,6 +3390,29 @@ def test_cloud_voice_is_off_where_company_data_may_go(webui_app):
     assert state(webui_app([]))["cloud_voice"] is True
 
 
+def test_male_voice_matches_edge_voice_names_written_in_chinese():
+    """11/4 錄影:11/1 把預設改成男聲「雲哲」,語音模式畫面卻寫「回答用微軟的「曉臻」唸」。Edge 的線上聲音名字是中文
+    (「Microsoft 雲哲 Online (Natural)」、云希、圭太),MALE_VOICE 只寫了英文名 YunJhe,一個都對不到,
+    naturalVoices() 的「男聲在前」沒作用,排第一個的女聲就被選上。名字是 11/4 從桌面版用的 Edge 讀出來的。"""
+    import re
+    page =(Path(__file__).parent.parent / "webui.html").read_text(encoding="utf-8")
+    male = re.compile(re.search(r"const MALE_VOICE = /(.+?)/i;", page).group(1), re.I)
+    edge_tw = ["Microsoft 曉臻 Online (Natural) - Chinese (Taiwanese Mandarin, Traditional)",  # Edge 列出來的順序
+               "Microsoft 雲哲 Online (Natural) - Chinese (Taiwanese Mandarin, Traditional)",
+               "Microsoft 曉雨 Online (Natural) - Chinese (Taiwanese Mandarin, Traditional)"]
+    first = sorted(edge_tw, key=lambda name: not male.search(name))[0]  # naturalVoices():男聲在前(穩定排序)
+    assert "雲哲" in first
+    for name in ["Microsoft 云希 Online (Natural) - Chinese (Mandarin, Simplified)",
+                 "Microsoft 圭太 Online (Natural) - Japanese (Japan)",
+                 "Microsoft Andrew Online (Natural) - English (United States)",
+                 "Microsoft Zhiwei - Chinese (Traditional, Taiwan)"]:
+        assert male.search(name), name
+    for name in edge_tw[::2] + ["Microsoft 七海 Online (Natural) - Japanese (Japan)",
+                                "Microsoft 晓晓 Online (Natural) - Chinese (Mandarin, Simplified)",
+                                "Microsoft Yating - Chinese (Traditional, Taiwan)"]:
+        assert not male.search(name), name
+
+
 def test_company_folders_are_blocked_on_the_trial_platform(workspace, tmp_path_factory, trial_platform):
     """10/10 公司資料保護:不是靠人記得「不要放」,是讓系統擋住。試用平台上 .env 的 COMPANY_PATHS 底下的資料夾
     加專案、知識庫、拖進來(找位置 / 上傳)都擋;其他資料夾第一次加入回 409,畫面問過「不是公司資料」再送 public 才放行,

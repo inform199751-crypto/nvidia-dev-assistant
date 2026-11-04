@@ -1478,7 +1478,8 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
-  ["11/04", ["跑測試時不會再跳出黑色的 Docker 視窗(桌面版)"]],
+  ["11/04", ["跑測試時不會再跳出黑色的 Docker 視窗(桌面版)",
+             "語音模式和朗讀真的換成男聲「雲哲」了:11/1 改了預設,但 Edge 把聲音名字寫成中文,沒挑到,還是用女聲曉臻"]],
   ["11/01", ["改名叫 JUSTIN(原本叫 HSUAN),桌面捷徑也換了",
              "預設改成男生的聲音:語音模式和朗讀都用微軟的自然語音「雲哲」(要唸的文字會送到微軟;在「設定 → 朗讀」可以改回這台電腦的聲音)",
              "側邊欄的專案可以移除了:按專案旁邊的「⋯」→「移除專案」(只從清單拿掉、連同它的對話,電腦上的資料夾不會動)",
@@ -2194,7 +2195,9 @@ $("term-give").onclick = () => {  // 最後一個指令和輸出放進輸入框:
 // ---------- 朗讀回答(10/26 使用者要的):唸出回答 ----------
 // 11/1 使用者要男生的聲音:預設用微軟的自然語音「雲哲」(線上,要唸的文字會送到微軟),語音模式和朗讀都一樣;
 // 地端(cloud_voice 是 false)、沒有自然語音、唸不出來,就用這台電腦內建的(有男聲先用男聲)。設定頁可以改
-const MALE_VOICE = /YunJhe|Zhiwei|Yunxi|Yunyang|Andrew|Brian|Guy|Davis|Christopher|Eric|Roger|Steffan|David|Mark|Keita|Naoki|Ichiro/i;
+// Edge 的線上聲音名字是中文(「Microsoft 雲哲 Online (Natural)」、云希、圭太),只寫英文名會對不到:
+// 11/4 錄影抓到語音模式還是用曉臻(排第一個的女聲)
+const MALE_VOICE = /YunJhe|Zhiwei|Yunxi|Yunyang|Andrew|Brian|Guy|Davis|Christopher|Eric|Roger|Steffan|David|Mark|Keita|Naoki|Ichiro|雲哲|云哲|雲希|云希|雲健|云健|雲揚|云扬|雲夏|云夏|雲龍|圭太/i;
 const maleVoice = (v) => MALE_VOICE.test(v.name);
 const speech = { voice: store.get("voice", ""), rate: Number(store.get("voiceRate", "1")) || 1, btn: null, run: 0, queue: [], cur: null };
 const VOICE_LANG = { "zh-TW": "zh", en: "en", ja: "ja" };
