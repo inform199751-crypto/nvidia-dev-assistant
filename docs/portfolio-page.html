@@ -194,6 +194,15 @@ ol.findings li {
 
 ul.plain { margin: 0; padding-left: 1.2em; max-width: 42em; display: flex; flex-direction: column; gap: 8px; }
 
+/* ---------- 示範影片 ---------- */
+.clips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 20px; margin: 0; }
+.clip { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.clip video { width: 100%; aspect-ratio: 1280 / 870; background: #000; border: 1px solid var(--rule); border-radius: 6px; display: block; }
+.clip figcaption { font-size: 14px; line-height: 1.6; color: var(--muted); }
+.clip figcaption strong { color: var(--ink); font-weight: 700; margin-right: 6px; }
+.clip figcaption .len { font-family: var(--mono); font-size: 12px; margin-right: 6px; }
+.clips-note { font-size: 14px; color: var(--muted); margin: 14px 0 0; }
+
 footer { padding-block: 28px; font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 8px 24px; }
 footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.12em; }
 
@@ -202,6 +211,7 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
   .cover .margin { padding-top: 0; }
   .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .caps { grid-template-columns: minmax(0, 1fr); }
+  .clips { grid-template-columns: minmax(0, 1fr); }
   .specimens { grid-template-columns: minmax(0, 1fr); }
   ol.findings li { grid-template-columns: 2em minmax(0, 1fr); }
   .findings .fix { grid-column: 2; }
@@ -216,10 +226,10 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
 <div class="wrap">
 
 <header class="cover">
-  <div class="margin">作品集<br>實測 10-06 – 11-01<br>更新 11-01</div>
+  <div class="margin">作品集<br>實測 10-06 – 11-04<br>更新 11-04</div>
   <div>
     <h1>對內研發助理<br>實測紀錄</h1>
-    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 10/30 邊做邊用真模型測試的過程,實測與審查一共抓到 80 個問題。</p>
+    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 11/4 邊做邊用真模型測試的過程,實測與審查一共抓到 89 個問題。</p>
     <div class="byline">
       <span><strong>HSUAN</strong></span>
       <span>Python · LangChain · NVIDIA NIM · Docker · Redis · scikit-learn</span>
@@ -227,6 +237,38 @@ footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.1
     </div>
   </div>
 </header>
+
+<section>
+  <div class="label">
+    <h2>實際操作</h2>
+    <div class="note">桌面版錄的五段,用的是試用平台上的真模型</div>
+  </div>
+  <div class="body">
+    <div class="clips">
+      <figure class="clip">
+        <video controls muted playsinline preload="none" poster="demo/1-fix-bug.jpg" src="demo/1-fix-bug.mp4"></video>
+        <figcaption><strong>修 bug</strong><span class="len">21 秒</span>問 test_add 為什麼失敗:讀程式、在 Docker 沙箱跑測試、修好 <code>a - b</code> 並補回歸測試;測試通過後按「套用到專案」才真的改檔案。</figcaption>
+      </figure>
+      <figure class="clip">
+        <video controls muted playsinline preload="none" poster="demo/2-knowledge.jpg" src="demo/2-knowledge.mp4"></video>
+        <figcaption><strong>問公司文件</strong><span class="len">14 秒</span>「搭小黃去見客戶的錢可以請款嗎?」查知識庫,回答附上出處(報帳規定 › 交通費)。等模型回答的 16 秒改成 4 倍速。</figcaption>
+      </figure>
+      <figure class="clip">
+        <video controls muted playsinline preload="none" poster="demo/3-draw.jpg" src="demo/3-draw.mp4"></video>
+        <figcaption><strong>畫圖</strong><span class="len">14 秒</span>「畫一張彩虹和蝴蝶、地上有花的圖,小朋友的插畫風格,橫的」,用 FLUX 畫好直接顯示在對話裡。</figcaption>
+      </figure>
+      <figure class="clip">
+        <video controls muted playsinline preload="none" poster="demo/4-edit-image.jpg" src="demo/4-edit-image.mp4"></video>
+        <figcaption><strong>改圖</strong><span class="len">16 秒</span>「在剛剛那張圖上加一隻粉紅色的獨角獸,其他不要變」:用同一個隨機種子重畫,彩虹、雲和花的位置都沒變。</figcaption>
+      </figure>
+      <figure class="clip">
+        <video controls playsinline preload="none" poster="demo/5-voice.jpg" src="demo/5-voice.mp4"></video>
+        <figcaption><strong>語音模式</strong><span class="len">21 秒 · 有聲音</span>用說的問「用一句話介紹你自己」,大約 3 秒後用微軟的自然語音回答。</figcaption>
+      </figure>
+    </div>
+    <p class="clips-note">除了第二段的等待,其他都是實際速度,只剪掉頭尾。</p>
+  </div>
+</section>
 
 <section>
   <div class="label">

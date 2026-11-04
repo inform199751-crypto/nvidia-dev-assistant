@@ -4,7 +4,22 @@
 改走 NVIDIA 生態系:開發期接 API Catalog(build.nvidia.com),正式環境換成地端 NIM 容器,**程式碼不用改**。
 助理叫 **JUSTIN**(11/1 以前叫 HSUAN,較早的 commit 和評測紀錄裡是舊名字)。
 
-<!-- 示範影片:錄好後放在這裡,例如 [![示範影片](docs/demo-thumb.png)](https://youtu.be/影片代碼) -->
+## 示範影片
+
+在桌面版錄的,用試用平台上的真模型;點圖片播放。除了第二段等模型回答的 16 秒改成 4 倍速,其他都是實際速度,只剪掉頭尾。
+
+<table>
+<tr>
+<td width="33%"><a href="docs/demo/1-fix-bug.mp4"><img src="docs/demo/1-fix-bug.jpg" alt="修 bug 示範影片"></a><br><b>修 bug</b>(21 秒):問 test_add 為什麼失敗,它讀程式、在 Docker 沙箱跑測試、修好並補回歸測試;按「套用到專案」才真的改檔案</td>
+<td width="33%"><a href="docs/demo/2-knowledge.mp4"><img src="docs/demo/2-knowledge.jpg" alt="問公司文件示範影片"></a><br><b>問公司文件</b>(14 秒):「搭小黃去見客戶的錢可以請款嗎?」查知識庫,回答附上出處</td>
+<td width="33%"><a href="docs/demo/3-draw.mp4"><img src="docs/demo/3-draw.jpg" alt="畫圖示範影片"></a><br><b>畫圖</b>(14 秒):彩虹、蝴蝶和花的兒童插畫,畫好直接顯示在對話裡</td>
+</tr>
+<tr>
+<td><a href="docs/demo/4-edit-image.mp4"><img src="docs/demo/4-edit-image.jpg" alt="改圖示範影片"></a><br><b>改圖</b>(16 秒):「加一隻粉紅色的獨角獸,其他不要變」,用同一個隨機種子重畫</td>
+<td><a href="docs/demo/5-voice.mp4"><img src="docs/demo/5-voice.jpg" alt="語音模式示範影片"></a><br><b>語音模式</b>(21 秒,有聲音):用說的問,約 3 秒後用微軟的自然語音回答</td>
+<td></td>
+</tr>
+</table>
 
 ## 30 秒看懂
 
