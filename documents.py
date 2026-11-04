@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import tempfile
 from pathlib import Path
 from typing import Callable
 
@@ -31,6 +32,52 @@ def extract_text(path: Path) -> str:
     if suffix in (".doc", ".xls", ".ppt"):
         raise ValueError(f"{suffix} 是舊版 Office 格式,請先另存成 {suffix}x 再讀")
     return path.read_text(encoding="utf-8", errors="replace")
+
+
+# 網頁拖進來 / 上傳的單一檔案(11/5 使用者要「每個檔案都可以丟進去」;以前只收圖片,其他的默默丟掉):
+# 辦公檔案轉文字、其他文字檔照讀,讀不了的先說清楚原因
+OLD_OFFICE = {".doc": ".docx", ".xls": ".xlsx", ".ppt": "PDF", ".pptx": "PDF"}  # 沒裝 python-pptx,簡報請存成 PDF
+BINARY_SUFFIXES = {".zip", ".7z", ".rar", ".gz", ".tgz", ".tar", ".bz2", ".xz", ".exe", ".dll", ".msi", ".so", ".dylib",
+                   ".bin", ".iso", ".img", ".dmg", ".apk", ".jar", ".class", ".pyc", ".mp4", ".mov", ".avi", ".mkv",
+                   ".webm", ".wmv", ".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg", ".psd", ".ai", ".sketch", ".fig",
+                   ".sqlite", ".db", ".mdb", ".accdb", ".ttf", ".otf", ".woff", ".woff2"}
+
+
+def decode_text(data: bytes) -> str | None:
+    """文字檔的內容;前面就有 NUL 的是二進位檔,回 None。台灣的舊檔案常是 Big5(cp950),UTF-8 讀不了再試它。"""
+    if b"\x00" in data[:8192]:
+        return None
+    for encoding in ("utf-8-sig", "cp950"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
+def check_upload(name: str, data: bytes) -> str | None:
+    """拖進來的檔案能不能讀:辦公檔案回 None(送出後才轉文字,掃描頁要看圖模型讀,不能卡住上傳),
+    文字檔回內容;讀不了丟 ValueError,訊息直接給使用者看。"""
+    suffix = Path(name).suffix.lower()
+    if suffix in DOC_SUFFIXES:
+        return None
+    if suffix in OLD_OFFICE:
+        raise ValueError(f"{name}:{suffix} 請先另存成 {OLD_OFFICE[suffix]} 再傳")
+    if suffix in BINARY_SUFFIXES:
+        raise ValueError(f"{name}:JUSTIN 讀不了壓縮檔、影音和執行檔")
+    text = decode_text(data)
+    if text is None:
+        raise ValueError(f"{name}:不是文字檔,JUSTIN 讀不了(可以傳 PDF、Word、Excel、圖片、程式碼或其他文字檔)")
+    return text
+
+
+def extract_bytes(name: str, data: bytes) -> str:
+    """辦公檔案的內容(不是電腦上的路徑)轉文字:寫進暫存檔再交給 extract_text。"""
+    suffix = Path(name).suffix.lower()
+    with tempfile.TemporaryDirectory(prefix="hsuan-upload-", ignore_cleanup_errors=True) as folder:
+        path = Path(folder) / f"upload{suffix}"
+        path.write_bytes(data)
+        return extract_text(path)
 
 
 def _pdf(path: Path) -> str:

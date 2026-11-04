@@ -119,6 +119,36 @@ def build_user_prompt(task: str, attachments: list[str], inline_limit: int, whol
     return "\n\n".join(parts)
 
 
+# 網頁拖進來的檔案(11/5):不在專案資料夾裡,工具讀不到,所以整份轉成文字放進問題;太長就只放前面,並說明怎麼看全部
+UPLOAD_INLINE_TOKENS = 30_000  # 一個檔案最多放多少進問題(約 15 頁 Word);每一步都會重送,太大很貴
+UPLOAD_NOTE = "uploaded by the user; not in the project folder, so file tools cannot read it"
+
+
+def upload_block(name: str, kind: str, payload) -> str:
+    """一個上傳的檔案 → 放在問題前面的區塊。kind="doc":payload 是 PDF / Word / Excel 的內容(bytes),這裡才轉文字
+    (掃描頁要請看圖模型讀,所以在 ask 裡做,用量才算得到這段對話);kind="text":payload 是解碼好的文字。"""
+    if kind == "doc" and isinstance(payload, bytes):  # 訪客的檔案在安全檢查時已經轉好文字(webui.Hub._screened)
+        try:
+            text = documents.extract_bytes(name, payload)
+        except Exception as e:  # 加密的 PDF、壞掉的檔案:這個檔案當作沒讀到,這一題照常回答
+            return f'<document name="{name}" note="{UPLOAD_NOTE}">(讀不出這個檔案:{e};請跟使用者說明)</document>'
+    else:
+        text = payload
+    body = text if kind == "doc" else _numbered(text)  # 文字檔加行號(回答可以指第幾行);行號也佔 token,算在裡面
+    tokens, tail = estimate_tokens(body), ""
+    if tokens > UPLOAD_INLINE_TOKENS:
+        body = body[:int(len(body) * UPLOAD_INLINE_TOKENS / tokens)]
+        if kind != "doc":
+            body = body[:body.rfind("\n")]  # 只放完整的行
+        tail = (f"\n[檔案太長,只放了前面約 {UPLOAD_INLINE_TOKENS:,} tokens,後面還有約 {tokens - UPLOAD_INLINE_TOKENS:,}"
+                " tokens 沒放;回答時跟使用者說明,要全部請把檔案放進專案資料夾用 @檔名,或只傳需要的部分]")
+    if kind == "doc":
+        return f'<document name="{name}" note="{UPLOAD_NOTE}">\n{body}{tail}\n</document>'
+    shown, total = body.count("\n") + 1, max(1, len(text.splitlines()))  # 跟 _numbered 一樣算(最後的換行不算一行)
+    lines = f'lines="1-{shown}"' + (f' total_lines="{total}"' if shown < total else "")
+    return f'<file name="{name}" {lines} note="{UPLOAD_NOTE}">\n{body}{tail}\n</file>'
+
+
 def file_mentions(text: str) -> list[str]:
     """問題裡的 @路徑(例如「看一下 @calc.py」)且確實是工作區檔案的,當成附檔;@decorator 之類的不算。
     中文常不空格(「看@會議紀錄.docx然後摘要」),所以從最長往回試,取確實存在的最長檔名。"""
@@ -590,7 +620,8 @@ class AgentSession:
             self._notice("整理摘要失敗,先照常繼續:%s", f"{type(e).__name__}: {e}")
 
     def ask(self, task: str, attachments: list[str] = (), mode: str = "normal", role: str | None = None,
-            images: list[tuple[str, str]] = (), split: bool = False, voice: bool = False) -> AgentResult:
+            images: list[tuple[str, str]] = (), split: bool = False, voice: bool = False,
+            uploads: list[tuple[str, str, object]] = ()) -> AgentResult:
         """問一輪。中途出錯(額度、伺服器全掛)就把這一輪的訊息退掉,對話停在上一輪結束的狀態。
 
         mode="plan":只給唯讀工具,請模型調查後交出編號計畫(像 Claude Code 的 plan mode),不准改東西;
@@ -599,24 +630,27 @@ class AgentSession:
         images:網頁上傳的圖片 [(名稱, data URL)];附檔裡的圖片檔也算(先轉成文字,見 _describe_images)。
         split:「分工」開關,請模型用 delegate 把這一題分給子 agent(有綁 delegate 才有用)。
         voice:語音模式說的話,回答要短、口語(VOICE_NOTE),關思考。
+        uploads:網頁拖進來的檔案 [(名稱, "doc" / "text", 內容)](webui.parse_uploads 檢查過),轉成文字放在問題前面(upload_block)。
         """
         billing = _billing.set(self)  # 這一輪讀掃描檔(page_reader)用掉的 tokens 算給這段對話
         try:
             if mode == "research":  # 深度研究:流程由程式控制(_research)
                 return self._research(task)
-            return self._turn(task, list(attachments), mode, role, list(images), split, voice)
+            return self._turn(task, list(attachments), mode, role, list(images), split, voice, list(uploads))
         finally:
             _billing.reset(billing)
 
     def _turn(self, task: str, attachments: list[str], mode: str, role: str | None,
-              images: list[tuple[str, str]], split: bool = False, voice: bool = False) -> AgentResult:
+              images: list[tuple[str, str]], split: bool = False, voice: bool = False,
+              uploads: list[tuple[str, str, object]] = ()) -> AgentResult:
         self._maybe_compact()  # 要在記下 start 之前:摘要會把訊息變短
         start, began = len(self.messages), time.monotonic()
         pictures = list(images) + [image_from_file(a) for a in attachments if is_image(a)]
         attachments = [a for a in attachments if not is_image(a)]
         before = self.tokens_used
         seen = self._describe_images(task, pictures) if pictures else []
-        looked = self.tokens_used - before  # 看圖用掉的,算進這一輪
+        seen += [upload_block(*u) for u in uploads]  # 掃描的 PDF 要看圖模型讀(page_reader),用量一樣算進來
+        looked = self.tokens_used - before  # 看圖、讀掃描檔用掉的,算進這一輪
         # 自己訓練的小模型(ml/,還沒訓練就是 None):決策樹判斷難不難、線性回歸預估這一輪的用量
         feats = ml_features.extract(task, list(attachments), sum(isinstance(m, HumanMessage) for m in self.messages[1:]),
                                     mode)

@@ -449,6 +449,17 @@
   .thumb button { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%;
                   background: rgba(0, 0, 0, .65); color: #fff; font-size: 13px; line-height: 20px; }
   .thumbs-note { width: 100%; color: var(--faint); font-size: 12px; }
+  /* 拖進來的其他檔案(PDF、Word、程式碼…):檔名 + 大小的小卡片 */
+  .file-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 260px; height: 40px; padding: 0 6px 0 10px;
+               border-radius: 10px; box-shadow: 0 0 0 1px var(--line); background: var(--panel, transparent); font-size: 13px; }
+  .file-chip svg { flex: none; color: var(--muted); }
+  .file-chip .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-chip .fsize { flex: none; color: var(--faint); font-size: 12px; }
+  .file-chip button { flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: none;
+                      color: var(--muted); font-size: 15px; line-height: 22px; }
+  .file-chip button:hover { background: var(--line); color: var(--text); }
+  .msg-files { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
+  .msg-files .file-chip { height: 34px; padding-right: 10px; }
   .composer-bar .spacer { flex: 1; }
   .model-pick { display: inline-flex; align-items: center; gap: 4px; background: none; border: 0; border-radius: 8px;
                 padding: 4px 8px; font-size: 14px; font-weight: 600; color: var(--text); max-width: 46vw; }
@@ -634,11 +645,11 @@
       </form>
     </section>
     <form id="form" class="composer">
-      <div class="thumbs" id="thumbs" aria-label="要一起送出的圖片"></div>
-      <input type="file" id="image-input" accept="image/*" multiple hidden>
+      <div class="thumbs" id="thumbs" aria-label="要一起送出的圖片和檔案"></div>
+      <input type="file" id="file-input" multiple hidden>
       <textarea id="input" rows="1" placeholder="請輸入訊息…" aria-label="輸入問題"></textarea>
       <div class="composer-bar">
-        <button type="button" class="round-btn" id="attach" aria-label="附加檔案或圖片" title="附加圖片,或專案裡的檔案(@檔名)">
+        <button type="button" class="round-btn" id="attach" aria-label="附加檔案或圖片" title="附加檔案或圖片(也可以直接拖進來、貼上)">
           <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>
         </button>
         <button type="button" class="mode-btn" id="plan-mode" aria-pressed="false" title="開啟後,JUSTIN 先只讀不改、交出計畫,你同意才照計畫做">
@@ -698,6 +709,7 @@ const log = $("log"), input = $("input"), send = $("send");
 let bot = null;           // 目前這一輪的回答區塊
 let busy = false;
 let pendingImages = [];   // 還沒送出的圖片 [{name, data, thumb}]
+let pendingFiles = [];    // 還沒送出的其他檔案 [{name, size, data(base64)}](PDF、Word、程式碼…,伺服器轉成文字)
 const tools = [];         // 依序等結果的工具區塊
 let cards = {};           // 確認 / 套用卡片:id → 元素
 let conv = null;          // 目前這段對話的 id
@@ -912,7 +924,7 @@ function dock() {  // 開始對話:輸入框回到最下面
 // 回答中(10/16 使用者要的,像 Claude):輸入框空的 → 按鈕是「停止」;打了字 → 一樣是「送出」,JUSTIN 下一步就看到
 // 沒在回答、輸入框空的(10/27,像 ChatGPT):按鈕是「語音模式」(有麥克風可用才有)
 function updateSend() {
-  const has = !!input.value.trim() || pendingImages.length > 0, stop = busy && !has, talk = !busy && !has && canTalk();
+  const has = !!input.value.trim() || pendingImages.length > 0 || pendingFiles.length > 0, stop = busy && !has, talk = !busy && !has && canTalk();
   send.classList.toggle("stop", stop);
   send.innerHTML = stop ? STOP_ICON : talk ? TALK_ICON : SEND_ICON;
   send.setAttribute("aria-label", stop ? "停止回答" : talk ? "語音模式" : busy ? "送出(JUSTIN 下一步就會看到)" : "送出");
@@ -989,6 +1001,10 @@ const handlers = {
     if (e.images?.length) {  // 附上的圖片(伺服器只留縮圖)
       const row = m.appendChild(el("div", "msg-images"));
       for (const src of e.images) Object.assign(row.appendChild(el("img")), { src, alt: "附上的圖片" });
+    }
+    if (e.files?.length) {  // 附上的檔案(伺服器只留檔名和大小)
+      const row = m.appendChild(el("div", "msg-files"));
+      for (const f of e.files) row.appendChild(fileChip(f.name, f.size));
     }
     m.append(e.text);
     add(m).scrollIntoView({ block: "end" }); setBusy(true); refreshSoon();
@@ -1197,7 +1213,7 @@ const convMeta = () => desk.conversations.find((c) => c.id === conv);
 function openConv(id) {
   conv = id; store.set("conv", id); voiceOff(); stopDictation(false); stopSpeaking();  // 換對話:語音模式、聽寫結束,正在唸的停掉
   sideMode = kindOf(convMeta()); store.set("mode", sideMode);
-  bot = null; tools.length = 0; cards = {}; dirty.clear(); pendingImages = []; renderThumbs();
+  bot = null; tools.length = 0; cards = {}; dirty.clear(); pendingImages = []; pendingFiles = []; renderThumbs();
   closePage(); closeSide(); setPlanMode(false); setBusy(false); applyMode();
   pane.file = pane.files = null; pane.openDirs.clear(); pane.dirsInit = false;  // 檔案分頁換成這段對話的專案
   showEmpty(); connect(); loadState(); renderSide(); loadPanel();
@@ -1216,7 +1232,7 @@ function applyMode() {
   $("plan-mode").hidden = chat;
   $("split-mode").hidden = chat || !!state.guest;
   $("changes-btn").hidden = $("files-btn").hidden = chat;  // 對話模式不綁專案,沒有檔案和變更(面板裡的分頁會說明)
-  $("hint").textContent = (chat ? "可以貼上或拖進圖片" : "用 @檔名 附上專案裡的檔案,也可以貼上圖片")
+  $("hint").textContent = (chat ? "可以拖進或貼上檔案、圖片" : "用 @檔名 附上專案裡的檔案,也可以拖進其他檔案、圖片")
     + " · Enter 送出、Shift+Enter 換行 · JUSTIN 也會出錯,重要的結果請自己確認";
 }
 function switchMode(m) {  // 切過去就打開那種模式最近的對話,沒有就開一段新的
@@ -1478,6 +1494,7 @@ document.addEventListener("keydown", (ev) => {
 });
 // 更新紀錄:使用者看得到的改變(新的在前);改了功能記得在最上面加一行
 const CHANGELOG = [
+  ["11/05", ["每種檔案都可以丟進來了:PDF、Word、Excel、程式碼、CSV、純文字…拖進視窗、貼上或按「+」,JUSTIN 轉成文字一起看(以前只收圖片,其他檔案會被默默丟掉);壓縮檔、影音、舊版 .doc / .ppt 讀不了,會直接說原因"]],
   ["11/04", ["跑測試時不會再跳出黑色的 Docker 視窗(桌面版)",
              "語音模式和朗讀真的換成男聲「雲哲」了:11/1 改了預設,但 Edge 把聲音名字寫成中文,沒挑到,還是用女聲曉臻"]],
   ["11/01", ["改名叫 JUSTIN(原本叫 HSUAN),桌面捷徑也換了",
@@ -2088,7 +2105,8 @@ async function renderPage() {
     for (const t of [
       "用 @檔名 附上專案裡的檔案,例如:解釋 @calc.py(程式模式)。",
       "知識庫:側邊欄的「知識庫」加入一個文件資料夾(手冊、規章、規格書…),之後直接問,JUSTIN 會照意思找出相關段落、附上出處再回答。",
-      "附圖片:輸入框的「+」→ 上傳圖片,或直接貼上(Ctrl+V)、拖進輸入框。截圖、圖表、照片都可以,JUSTIN 會先用看圖的模型讀懂再回答。",
+      "附圖片:輸入框的「+」→ 上傳檔案或圖片,或直接貼上(Ctrl+V)、拖進視窗。截圖、圖表、照片都可以,JUSTIN 會先用看圖的模型讀懂再回答。",
+      "附其他檔案:PDF、Word、Excel、程式碼、CSV、純文字…一樣拖進視窗或按「+」,JUSTIN 會轉成文字一起看(一題最多 5 個、一個 8 MB;太長的只看前面約 15 頁)。壓縮檔、影音、舊版 .doc / .ppt 讀不了,會直接告訴你。",
       "修改先放在 JUSTIN 的草稿上,你按「套用到專案」才會真的改檔案;還沒套用的會出現在「待命」。",
       "大任務打開「先規劃」:JUSTIN 先只讀不改、交出計畫,你同意才照計畫做。",
       "上網前一定會先問你;公司內網和本機網址一律不准。讀到的網頁會先經過安全檢查,藏著要 AI 照做的指令會被擋下。",
@@ -3006,8 +3024,8 @@ function insertAt() {
   input.setSelectionRange(before.length + sep.length + 1, before.length + sep.length + 1);
 }
 $("attach").onclick = () => {
-  if (sideMode === "chat") return $("image-input").click();
-  popup($("attach"), [[["上傳圖片", "截圖、圖表、照片;也可以直接貼上或拖進來"], () => $("image-input").click()],
+  if (sideMode === "chat") return $("file-input").click();
+  popup($("attach"), [[["上傳檔案或圖片", "PDF、Word、Excel、程式碼、文字檔、截圖;也可以直接拖進來或貼上"], () => $("file-input").click()],
                       [["附加專案裡的檔案", "輸入 @檔名"], insertAt]]);
 };
 
@@ -3049,6 +3067,53 @@ async function addImages(files) {
   }
   renderThumbs(); updateSend(); input.focus();
 }
+// ---------- 其他檔案(11/5 使用者要「每個檔案都可以丟進去」;以前只收圖片,其他的默默丟掉) ----------
+// 原檔(base64)跟問題一起送,伺服器轉成文字(webui.parse_uploads → agent.upload_block)。讀不了的這裡先說原因
+const MAX_FILES = 5, FILE_MAX = 8e6, FILES_TOTAL = 10e6;  // 跟伺服器的 MAX_UPLOAD_* 一樣
+const FILE_DOCS = /\.(pdf|docx|xlsx|xlsm)$/i;
+const FILE_OLD = { doc: ".docx", xls: ".xlsx", ppt: "PDF", pptx: "PDF" };
+const FILE_BINARY = /\.(zip|7z|rar|gz|tgz|tar|bz2|xz|exe|dll|msi|so|dylib|bin|iso|img|dmg|apk|jar|class|pyc|mp4|mov|avi|mkv|webm|wmv|mp3|wav|m4a|flac|aac|ogg|psd|ai|sketch|fig|sqlite|db|mdb|accdb|ttf|otf|woff2?)$/i;
+const FILE_SECRET = /^(\.env(\..*)?|id_(rsa|ed25519|ecdsa).*|.*\.(pem|key|p12|pfx|jks|keystore))$/i;
+const FILE_ICON = icon('<path d="M5.5 2.5h6l3.5 3.5v11.5h-9.5z"/><path d="M11.5 2.5V6H15"/>');
+function fileChip(name, size, onRemove) {
+  const c = el("div", "file-chip"); c.title = name;
+  c.insertAdjacentHTML("afterbegin", FILE_ICON);
+  c.appendChild(el("span", "fname", name)); c.appendChild(el("span", "fsize", fmtSize(size)));
+  if (onRemove) c.appendChild(button("×", "", onRemove)).setAttribute("aria-label", `拿掉 ${name}`);
+  return c;
+}
+async function fileProblem(f) {  // 讀不了就回原因(跟伺服器 documents.check_upload 一樣的規則),可以就回空字串
+  const ext = (f.name.match(/\.([^.]+)$/) || [])[1]?.toLowerCase() || "";
+  if (/^\.env(\.(example|sample|template))$/i.test(f.name)) return "";
+  if (FILE_SECRET.test(f.name)) return "看起來是金鑰、憑證或 .env,不會送給模型";
+  if (FILE_OLD[ext]) return `.${ext} 請先另存成 ${FILE_OLD[ext]} 再傳`;
+  if (FILE_BINARY.test(f.name)) return "JUSTIN 讀不了壓縮檔、影音和執行檔";
+  if (f.size > FILE_MAX) return `檔案太大(一個最多 ${FILE_MAX / 1e6} MB);大的檔案請放進專案資料夾,用 @檔名`;
+  if (!FILE_DOCS.test(f.name) && new Uint8Array(await f.slice(0, 8192).arrayBuffer()).includes(0))
+    return "不是文字檔,JUSTIN 讀不了(可以傳 PDF、Word、Excel、圖片、程式碼或其他文字檔)";
+  return "";
+}
+async function addFiles(files) {
+  const refused = [];
+  for (const f of files) {
+    if (pendingFiles.length >= MAX_FILES) { refused.push(`一題最多 ${MAX_FILES} 個檔案`); break; }
+    const why = await fileProblem(f);
+    if (why) { refused.push(`${f.name}:${why}`); continue; }
+    if (pendingFiles.reduce((n, p) => n + p.size, 0) + f.size > FILES_TOTAL) {
+      refused.push(`${f.name}:一題的檔案加起來最多 ${FILES_TOTAL / 1e6} MB`); continue;
+    }
+    try { pendingFiles.push({ name: f.name, size: f.size, data: await fileB64(f) }); }
+    catch (e) { refused.push(`${f.name}:${e.message}`); }
+  }
+  renderThumbs(); updateSend(); input.focus();
+  if (refused.length) alert(refused.join("\n"));
+}
+function addAny(files) {  // 拖進來、貼上、按「+」選的:圖片給看圖模型,其他檔案轉文字
+  const images = files.filter((f) => f.type.startsWith("image/"));
+  if (images.length) addImages(images);
+  const others = files.filter((f) => !f.type.startsWith("image/"));
+  if (others.length) addFiles(others);
+}
 function renderThumbs() {
   const box = $("thumbs"); box.innerHTML = "";
   pendingImages.forEach((im, i) => {
@@ -3057,17 +3122,20 @@ function renderThumbs() {
     const x = t.appendChild(button("×", "", () => { pendingImages.splice(i, 1); renderThumbs(); updateSend(); }));
     x.setAttribute("aria-label", `拿掉 ${im.name}`);
   });
-  if (pendingImages.length && state.backend !== "nim")  // 圖片一樣會送到 NVIDIA 的試用平台
-    box.appendChild(el("div", "thumbs-note", "圖片會送到 build.nvidia.com(NVIDIA 試用平台),不要放公司的截圖或客戶資料。"));
+  pendingFiles.forEach((f, i) => box.appendChild(fileChip(f.name, f.size, () => {
+    pendingFiles.splice(i, 1); renderThumbs(); updateSend();
+  })));
+  if ((pendingImages.length || pendingFiles.length) && state.backend !== "nim")  // 一樣會送到 NVIDIA 的試用平台
+    box.appendChild(el("div", "thumbs-note", "圖片和檔案內容會送到 build.nvidia.com(NVIDIA 試用平台),不要放公司的資料或客戶資料。"));
 }
-$("image-input").onchange = (ev) => { addImages([...ev.target.files]); ev.target.value = ""; };
-input.addEventListener("paste", (ev) => {  // Ctrl+V 貼上截圖
-  const files = [...(ev.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
+$("file-input").onchange = (ev) => { addAny([...ev.target.files]); ev.target.value = ""; };
+input.addEventListener("paste", (ev) => {  // Ctrl+V 貼上截圖,或在檔案總管複製的檔案
+  const files = [...(ev.clipboardData?.files || [])];
   if (!files.length) return;
   if (!ev.clipboardData.getData("text/plain")) ev.preventDefault();  // 從 Word 之類複製的會同時有文字,文字照貼
-  addImages(files);
+  addAny(files);
 });
-// 拖放:整個視窗都收(不用剛好丟在輸入框上);資料夾 → dropFolder,其他檔案當圖片
+// 拖放:整個視窗都收(不用剛好丟在輸入框上);資料夾 → dropFolder,圖片給看圖模型,其他檔案轉文字
 const hasFiles = (ev) => [...(ev.dataTransfer?.types || [])].includes("Files");
 document.addEventListener("dragover", (ev) => { if (hasFiles(ev)) { ev.preventDefault(); form.classList.add("drop"); } });
 document.addEventListener("dragleave", (ev) => { if (!ev.relatedTarget) form.classList.remove("drop"); });  // 拖出視窗
@@ -3077,7 +3145,7 @@ document.addEventListener("drop", (ev) => {
   // 資料夾要在 drop 當下就拿到 entry,事件結束後 dataTransfer 就讀不到了
   const dirs = [...ev.dataTransfer.items].map((i) => i.webkitGetAsEntry?.()).filter((x) => x && x.isDirectory);
   if (dirs.length) return dropFolder(dirs[0]);
-  addImages([...ev.dataTransfer.files]);
+  addAny([...ev.dataTransfer.files]);
 });
 
 // ---------- 把資料夾拖進來(像 Claude):瀏覽器拿不到資料夾原本的位置,只拿得到裡面的檔案 ----------
@@ -3209,25 +3277,26 @@ $("plan-mode").onclick = () => { setPlanMode(!planMode); if (planMode) setResear
 $("split-mode").onclick = () => { setSplitMode(!splitMode); if (splitMode) setResearchMode(false); input.focus(); };
 $("research-mode").onclick = () => { setResearchMode(!researchMode); input.focus(); };
 async function submit(clicked = false) {
-  const text = input.value.trim(), images = pendingImages;
+  const text = input.value.trim(), images = pendingImages, files = pendingFiles;
   if (!conv) return;
-  if (busy && !text && !images.length) {  // 回答中、輸入框空的:按鈕是「停止」(按 Enter 不會誤停)
+  if (busy && !text && !images.length && !files.length) {  // 回答中、輸入框空的:按鈕是「停止」(按 Enter 不會誤停)
     if (clicked) { send.disabled = true; await api("/api/stop", {}); }
     return;
   }
-  if (!text && !images.length) {  // 輸入框空的:按鈕是「語音模式」(按 Enter 不會誤開)
+  if (!text && !images.length && !files.length) {  // 輸入框空的:按鈕是「語音模式」(按 Enter 不會誤開)
     if (clicked && !busy && canTalk()) voiceOn();
     return;
   }
   stopDictation(false);  // 聽寫中按送出:後面才辨識出來的字不要再寫回清空的輸入框
   const research = researchMode && !$("research-mode").hidden;
   const mode = research ? "research" : planMode ? "plan" : "normal", split = !research && splitMode && !$("split-mode").hidden;
-  input.value = ""; pendingImages = []; renderThumbs(); autosize(); updateSend(); setPlanMode(false); setSplitMode(false);
-  setResearchMode(false);
-  const r = await api("/api/ask", { text, mode, images, split });
-  if (!r.ok) {  // 沒送出去:文字和圖片都放回去
+  input.value = ""; pendingImages = []; pendingFiles = []; renderThumbs(); autosize(); updateSend(); setPlanMode(false);
+  setSplitMode(false); setResearchMode(false);
+  const r = await api("/api/ask", { text, mode, images, split, files: files.map(({ name, data }) => ({ name, data })) });
+  if (!r.ok) {  // 沒送出去:文字、圖片和檔案都放回去
     alert(r.data.error || "送出失敗");
-    input.value = text; pendingImages = images; renderThumbs(); autosize(); updateSend(); setPlanMode(mode === "plan");
+    input.value = text; pendingImages = images; pendingFiles = files; renderThumbs(); autosize(); updateSend();
+    setPlanMode(mode === "plan");
     setSplitMode(split); setResearchMode(research);
   }
 }

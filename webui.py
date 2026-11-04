@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import hashlib
 import hmac
 import ipaddress
@@ -41,6 +42,7 @@ from langchain_core.messages import messages_from_dict, messages_to_dict
 
 import agent
 import browser
+import documents
 import guard
 import knowledge
 import mcp_client
@@ -59,6 +61,9 @@ MAX_BODY = 16_000_000  # POST 內容上限(問題文字、規則、上傳的圖�
 MAX_IMAGES = 4  # 一題最多幾張圖
 MAX_IMAGE_CHARS = 7_000_000  # 一張圖的 data URL 上限(約 5 MB);瀏覽器會先把大圖縮到 1600px
 MAX_THUMB_CHARS = 80_000  # 對話裡顯示的縮圖(會存進對話紀錄)
+MAX_UPLOADS = 5  # 一題最多拖進幾個檔案(圖片另外算)
+MAX_UPLOAD_BYTES = 8_000_000  # 一個檔案多大;base64 之後要放得進 MAX_BODY
+MAX_UPLOAD_TOTAL = 10_000_000  # 一題的檔案加起來
 IMAGE_URL = re.compile(r"data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+")
 LOCAL_ADDRS = {"127.0.0.1", "::1"}  # 從這些位址連進來的是這台電腦自己,不用 PIN
 COOKIE = "da_session"
@@ -658,16 +663,18 @@ class Hub:
     # ---------- 對話 ----------
 
     def ask(self, text: str, mode: str = "normal", shown: str | None = None, role: str | None = None,
-            images: list[dict] | None = None, split: bool = False, voice: bool = False) -> bool:
+            images: list[dict] | None = None, split: bool = False, voice: bool = False,
+            uploads: list[dict] | None = None) -> bool:
         """shown:畫面上顯示的問題(照計畫執行時,送給模型的是 EXECUTE_TASK,畫面只顯示「照計畫執行」)。
         role:只有這一輪換模型(做到步數上限後的「換模型接著做」)。
         images:上傳的圖片 [{"name","data","thumb"}](parse_images 檢查過);畫面和存檔只留縮圖,原圖只送給看圖模型。
+        uploads:拖進來的其他檔案(parse_uploads 檢查過);畫面和事件只留檔名和大小,內容只進這一輪的問題。
         split:輸入框的「分工」開關(agent.SPLIT_NOTE)。
         voice:語音模式說的話(agent.VOICE_NOTE:回答要短、口語,會被唸出來)。
         回答到一半又送來的一般文字訊息(10/16):不擋,交給這一輪(下一步就看到,像 Claude);規劃、圖片、換模型還是要等。"""
         with self.cond:
             if self.busy:
-                if mode != "normal" or images or role or shown or split:
+                if mode != "normal" or images or uploads or role or shown or split:
                     return False
                 self.session.tell(text)
                 queued = True
@@ -685,14 +692,35 @@ class Hub:
         event = {"text": shown or text, "mode": mode}
         if images:
             event["images"] = [im["thumb"] for im in images]
+        if uploads:
+            event["files"] = [{"name": u["name"], "size": u["size"]} for u in uploads]
         if split:
             event["split"] = True
         if voice:
             event["voice"] = True
         self.publish("user", event)
         pictures = [(im["name"], im["data"]) for im in images or []]
-        threading.Thread(target=self._run, args=(text, mode, role, pictures, split, voice), daemon=True).start()
+        files = [(u["name"], u["kind"], u["payload"]) for u in uploads or []]
+        threading.Thread(target=self._run, args=(text, mode, role, pictures, split, voice, files), daemon=True).start()
         return True
+
+    def _screened(self, uploads: list) -> list:
+        """訪客的檔案先過安全檢查(每個檔案檢查開頭幾段,跟問題一樣)。辦公檔案在這裡先轉文字,
+        之後 upload_block 直接用,不用再讀一次(掃描頁的看圖用量算給這段對話)。"""
+        out = []
+        for name, kind, payload in uploads:
+            if kind == "doc":
+                billing = agent._billing.set(self.session)
+                try:
+                    payload = documents.extract_bytes(name, payload)
+                except Exception:  # 讀不出來的照原樣交給 upload_block,它會跟模型說明
+                    pass
+                finally:
+                    agent._billing.reset(billing)
+            if isinstance(payload, str) and (v := guard.screen(payload)).safe is False:
+                raise guard.Blocked(f"檔案 {name} 沒有通過安全檢查({v.categories or '不當內容'}),JUSTIN 不會回答。")
+            out.append((name, kind, payload))
+        return out
 
     def stop(self) -> bool:
         """輸入框的「停止」:串流中的回答馬上停,正在跑的工具做完就停;正在等使用者按確認的就當「不要」。
@@ -725,12 +753,14 @@ class Hub:
         return ""
 
     def _run(self, text: str, mode: str = "normal", role: str | None = None, images: list | None = None,
-             split: bool = False, voice: bool = False) -> None:
+             split: bool = False, voice: bool = False, uploads: list | None = None) -> None:
         patches = self.bench.patches
         before, planned, offer = len(patches), False, None
         try:
             if self.screen and (v := guard.screen(text)).safe is False:
                 raise guard.Blocked(f"這個問題沒有通過安全檢查({v.categories or '不當內容'}),JUSTIN 不會回答。")
+            if self.screen and uploads:  # 訪客拖進來的檔案也要檢查,不然把問題藏在檔案裡就繞過了
+                uploads = self._screened(uploads)
             if not self.chat:  # 公司資料夾(.env 的 COMPANY_PATHS)在試用平台上不能用,以前加過的專案也一樣
                 try:
                     guard.check_folder(self.workspace, public=True)
@@ -741,7 +771,7 @@ class Hub:
                 if self.bench.memory is not None:  # 記憶可能剛在別段對話、設定頁改過:這一輪的系統提示用最新的
                     self.session.refresh_system_prompt()
                 files = [] if self.chat else agent.file_mentions(text)  # 對話模式讀不到電腦上的檔案
-                r = self.session.ask(self.note + text, files, mode, role, images or [], split, voice)
+                r = self.session.ask(self.note + text, files, mode, role, images or [], split, voice, uploads or [])
             self.note = ""
             self.publish("done", {"role": r.role, "steps": r.steps, "tokens": r.tokens_used,
                                   "total": self.session.tokens_used, "answer": r.answer, "stopped": r.stopped})
@@ -1182,6 +1212,37 @@ def parse_images(raw) -> list[dict]:
             raise ValueError("只能傳 PNG、JPEG、WebP、GIF 圖片")
         name = re.sub(r'[<>"\r\n]', "_", str(im.get("name") or f"圖片{i}"))[:80]  # 會放進 <image name="…">,不能有引號和換行
         out.append({"name": name, "data": data, "thumb": thumb})
+    return out
+
+
+def parse_uploads(raw) -> list[dict]:
+    """/api/ask 帶的檔案(拖進來、貼上、按「+」選的,圖片以外):[{"name", "data": base64}]。
+    限個數和大小、擋金鑰和 .env、讀不了的格式(壓縮檔、影音、舊版 Office、二進位)先說清楚;不合格丟 ValueError。
+    回傳 [{"name", "size", "kind": "doc" / "text", "payload"}]:辦公檔案留原始內容,送出後在 ask 裡才轉文字。"""
+    if not raw:
+        return []
+    if not isinstance(raw, list) or len(raw) > MAX_UPLOADS:
+        raise ValueError(f"一題最多 {MAX_UPLOADS} 個檔案")
+    out, total = [], 0
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError("檔案格式不對")
+        # 只留檔名(不要路徑);會放進 <file name="…">,不能有引號、角括號和換行
+        name = re.sub(r'[<>"\r\n\t]', "_", PurePosixPath(str(item.get("name") or "檔案").replace("\\", "/")).name)[:120]
+        name = name or "檔案"
+        try:
+            data = base64.b64decode(str(item.get("data", "")), validate=True)
+        except (binascii.Error, ValueError):
+            raise ValueError(f"{name}:檔案內容不完整,請再傳一次") from None
+        total += len(data)
+        if len(data) > MAX_UPLOAD_BYTES or total > MAX_UPLOAD_TOTAL:
+            raise ValueError(f"{name}:檔案太大(一個最多 {MAX_UPLOAD_BYTES // 1_000_000} MB、"
+                             f"一題加起來最多 {MAX_UPLOAD_TOTAL // 1_000_000} MB);大的檔案請放進專案資料夾,用 @檔名")
+        if toolbox._is_secret(Path(name)):
+            raise ValueError(f"{name}:看起來是金鑰、憑證或 .env,不會送給模型")
+        text = documents.check_upload(name, data)
+        out.append({"name": name, "size": len(data), "kind": "text" if text is not None else "doc",
+                    "payload": data if text is None else text})
     return out
 
 
@@ -2370,18 +2431,21 @@ def make_handler(hubs: Hubs | Desk | Hub, token: str, port: int, lan: LanAccess 
                 text = str(body.get("text", "")).strip()
                 try:
                     images = parse_images(body.get("images"))
+                    uploads = parse_uploads(body.get("files"))
                 except ValueError as e:
                     return self._json(400, {"error": str(e)})
-                if not text and not images:
+                if not text and not images and not uploads:
                     return self._json(400, {"error": "問題是空的"})
-                text = text or "請說明這張圖。"
+                text = text or ("請說明這張圖。" if not uploads else "請看這個檔案,說明重點。")
                 mode = body.get("mode")  # 先規劃(程式模式才有)/ 深度研究(要能上網)/ 一般
                 mode = ("plan" if mode == "plan" and not hub.chat else
                         "research" if mode == "research" and hub.can_research else "normal")
+                if mode == "research" and (images or uploads):
+                    return self._json(400, {"error": "深度研究只上網查,不看附上的圖片和檔案;請關掉「深度研究」再送"})
                 ok = hub.ask(text, mode, images=images, split=bool(body.get("split")) and not hub.chat and mode != "research",
-                             voice=bool(body.get("voice")) and mode == "normal")
+                             voice=bool(body.get("voice")) and mode == "normal", uploads=uploads)
                 self._json(202 if ok else 409, {} if ok else
-                           {"error": "回答中只能再傳文字訊息;先規劃、分工、附圖片要等這一輪結束(或先按停止)"})
+                           {"error": "回答中只能再傳文字訊息;先規劃、分工、附圖片或檔案要等這一輪結束(或先按停止)"})
             elif path == "/api/stop":  # 輸入框的「停止」
                 ok = hub.stop()
                 self._json(200 if ok else 409, {} if ok else {"error": "現在沒有在回答"})
