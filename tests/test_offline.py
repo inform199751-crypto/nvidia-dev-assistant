@@ -3381,6 +3381,72 @@ def test_pages_built_by_javascript_are_read_from_their_embedded_data(fake_web):
     assert web.EMBEDDED_NOTE not in article and "Rixton" not in article
 
 
+def test_mixerbox_playlist_is_read_in_full_with_youtube_links(fake_web, monkeypatch, tmp_path):
+    """11/5 使用者要 JUSTIN 把 MixerBox 歌單(232 首)轉到 YouTube:網頁一開始只附前 100 首、影片代碼被當雜訊濾掉。
+    歌單網址改讀 MixerBox 自己的資料(要帶歌單頁當 Referer,不然回 Bad referrer):全部歌名、YouTube 連結、
+    每 50 首一個轉到 YouTube 的連結;重複的影片只留一次,可能下架的標出來;完整清單和轉移連結存成檔案(只存一次)。
+    讀不到資料就照一般網頁讀。"""
+    import csv
+    import re
+    import httpx
+    import tools
+    monkeypatch.setattr(tools, "OUTPUT_DIR", tmp_path)
+    items = [{"type": "brand", "brand": "youtube"}, {"type": "dj", "title": "Mixer 1"}]
+    items += [{"t": "yt", "f": f"vid{n:03d}xyz", "tt": f"歌手{n} - 歌名{n}", "tm": 200 + n, "statusCode": 2 if n == 7 else 0}
+              for n in range(1, 121)]
+    items.append({"t": "yt", "f": "vid001xyz", "tt": "歌手1 - 歌名1(重複)", "tm": 201})
+    referers = []
+
+    def handler(req):
+        if req.url.path == "/api/playlist":
+            referers.append(req.headers.get("referer"))
+            if not req.headers.get("referer"):
+                return httpx.Response(200, json={"error": {"message": "Bad referrer", "code": 1012}})
+            return httpx.Response(200, json={"name": "Untitled", "ownerName": "Mixer 1", "itemCount": 120, "items": items})
+        return httpx.Response(200, text="<html><body><div id=__next></div></body></html>", headers={"content-type": "text/html"})
+
+    fake_web["handler"] = handler
+    out = web.fetch_url.invoke({"url": "https://www.mbplayer.com/list/200147342"})
+    assert referers == ["https://www.mbplayer.com/list/200147342"]
+    assert "MixerBox 歌單「未命名歌單」(Mixer 1):120 首" in out
+    assert "第 3 批(第 101–120 首):https://www.youtube.com/watch_videos?video_ids=vid101xyz," in out
+    assert "#7 歌手7 - 歌名7(MixerBox 標示可能已下架)" in out and "1. 歌手1 - 歌名1(3:21) https://youtu.be/vid001xyz" in out
+    assert "重複" not in out  # 同一支影片只留一次
+    rows = list(csv.reader((tmp_path / "MixerBox歌單-200147342.csv").read_text(encoding="utf-8-sig").splitlines()))
+    assert len(rows) == 121 and rows[1] == ["1", "歌手1 - 歌名1", "3:21", "https://youtu.be/vid001xyz", ""]
+    guide = (tmp_path / "MixerBox歌單-200147342-轉到YouTube.md").read_text(encoding="utf-8")
+    batches = re.findall(r"video_ids=([^)]+)\)", guide)
+    assert [len(b.split(",")) for b in batches] == [50, 50, 20] and batches[0].split(",")[0] == "vid001xyz"
+    assert "已存成" in out and "不用把整份清單抄進回答" in out
+    web.fetch_url.invoke({"url": "https://www.mbplayer.com/list/200147342", "part": 2})
+    assert len(list(tmp_path.iterdir())) == 2  # 分段讀不會再存一份
+    items[:] = []  # 讀不到歌:照一般網頁讀
+    plain = web.fetch_url.invoke({"url": "https://www.mbplayer.com/list/1"})
+    assert "MixerBox 歌單" not in plain
+
+
+def test_long_pages_are_read_part_by_part(fake_web, monkeypatch):
+    """以前網頁太長只回開頭、後面看不到;現在一次一段,結尾說第幾段、下一段怎麼讀。同一個網址十分鐘內接著讀後面
+    幾段不用再問(問過了);換網址、重讀第一段照樣要問。段數超過範圍說清楚。"""
+    import re
+    import httpx
+    asked = []
+    monkeypatch.setattr(web, "CONFIRM", lambda action, detail: asked.append(detail) or True)
+    body = "".join(f"<p>第 {n} 節:" + "內容很多的一段文字。" * 60 + "</p>" for n in range(1, 13))
+    fake_web["handler"] = lambda req: httpx.Response(200, text=f"<html><body>{body}</body></html>",
+                                                     headers={"content-type": "text/html"})
+    url = "http://93.184.216.34/long"
+    first = web.fetch_url.invoke({"url": url})
+    total = int(re.search(r"\[第 1 / (\d+) 段;下一段用 part=2 讀\]", first).group(1))
+    assert total >= 3 and "第 1 節" in first and "第 12 節" not in first
+    last = web.fetch_url.invoke({"url": url, "part": total})
+    assert last.endswith("這是最後一段]") and "第 12 節" in last and "第 1 節:" not in last
+    assert asked == [url]  # 後面幾段沒有再問
+    assert "只有" in web.fetch_url.invoke({"url": url, "part": total + 1})
+    web.fetch_url.invoke({"url": "http://93.184.216.34/other", "part": 2})
+    assert asked == [url, "http://93.184.216.34/other"]  # 沒讀過的網址,直接讀第 2 段也要問
+
+
 def test_guest_questions_are_screened(workspace, monkeypatch):
     """訪客(screen=True)的問題先過安全模型:不安全就不回答、模型沒有收到;正常的照常回答。主人自己的不檢查。"""
     import guard
