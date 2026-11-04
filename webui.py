@@ -1084,7 +1084,7 @@ def clone_public(url: str, dest: Path) -> str:
            "--single-branch", "--no-tags", url, str(dest)]
     try:
         r = subprocess.run(cmd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=CLONE_TIMEOUT)
+                           encoding="utf-8", errors="replace", timeout=CLONE_TIMEOUT, creationflags=toolbox.NO_WINDOW)
     except FileNotFoundError:
         return "找不到 git,請先安裝 Git for Windows"
     except subprocess.TimeoutExpired:
@@ -1104,7 +1104,8 @@ def version() -> str:
     """「了解更多」顯示的版本:最近一次 commit 的代碼和日期;不是用 git 拿到的(例如 ZIP)就空白。"""
     try:
         r = subprocess.run(["git", "-C", str(Path(__file__).parent), "log", "-1", "--format=%h · %cd", "--date=short"],
-                           capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)
+                           capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL,
+                           creationflags=toolbox.NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return r.stdout.strip() if r.returncode == 0 else ""

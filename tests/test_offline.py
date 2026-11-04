@@ -1917,6 +1917,35 @@ def test_desk_remove_project(workspace, tmp_path_factory):
     assert guest.remove_project(guest.default_pid) == "這裡不能管理專案"
 
 
+def test_command_line_tools_never_open_a_console_window(tmp_path, monkeypatch):
+    """11/4 使用者錄示範影片:桌面版用 pythonw 跑(沒有主控台),跑測試時叫 docker,Windows 另外開了一個黑色視窗蓋住畫面。
+    會在桌面版裡執行的程式,叫命令列程式(docker、git、powershell)一律帶 CREATE_NO_WINDOW;Edge 是視窗程式不用。"""
+    import re
+    import subprocess
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append((cmd[0], kw.get("creationflags")))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(tools.shutil, "which", lambda name: name)
+    tools._docker(tmp_path, ["true"])
+    tools._git("status")
+    assert calls == [("docker", tools.NO_WINDOW), ("git", tools.NO_WINDOW)]
+    for name in ("tools.py", "webui.py", "desktop_app.py", "terminal.py", "mcp_client.py", "browser.py"):
+        src = (Path(__file__).parent.parent / name).read_text(encoding="utf-8")
+        for m in re.finditer(r"subprocess\.(run|Popen|check_output|call)\(", src):
+            i, depth = m.end(), 1
+            while depth:
+                depth += {"(": 1, ")": -1}.get(src[i], 0)
+                i += 1
+            call = src[m.start():i]
+            if "--app=" in call or "--headless" in call:  # 開 Edge:視窗程式,本來就不會多開命令列視窗
+                continue
+            assert "creationflags" in call, f"{name}: {' '.join(call.split())[:80]}"
+
+
 def test_clone_public_never_uses_saved_logins(tmp_path, monkeypatch):
     """從 GitHub 加專案只能抓公開 repo:電腦上存的 GitHub 登入(系統的 Git Credential Manager、gh 設的
     credential.https://github.com.helper)一律不用,私人 repo 直接失敗 —— 不然公司程式碼會被抓下來送到 build.nvidia.com。

@@ -238,6 +238,9 @@ def _sandbox_copy():
 _SANDBOX_LIMITS = re.compile(r"Read-only file system|Network is unreachable|Temporary failure in name resolution"
                              r"|Name or service not known|Could not resolve host")
 RUN_IT_YOURSELF = "會寫檔、連網或一直開著的程式(例如網站伺服器)請使用者在自己的電腦上執行:JUSTIN 的終端機面板或命令列。"
+# 不開命令列視窗:桌面版用 pythonw 跑(沒有主控台),叫 docker / git 這類命令列程式時 Windows 會另外開一個黑色視窗,
+# 11/4 使用者錄示範影片時,跑測試那幾秒 Docker 的視窗跳出來蓋住畫面。非 Windows 是 0
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 SANDBOX_HINT = f"(這是沙箱的限制:專案複本唯讀、沒有網路,不是使用者電腦的問題,不要叫使用者檢查權限、防毒或網路。{RUN_IT_YOURSELF})"
 
 
@@ -254,9 +257,10 @@ def _docker(root: Path, argv: list[str], timeout: int = 180) -> str:
         SANDBOX_IMAGE, *argv,
     ]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                           creationflags=NO_WINDOW)
     except subprocess.TimeoutExpired:
-        subprocess.run(["docker", "kill", name], capture_output=True)  # 只停掉 docker CLI 的話,容器會在背景繼續跑
+        subprocess.run(["docker", "kill", name], capture_output=True, creationflags=NO_WINDOW)  # 只停掉 docker CLI 的話,容器會在背景繼續跑
         return f"錯誤:超過 {timeout} 秒被中止(可能有無窮迴圈、死結,或是會一直開著的程式)。{RUN_IT_YOURSELF}"
     out = f"exit code {r.returncode}\n{r.stdout}\n{r.stderr}".strip()
     return f"{out}\n{SANDBOX_HINT}" if _SANDBOX_LIMITS.search(out) else out
@@ -294,7 +298,7 @@ def _git(*args: str) -> str:
     if not shutil.which("git"):
         return "錯誤:這台機器沒有 git"
     r = subprocess.run(["git", "--no-pager", *args], cwd=ws(), capture_output=True,
-                       text=True, encoding="utf-8", errors="replace", timeout=30)
+                       text=True, encoding="utf-8", errors="replace", timeout=30, creationflags=NO_WINDOW)
     if r.returncode != 0:
         return f"錯誤:{r.stderr.strip() or 'git 執行失敗'}"
     return r.stdout.strip() or "(沒有輸出)"
@@ -510,7 +514,7 @@ def propose_patch(edits: list[Edit], reason: str, test_target: str = "tests") ->
         patch_file, n = out_dir / f"{stem}_{n}.patch", n + 1
     patch_file.write_text(f"# {' '.join(reason.split())}\n{diff}", encoding="utf-8", newline="\n")
     r = subprocess.run(["git", "apply", "--check", str(patch_file)],
-                       cwd=ws(), capture_output=True, text=True)
+                       cwd=ws(), capture_output=True, text=True, creationflags=NO_WINDOW)
     if r.returncode != 0:  # diff 是從原檔算出來的,照理一定套得上;套不上多半是編碼或換行的怪狀況
         patch_file.unlink()
         return f"錯誤:產生的 diff 套不上去:\n{r.stderr.strip()}"
@@ -579,7 +583,7 @@ def apply_patch(patch_file: Path) -> str:
         return "這不是最新的修改;最新的那一份已經包含全部修改,請套用最新的"
     # 關掉換行轉換:patch 是照檔案實際的位元組產生的,autocrlf 會把整個檔案的換行都改掉
     r = subprocess.run(["git", "-c", "core.autocrlf=false", "apply", str(patch_file)], cwd=ws(),
-                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     if r.returncode != 0:
         return f"套用失敗(工作區可能已經改過):{r.stderr.strip()}"
     wb.draft.clear()  # 草稿的內容已經是工作區的內容了

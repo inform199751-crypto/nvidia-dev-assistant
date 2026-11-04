@@ -333,7 +333,7 @@ flowchart LR
           <tr><td>語音模式</td><td>對話模式 6 題(含追問、會想用表格或程式碼的題目)、程式模式問 calc.py 的 bug 3 次;麥克風那段用模擬的語音辨識</td><td class="num">對話模式每題 2.4–4.6 秒、沒有表格和條列<small>程式模式 3/3 先讀檔再回答、3.5 秒開口;戴耳機時一開口就停下來換你說</small></td><td><span class="pill warn">麥克風用模擬</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
           <tr><td>端到端評測</td><td>17 題自己寫的修 bug 題,驗收含 JUSTIN 看不到的隱藏測試;10/25–26 主模型換成 3.5 Super VL 後,每種設定跑兩次;10/30 加了補測試提醒和參數修正,兩種設定各再跑兩次</td><td class="num">依難度選模型 32/34(94%)· 平均約 53k tokens<small>同一版程式只用 Super 29/34(85%)· 約 66k;差別都在難題(17/18 vs 13/18)。改之前是 29/34 vs 24/34</small></td><td><span class="pill pass">選模型較好</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">217 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">218 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端相容性</td><td>沒有 GPU:CPU 版 llama.cpp + Llama 3.2 3B 假裝成地端伺服器,只把模型網址指過去</td><td>程式一行都不用改就切得過去;回話、思考開關、tool calling 都通,上下文自動換成地端的 256K<small>抓到 5 個只有切到地端才會出現的問題(第 63–67 個)</small></td><td><span class="pill pass">切換通過</span></td></tr>
           <tr><td>地端 NIM 本身</td><td>需要 GPU 伺服器</td><td>NIM 容器、顯存、速度、大模型的回答品質</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
@@ -344,7 +344,7 @@ flowchart LR
 
 <section>
   <div class="label">
-    <h2>抓到的 87 個問題</h2>
+    <h2>抓到的 88 個問題</h2>
     <div class="note">依類別分組,編號照發現順序,跟 README 一致。每一條都寫了怎麼發現的</div>
   </div>
   <div class="body">
@@ -353,7 +353,7 @@ flowchart LR
       <li>token 與路由<b>9</b></li>
       <li>agent 行為與工具<b>27</b></li>
       <li>安全與隱私<b>13</b></li>
-      <li>多人、部署與介面<b>15</b></li>
+      <li>多人、部署與介面<b>16</b></li>
       <li>自己訓練的模型與知識庫<b>5</b></li>
     </ul>
 
@@ -449,7 +449,7 @@ flowchart LR
     </div>
 
     <div class="group">
-      <h3>多人、部署與介面 <span class="count">15</span></h3>
+      <h3>多人、部署與介面 <span class="count">16</span></h3>
       <ol class="findings">
         <li><span class="n">07</span><div><span class="what">.env 裡設定的工作目錄被忽略</span><span class="how"><span class="tag">端到端實測</span></span></div><div class="fix">讀完 .env 之後再設定工具</div></li>
         <li><span class="n">19</span><div><span class="what">沙箱逾時只停掉 docker 指令,容器在背景繼續跑;Windows 上中文輸出變亂碼</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">本機實測</span></span></div><div class="fix">容器加名字、逾時就強制停止;輸出一律用 UTF-8 解碼</div></li>
@@ -466,6 +466,7 @@ flowchart LR
         <li><span class="n">73</span><div><span class="what">終端機面板跑一直開著的 Python 程式,畫面一個字都沒有,看起來像沒反應</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">設 PYTHONUNBUFFERED=1,啟動畫面馬上出現</div></li>
         <li><span class="n">74</span><div><span class="what">斷句用的全形標點存檔時被換成半形,模型寫的「?!」斷不了句,還多唸一個停頓</span><span class="how"><span class="tag">語音模式實測</span></span></div><div class="fix">全形標點改用跳脫字元寫,怎麼存都不會變</div></li>
         <li><span class="n">75</span><div><span class="what">微軟的自然語音是線上的,連不上時整則回答沒聲音</span><span class="how"><span class="tag">Edge 實測</span></span></div><div class="fix">出錯就改用本機聲音把剩下的唸完,之後都用本機的</div></li>
+        <li><span class="n">88</span><div><span class="what">桌面版跑測試時跳出黑色的 Docker 命令列視窗,蓋住畫面(錄示範影片時抓到)</span><span class="how"><span class="tag">示範影片</span></span></div><div class="fix">叫 docker、git 一律不開視窗;離線測試掃過程式,之後漏加也會被抓到</div></li>
       </ol>
     </div>
 

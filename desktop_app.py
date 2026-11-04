@@ -130,7 +130,7 @@ def install_shortcut() -> Path:
         "$s.Description = 'JUSTIN(對內研發助理)'; $s.Save(); Join-Path $d 'JUSTIN.lnk'"
     )
     out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True,
-                         encoding="utf-8", errors="replace")
+                         encoding="utf-8", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if out.returncode != 0:
         raise SystemExit(f"建立捷徑失敗:{out.stderr.strip()}")
     return Path(out.stdout.strip())
