@@ -119,13 +119,20 @@ def setup_font():
     import matplotlib.pyplot as plt
 
     keys = ("msjh", "jhenghei", "mingliu", "pingfang", "heiti", "notosanscjk", "sourcehansans", "yahei", "simhei")
-    for path in fm.findSystemFonts():
-        if any(k in Path(path).name.lower() for k in keys):
-            fm.fontManager.addfont(path)
-            prop = fm.FontProperties(fname=path)
-            plt.rcParams["font.sans-serif"] = [prop.get_name(), *plt.rcParams["font.sans-serif"]]
-            plt.rcParams["axes.unicode_minus"] = False
-            return prop
+
+    def rank(path):  # findSystemFonts 是 set,順序每次不同:照 keys 的順序挑;同一個 key 照檔名排,msjh.ttc 在 msjhbd(粗體)前面
+        name = Path(path).name.lower()
+        return next((i for i, k in enumerate(keys) if k in name), None), name
+
+    for path in sorted((p for p in fm.findSystemFonts() if rank(p)[0] is not None), key=rank):
+        prop = fm.FontProperties(fname=path)
+        name = prop.get_name()
+        if name.endswith("-ExtB"):  # mingliub.ttc:只有擴充 B 區的罕用字,常用字全缺
+            continue
+        fm.fontManager.addfont(path)
+        plt.rcParams["font.sans-serif"] = [name, *(f for f in plt.rcParams["font.sans-serif"] if f != name)]
+        plt.rcParams["axes.unicode_minus"] = False
+        return prop
     return None
 
 

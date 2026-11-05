@@ -2381,6 +2381,63 @@ def test_switching_model_mid_turn_takes_effect_next_step(workspace):
     assert [role for role, _, _ in seen][2:] == ["code_deep", "code"]
 
 
+FAKE_FONT_FAMILIES = {"mingliub.ttc": "MingLiU-ExtB", "mingliu.ttc": "MingLiU", "msjh.ttc": "Microsoft JhengHei",
+                      "msjhbd.ttc": "Microsoft JhengHei", "msjhl.ttc": "Microsoft JhengHei Light"}
+
+
+@pytest.fixture
+def fake_system_fonts(tmp_path, monkeypatch):
+    """假的系統字型:拿 matplotlib 內附的 DejaVuSans 改家族名稱、存成 Windows 的檔名,測試不看這台電腦裝了哪些字型。
+    setup_font 會改全域的 rcParams 和 fontManager,測完還原。"""
+    matplotlib = pytest.importorskip("matplotlib")
+    import matplotlib.font_manager as fm
+    from fontTools.ttLib import TTFont
+    monkeypatch.setattr(fm.fontManager, "ttflist", [*fm.fontManager.ttflist])
+
+    def install(*names):
+        paths = []
+        for name in names:
+            font = TTFont(Path(matplotlib.get_data_path()) / "fonts" / "ttf" / "DejaVuSans.ttf")
+            for rec in font["name"].names:
+                if rec.nameID in (1, 16):  # 家族名稱
+                    rec.string = FAKE_FONT_FAMILIES[name]
+            font.save(tmp_path / name)
+            paths.append(str(tmp_path / name))
+        monkeypatch.setattr(fm, "findSystemFonts", lambda *a, **k: paths)
+
+    with matplotlib.rc_context():
+        yield install
+
+
+@pytest.mark.parametrize("files, want", [
+    (["mingliub.ttc", "msjh.ttc"], "msjh.ttc"),             # 這台 Windows 的情況:ExtB 排在前面
+    (["mingliu.ttc", "msjh.ttc"], "msjh.ttc"),              # 照 keys 的順序挑,不是照檔案清單的順序
+    (["msjhbd.ttc", "msjhl.ttc", "msjh.ttc"], "msjh.ttc"),  # 同一家族挑一般粗細,不挑粗體 / 細體
+    (["mingliub.ttc"], None),                               # 只有 ExtB:常用字全缺,不如不設
+])
+def test_setup_font_picks_a_usable_chinese_font(fake_system_fonts, files, want):
+    """10/30:findSystemFonts 是 set,每次順序不同;這台 Windows 常挑到 mingliub.ttc(MingLiU-ExtB,只有擴充 B 區的罕用字),
+    圖上的中文全缺,matplotlib 噴幾百個 Glyph missing。改成照 keys 的順序挑、跳過 ExtB。"""
+    import matplotlib.pyplot as plt
+    import train_models
+    fake_system_fonts(*files)
+    prop = train_models.setup_font()
+    assert (Path(prop.get_file()).name if prop else None) == want
+    if want:
+        assert plt.rcParams["font.sans-serif"][0] == FAKE_FONT_FAMILIES[want]
+
+
+def test_setup_font_does_not_pile_up_font_names(fake_system_fonts):
+    """main、分類實驗、回歸實驗各叫一次 setup_font:字型名稱只放一次在最前面,不會一直往 rcParams 前面疊。"""
+    import matplotlib.pyplot as plt
+    import train_models
+    fake_system_fonts("msjh.ttc")
+    for _ in range(3):
+        train_models.setup_font()
+    names = plt.rcParams["font.sans-serif"]
+    assert names[0] == "Microsoft JhengHei" and names.count("Microsoft JhengHei") == 1
+
+
 def test_webui_model_picker_per_conversation(workspace, tmp_path_factory):
     """輸入框的「選模型」:列出自動 + 能用工具的角色(地端才有的 code_writer 不列);選了之後這段對話都用它,
     「新對話」也保留;存檔重開還在;回答中換的話這一輪下一步就換;null 回到自動。"""
