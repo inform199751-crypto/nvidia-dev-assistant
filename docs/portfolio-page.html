@@ -1,0 +1,647 @@
+<title>研發助理實測紀錄</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@700;900&display=swap">
+<style>
+/* 版面:實驗紀錄本 —— 左側窄欄是邊註(章節名、日期),右側是正文與證據;窄螢幕疊成單欄 */
+:root {
+  --paper: #F3F5F6;
+  --sheet: #FFFFFF;
+  --ink: #16202A;
+  --muted: #586571;
+  --rule: #D2DAE0;
+  --accent: #1D5BB8;
+  --accent-soft: #E2EBF8;
+  --code: #E9EEF1;
+  --pass: #1B7553;
+  --pass-soft: #DFF1E8;
+  --fail: #AE3529;
+  --fail-soft: #F8E3E0;
+  --warn: #8F5E00;
+  --warn-soft: #F6EDD7;
+  --baseline: #9AA6AF;
+  --display: "Noto Serif TC", "Songti TC", "PMingLiU", serif;
+  --body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0F151A; --sheet: #151D24; --ink: #E2E8ED; --muted: #94A2AD; --rule: #2A3540;
+    --accent: #86ABEE; --accent-soft: #1C2A40; --code: #1B252E;
+    --pass: #62C79E; --pass-soft: #15302A; --fail: #F08C80; --fail-soft: #3A1E1C;
+    --warn: #E0B456; --warn-soft: #33290F; --baseline: #5A6772; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0F151A; --sheet: #151D24; --ink: #E2E8ED; --muted: #94A2AD; --rule: #2A3540;
+  --accent: #86ABEE; --accent-soft: #1C2A40; --code: #1B252E;
+  --pass: #62C79E; --pass-soft: #15302A; --fail: #F08C80; --fail-soft: #3A1E1C;
+  --warn: #E0B456; --warn-soft: #33290F; --baseline: #5A6772; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.75;
+  padding-inline: 20px;
+  padding-block: 0 64px;
+}
+.wrap { max-width: 1040px; margin: 0 auto; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+code, .mono { font-family: var(--mono); font-size: 0.88em; }
+p code, li code, td code, dd code { background: var(--code); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+
+/* ---------- 封面 ---------- */
+header.cover {
+  padding-block: 56px 40px;
+  border-bottom: 2px solid var(--ink);
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 32px;
+}
+.cover .margin { font-family: var(--mono); font-size: 13px; color: var(--muted); line-height: 1.6; padding-top: 10px; }
+.cover h1 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: clamp(2.3rem, 6vw, 3.6rem);
+  line-height: 1.15;
+  margin: 0 0 14px;
+  letter-spacing: 0.02em;
+  text-wrap: balance;
+}
+.cover .lede { font-size: 1.12rem; color: var(--ink); max-width: 38em; margin: 0 0 22px; }
+.byline { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 14px; color: var(--muted); }
+.byline strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.12em; }
+
+/* ---------- 章節 ---------- */
+section {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 32px;
+  padding-block: 44px;
+  border-bottom: 1px solid var(--rule);
+}
+.label { padding-top: 6px; }
+.label h2 {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.25rem;
+  line-height: 1.4;
+  margin: 0 0 6px;
+  text-wrap: balance;
+}
+.label .note { font-size: 13px; color: var(--muted); line-height: 1.6; }
+.body { min-width: 0; display: flex; flex-direction: column; gap: 20px; }
+.body > p { margin: 0; max-width: 40em; }
+
+/* ---------- 終端機紀錄 ---------- */
+.readout {
+  background: var(--code);
+  border-left: 3px solid var(--accent);
+  padding: 16px 18px;
+  font-family: var(--mono);
+  font-size: 13.5px;
+  line-height: 1.7;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0;
+}
+.readout .dim { color: var(--muted); }
+.readout .hl { color: var(--accent); font-weight: 600; }
+
+.figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+.figure { background: var(--sheet); padding: 14px 16px; }
+.figure .v { font-family: var(--mono); font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.3; }
+.figure .k { font-size: 13px; color: var(--muted); }
+
+/* ---------- 做出來的東西 ---------- */
+.caps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin: 0; }
+.cap-item { background: var(--sheet); padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cap-item dt { font-weight: 700; font-size: 15px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.cap-item dt .file { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--muted); }
+.cap-item dd { margin: 0; font-size: 14px; color: var(--muted); line-height: 1.65; }
+.cap-item.wide { grid-column: 1 / -1; }
+
+/* ---------- 表格 ---------- */
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--rule); }
+th { font-size: 12px; letter-spacing: 0.08em; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--ink); white-space: nowrap; }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+td small { display: block; color: var(--muted); font-size: 12.5px; }
+.pill { display: inline-block; font-size: 12px; font-weight: 500; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+.pill.pass { color: var(--pass); background: var(--pass-soft); }
+.pill.warn { color: var(--warn); background: var(--warn-soft); }
+.pill.fail { color: var(--fail); background: var(--fail-soft); }
+
+/* ---------- 問題清單 ---------- */
+.tally { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; padding: 0; list-style: none; font-size: 14px; color: var(--muted); }
+.tally b { font-family: var(--mono); color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; margin-left: 4px; }
+.group { display: flex; flex-direction: column; gap: 6px; }
+.group h3 { display: flex; align-items: baseline; gap: 10px; margin: 0; font-size: 16px; font-weight: 700; }
+.group h3 .count { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--muted); }
+ol.findings { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--ink); }
+ol.findings li {
+  display: grid;
+  grid-template-columns: 2.4em minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px 20px;
+  padding-block: 14px;
+  border-bottom: 1px solid var(--rule);
+}
+.findings .n { font-family: var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 2px; }
+.findings .what { font-weight: 500; }
+.findings .how { display: block; margin-top: 4px; }
+.findings .fix { color: var(--muted); font-size: 15px; }
+.findings .fix::before { content: "處理 "; color: var(--pass); font-size: 12px; letter-spacing: 0.06em; }
+.tag { font-family: var(--mono); font-size: 11.5px; color: var(--accent); background: var(--accent-soft); padding: 1px 7px; border-radius: 3px; white-space: nowrap; }
+
+/* ---------- 標本 ---------- */
+.specimens { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.specimen { background: var(--sheet); border: 1px solid var(--rule); padding: 18px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.specimen h3 { font-size: 15px; margin: 0; font-weight: 700; }
+.specimen .cap { font-size: 12px; letter-spacing: 0.06em; color: var(--muted); margin: 0; }
+.specimen pre {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+  border-radius: 3px;
+}
+.specimen pre.bad { background: var(--fail-soft); color: var(--ink); }
+.specimen pre.good { background: var(--pass-soft); color: var(--ink); }
+.specimen pre mark { background: none; color: var(--fail); font-weight: 600; text-decoration: underline wavy; text-underline-offset: 3px; }
+.specimen p { margin: 0; font-size: 14px; color: var(--muted); }
+
+/* ---------- 長條 ---------- */
+.bars { display: flex; flex-direction: column; gap: 14px; }
+.bar-row { display: grid; grid-template-columns: 13em minmax(0, 1fr); gap: 4px 16px; align-items: center; }
+.bar-row .name { font-size: 14px; }
+.bar-row .name small { display: block; color: var(--muted); font-size: 12px; }
+.track { position: relative; height: 26px; }
+.fill { height: 100%; background: var(--accent); min-width: 3px; }
+.fill.base { background: var(--baseline); }
+.fill.bad { background: var(--fail); }
+.bar-row .val { font-family: var(--mono); font-size: 13px; color: var(--muted); grid-column: 2; font-variant-numeric: tabular-nums; }
+
+.mermaid-box { background: var(--sheet); border: 1px solid var(--rule); padding: 16px; overflow-x: auto; }
+
+ul.plain { margin: 0; padding-left: 1.2em; max-width: 42em; display: flex; flex-direction: column; gap: 8px; }
+
+/* ---------- 示範影片 ---------- */
+.clips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 20px; margin: 0; }
+.clip { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.clip video { width: 100%; aspect-ratio: 1280 / 870; background: #000; border: 1px solid var(--rule); border-radius: 6px; display: block; }
+.clip figcaption { font-size: 14px; line-height: 1.6; color: var(--muted); }
+.clip figcaption strong { color: var(--ink); font-weight: 700; margin-right: 6px; }
+.clip figcaption .len { font-family: var(--mono); font-size: 12px; margin-right: 6px; }
+.clips-note { font-size: 14px; color: var(--muted); margin: 14px 0 0; }
+
+footer { padding-block: 28px; font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 8px 24px; }
+footer strong { color: var(--ink); font-family: var(--mono); letter-spacing: 0.12em; }
+
+@media (max-width: 760px) {
+  header.cover, section { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .cover .margin { padding-top: 0; }
+  .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .caps { grid-template-columns: minmax(0, 1fr); }
+  .clips { grid-template-columns: minmax(0, 1fr); }
+  .specimens { grid-template-columns: minmax(0, 1fr); }
+  ol.findings li { grid-template-columns: 2em minmax(0, 1fr); }
+  .findings .fix { grid-column: 2; }
+  .bar-row { grid-template-columns: minmax(0, 1fr); }
+  .bar-row .val { grid-column: 1; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .fill { transition: width 0.6s ease-out; }
+}
+</style>
+
+<div class="wrap">
+
+<header class="cover">
+  <div class="margin">作品集<br>實測 10-06 – 11-05<br>更新 11-05</div>
+  <div>
+    <h1>對內研發助理<br>實測紀錄</h1>
+    <p class="lede">一個給公司內部用的程式碼助理:找 bug、提修正、寫技術文件,也能讀公司文件、看截圖。為了程式碼隱私不接雲端 Claude / GPT,改用 NVIDIA 的模型與 NIM 容器,開發期打 API Catalog,正式環境換成地端,只改一個設定。這一頁記錄我從 10/6 到 11/5 邊做邊用真模型測試的過程,實測與審查一共抓到 103 個問題。</p>
+    <div class="byline">
+      <span><strong>HSUAN</strong></span>
+      <span>Python · LangChain · NVIDIA NIM · Docker · Redis · scikit-learn</span>
+      <span class="mono"><a href="https://github.com/inform199751-crypto/nvidia-dev-assistant">github.com/inform199751-crypto/nvidia-dev-assistant</a></span>
+      <span>展示頁;原始碼不公開,面試時可展示或提供唯讀權限</span>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="label">
+    <h2>實際操作</h2>
+    <div class="note">桌面版錄的五段,用的是試用平台上的真模型</div>
+  </div>
+  <div class="body">
+    <div class="clips">
+      <figure class="clip">
+        <video controls muted playsinline preload="none" poster="demo/1-fix-bug.jpg" src="demo/1-fix-bug.mp4"></video>
+        <figcaption><strong>修 bug</strong><span class="len">21 秒</span>問 test_add 為什麼失敗:讀程式、在 Docker 沙箱跑測試、修好 <code>a - b</code> 並補回歸測試;測試通過後按「套用到專案」才真的改檔案。</figcaption>
+      </figure>
+      <figure class="clip">
+        <video controls muted playsinline preload="none" poster="demo/2-knowledge.jpg" src="demo/2-knowledge.mp4"></video>
+        <figcaption><strong>問公司文件</strong><span class="len">14 秒</span>「搭小黃去見客戶的錢可以請款嗎?」查知識庫,回答附上出處(報帳規定 › 交通費)。等模型回答的 16 秒改成 4 倍速。</figcaption>
+      </figure>
+      <figure class="clip">
+        <video controls muted playsinline preload="none" poster="demo/3-draw.jpg" src="demo/3-draw.mp4"></video>
+        <figcaption><strong>畫圖</strong><span class="len">14 秒</span>「畫一張彩虹和蝴蝶、地上有花的圖,小朋友的插畫風格,橫的」,用 FLUX 畫好直接顯示在對話裡。</figcaption>
+      </figure>
+      <figure class="clip">
+        <video controls muted playsinline preload="none" poster="demo/4-edit-image.jpg" src="demo/4-edit-image.mp4"></video>
+        <figcaption><strong>改圖</strong><span class="len">16 秒</span>「在剛剛那張圖上加一隻粉紅色的獨角獸,其他不要變」:用同一個隨機種子重畫,彩虹、雲和花的位置都沒變。</figcaption>
+      </figure>
+      <figure class="clip">
+        <video controls playsinline preload="none" poster="demo/5-voice.jpg" src="demo/5-voice.mp4"></video>
+        <figcaption><strong>語音模式</strong><span class="len">21 秒 · 有聲音</span>用說的問「用一句話介紹你自己」,大約 3 秒後用微軟的自然語音回答。</figcaption>
+      </figure>
+    </div>
+    <p class="clips-note">除了第二段的等待,其他都是實際速度,只剪掉頭尾。</p>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>最重的一次測試</h2>
+    <div class="note">把整個客服專案丟進去,請它寫技術文件</div>
+  </div>
+  <div class="body">
+<pre class="readout"><span class="dim">$ agent.py "為這個專案寫一份技術文件" -f app/… -f tests/… -f docs/… --whole</span>
+附檔 57 個
+step 1  role=<span class="hl">long_context</span>  tokens=<span class="hl">191076</span>  (回答)
+結束碼 0 ,總耗時 <span class="hl">482</span> 秒</pre>
+    <div class="figures">
+      <div class="figure"><div class="v">191,076</div><div class="k">tokens 一次送進去</div></div>
+      <div class="figure"><div class="v">1 步</div><div class="k">自動升級到 Ultra 550B</div></div>
+      <div class="figure"><div class="v">482 秒</div><div class="k">網頁版在背景跑,重新整理不會中斷</div></div>
+      <div class="figure"><div class="v">14 / 14</div><div class="k">抽查的 path:line 引用全對</div></div>
+    </div>
+    <p>系統估算內容超過程式碼模型的上限(約 11 萬 tokens),自動改用 1M 上下文的 Nemotron 3 Ultra。修正前,同一個任務跑到第 3 步還在分段重讀 README,每步重送 18 萬 tokens。</p>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>架構</h2>
+    <div class="note">換模型改 YAML,換環境改一個環境變數</div>
+  </div>
+  <div class="body">
+    <div class="mermaid-box">
+<pre class="mermaid">
+flowchart LR
+    U[工程師] --> A[agent 迴圈]
+    A -->|每步送出前| G[token 檢查: 估算 / 清舊思考 / 瘦身 / 配額]
+    G --> R{路由}
+    R -->|放得下| S[code: Nemotron 3.5 Super 120B]
+    R -->|超過約 11 萬 tokens| L[long_context: Nemotron 3 Ultra 550B]
+    R -->|難題| D
+    S -.失敗備援.-> D[code_deep: DeepSeek v4.1-flash]
+    L -.失敗備援.-> S2[Super 1M]
+    A --> T1[讀檔 / 搜尋 / git 紀錄: 擋 .env 與金鑰]
+    A --> T2[跑測試與指令: Docker 沙箱, 無網路, 唯讀複本]
+    A --> T3[提修正: 舊字串換新字串, 複本套用並跑測試]
+    A --> T4[讀文件 / 看圖 / 知識庫]
+    A --> T5[上網: 預設關閉, 每次先問, 先過安全模型]
+</pre>
+    </div>
+    <p>agent 迴圈是自己寫的,沒有用現成的 create_agent,因為 token 檢查、歷史瘦身、模型升級都要插在「每一步送出之前」。工具只能讀、只能在沙箱裡跑測試、只能提 patch 等人確認,不會直接改任何檔案。</p>
+    <p>長度路由只管放不放得下。另外有一個難度分類器判斷題目難不難,難題改用 DeepSeek。先用影子模式只記錄「本來會選哪個模型」,10/25 用 17 題端到端評測比較(依難度選模型 16/17、只用 Super 12/17)之後才打開。</p>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>做出來的東西</h2>
+    <div class="note">同一個 agent,五種用法,加上十項能力</div>
+  </div>
+  <div class="body">
+    <dl class="caps">
+      <div class="cap-item"><dt>命令列 <span class="file">agent.py</span></dt><dd>多輪對話、<code>/plan</code> 先規劃再動手;修改先放草稿,沙箱測試通過才問要不要套用</dd></div>
+      <div class="cap-item"><dt>網頁 <span class="file">webui.py</span></dt><dd>回答邊產生邊顯示;側邊欄管專案和對話;資料夾、PDF、Word、Excel、PowerPoint、.zip、程式碼都可以直接拖進視窗</dd></div>
+      <div class="cap-item"><dt>桌面版 <span class="file">desktop_app.py</span></dt><dd>雙擊桌面圖示開獨立視窗,視窗都關了就結束</dd></div>
+      <div class="cap-item"><dt>手機</dt><dd>掃 QR code、輸入 PIN 配對;訪客 PIN 有自己的空間和每日額度</dd></div>
+      <div class="cap-item"><dt>VS Code 外掛</dt><dd>編輯器旁邊開小助理,右鍵「問選取的程式碼」;打包不需要 Node</dd></div>
+      <div class="cap-item"><dt>多人部署 <span class="file">deploy/</span></dt><dd>Docker Compose:小助理 + Redis 共用額度 + oauth2-proxy 登入,同時執行上限其他人排隊</dd></div>
+      <div class="cap-item"><dt>知識庫</dt><dd>公司文件依標題切段、算向量(Nemotron 3 Embed),照意思找、再用 Nemotron 3.5 Rerank 重新排序,附出處;每天看一次資料夾,有檔案改過才更新</dd></div>
+      <div class="cap-item"><dt>看圖與掃描 PDF</dt><dd>Nemotron Nano Omni 先把圖片和掃描頁轉成文字,再交給主模型回答</dd></div>
+      <div class="cap-item"><dt>上網與安全把關</dt><dd>預設關閉、每次先問;網頁內容先過安全模型(Safety Guard 8B,掛了換 Llama Guard 4),擋藏在頁面裡的提示注入</dd></div>
+      <div class="cap-item"><dt>自己訓練的難度模型 <span class="file">ml/</span></dt><dd>ID3 決策樹判斷難易、線性回歸預估 tokens 和秒數;執行時讀 JSON,純 Python</dd></div>
+      <div class="cap-item"><dt>終端機與操作瀏覽器 <span class="file">terminal.py · browser.py</span></dt><dd>在專案資料夾跑指令、不帶金鑰;用無頭 Edge 測自己開發中的網站,只開 localhost 這類開發位址</dd></div>
+      <div class="cap-item"><dt>MCP 連接器與分工 <span class="file">mcp_client.py</span></dt><dd>接外部 MCP server 的工具,每次使用先問;打開「分工」讓子助理同時查不同模組</dd></div>
+      <div class="cap-item"><dt>跨對話記憶與排程 <span class="file">memory.py · scheduler.py</span></dt><dd>說「記住…」就記一句話,存在自己的電腦;每天幾點自動開對話去做,改程式只留草稿;對話模式的排程可以勾「允許上網」自己去讀網頁</dd></div>
+      <div class="cap-item"><dt>深度研究與畫圖 <span class="file">imagegen.py</span></dt><dd>把問題拆成子問題同時上網查,寫附出處的報告;用 FLUX 畫圖、改圖(同一個種子重畫),直接顯示在對話裡</dd></div>
+      <div class="cap-item wide"><dt>語音模式 <span class="file">webui.html</span></dt><dd>像 ChatGPT 手機版:全螢幕一顆球,用說的問、邊寫邊唸,戴耳機可以直接開口插話;回答改成口語的一到三句。辨識用瀏覽器的語音服務、聲音用微軟的自然語音,這兩個都在雲端,所以切到地端時預設關掉</dd></div>
+    </dl>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>實測結果</h2>
+    <div class="note">NVIDIA API Catalog 免費層,10/6 – 11/1;地端相容性用這台電腦的 CPU</div>
+  </div>
+  <div class="body">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>路徑</th><th>情境</th><th>結果</th><th>狀態</th></tr></thead>
+        <tbody>
+          <tr><td>模型冒煙測試</td><td>三顆模型 × 回應 / 開思考 / 關思考 / tool calling</td><td>Super 每次 0.4–2.6 秒;DeepSeek 18–27 秒;Ultra 偶爾回 503,已設備援</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>改 bug</td><td>玩具專案:加號寫成減號</td><td class="num">12 步 → 7 步 · 47,559 → 16,234 tokens<small>改成「舊字串換新字串」後 4 步、約 8 千 tokens</small></td><td><span class="pill pass">2 passed</span></td></tr>
+          <tr><td>長文本</td><td>客服專案 57 檔寫技術文件</td><td class="num">1 步 · 191,076 tokens · 482 秒</td><td><span class="pill pass">引用 14/14</span></td></tr>
+          <tr><td>難度分類器</td><td>14 題示範問題,一般與難題各 7</td><td>Super 關思考每次 0.6–1.1 秒、約 300 tokens<small>題目是自己出的;正式打開前改用下面的端到端評測比較</small></td><td><span class="pill pass">14/14</span></td></tr>
+          <tr><td>看圖</td><td>錯誤截圖、長條圖、1 MB 的 JPEG</td><td>Nano Omni 每張 1.4–9 秒;檔名、行號、數字全對</td><td><span class="pill pass">全對</span></td></tr>
+          <tr><td>知識庫</td><td>12 題換句話說的問題</td><td class="num">照意思找:第 1 名 10/12、前 3 名 12/12<small>只用關鍵字 7/12。11/1 另出 13 題:加上 3.5 Rerank 重新排序,第 1 名 10/13 → 13/13,每題多 0.6 秒</small></td><td><span class="pill pass">前 3 名 12/12</span></td></tr>
+          <tr><td>安全把關</td><td>正常網頁、註解裡藏指令的網頁、隱晦的提示注入、不當請求</td><td>Content Safety 每次 0.6–1 秒;另外三顆安全模型大多逾時</td><td><span class="pill pass">5/5</span></td></tr>
+          <tr><td>掃描的 PDF</td><td>兩頁:會議紀錄 + 預算表格</td><td>逐字讀出、表格保留成表格,兩頁約 19–26 秒</td><td><span class="pill pass">通過</span></td></tr>
+          <tr><td>多 agent 分工</td><td>同一題「三個模組各做什麼」,分工 vs 不分工</td><td class="num">4.5–15.5 萬 → 4.5–5.4 萬 tokens<small>主對話 1.9–3 萬 → 1.2–1.3 萬;但 66–88 秒 → 108–155 秒,要等最慢的子助理</small></td><td><span class="pill warn">省 token、比較慢</span></td></tr>
+          <tr><td>MCP 連接器</td><td>示範連接器(虛構工單系統),問高優先度工單的原因和修法</td><td class="num">3 步 · 13,142 tokens<small>自己選對工具,每次呼叫前都先問;連接器啟動 0.2 秒</small></td><td><span class="pill pass">答對</span></td></tr>
+          <tr><td>網頁分享</td><td>請 JUSTIN 做一個有三張卡片、可以展開說明的介紹網頁</td><td class="num">2 步 · 6,663 tokens<small>沙箱預覽:CSS、JS 正常,連網和 JUSTIN 的 token 都拿不到</small></td><td><span class="pill pass">通過</span></td></tr>
+          <tr><td>操作瀏覽器</td><td>本機開發中網站埋兩個 bug,請它測登入流程</td><td class="num">6 步 · 28,008 tokens · 76 秒<small>抓到 API 500 和主控台錯誤,漏掉畫面文字錯誤</small></td><td><span class="pill warn">1/2</span></td></tr>
+          <tr><td>停止 / 回答中送出</td><td>思考中、寫到一半、等確認時按停止;回答中再送一則訊息</td><td>停止 0.3 秒內生效、已寫的文字留著;中途的訊息答完自動接著回答</td><td><span class="pill pass">通過</span></td></tr>
+          <tr><td>深度研究</td><td>「企業導入 AI 程式助理有哪些資安風險?要怎麼降低?」,真的上網</td><td class="num">5 個子助理同時查 · 7.9 萬 tokens · 12 分鐘<small>只問一次要不要上網;報告分 5 節、附來源表;最慢的子助理 9 分鐘,免費平台讀網頁慢</small></td><td><span class="pill pass">通過</span></td></tr>
+          <tr><td>跨對話的記憶</td><td>說兩條偏好(一條沒說「記住」),再開新對話問「什麼是 RAG?」</td><td class="num">兩句都自己記下 · 三題約 8,000 tokens<small>新對話照偏好回答:剛好 5 點條列、最後一點是面試講法</small></td><td><span class="pill pass">通過</span></td></tr>
+          <tr><td>排程任務</td><td>設「每天 18:43 跑全部測試,有失敗就三點整理原因」,不手動觸發</td><td class="num">準時自己開對話 · 12,394 tokens<small>沙箱跑測試、找出 calc.py:2 寫成減法;途中主模型一步沒回應,DeepSeek 接手、畫面有提醒</small></td><td><span class="pill pass">通過</span></td></tr>
+          <tr><td>畫圖</td><td>先探測 catalog,再請它畫雨夜的台北 101</td><td class="num">FLUX.1-dev 約 5 秒 · 2 步 · 4,227 tokens<small>自己把描述寫成英文、選橫幅;Stable Diffusion 3 / 3.5 / SDXL 都 404。10/30 FLUX.1-dev 壞掉(等 3 分多鐘才失敗),改用 FLUX.2 klein:從問到畫好 10.6 秒。畫圖模型都不認得 101,要把外型寫進描述才有機會像(JUSTIN 畫 3 次像 1 次)。10/31 加改圖:平台的改圖模型只收範例圖,改成同一個種子重畫,加獨角獸、換小白兔時彩虹和草地都沒動</small></td><td><span class="pill pass">通過</span></td></tr>
+          <tr><td>語音模式</td><td>對話模式 6 題(含追問、會想用表格或程式碼的題目)、程式模式問 calc.py 的 bug 3 次;麥克風那段用模擬的語音辨識</td><td class="num">對話模式每題 2.4–4.6 秒、沒有表格和條列<small>程式模式 3/3 先讀檔再回答、3.5 秒開口;戴耳機時一開口就停下來換你說</small></td><td><span class="pill warn">麥克風用模擬</span></td></tr>
+          <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
+          <tr><td>端到端評測</td><td>17 題自己寫的修 bug 題,驗收含 JUSTIN 看不到的隱藏測試;10/25–26 主模型換成 3.5 Super VL 後,每種設定跑兩次;10/30 加了補測試提醒和參數修正,兩種設定各再跑兩次;11/5 用最新版各再跑三次</td><td class="num">依難度選模型 83/85(98%)· 平均約 55k tokens<small>只用 Super 74/85(87%)· 約 70k;一般題平手(39/40),差別都在難題(44/45 vs 35/45)。兩回都是同一版程式比:10/30 32/34 vs 29/34、11/5 51/51 vs 45/51;代價是慢約一倍(秒數中位數 93 vs 43)。11/12 最新版再跑三次:50/51,沒過的那次已修;難題改交給 Ultra 快了 3 倍但只有 46/51(常做到步數上限);同一天只用 Super 48/51、做到上限才換 DeepSeek 45/51,跟 11/5 合起來依難度選模型 101/102 vs 只用 Super 93/102;11/13 加了新的保險後再比:48/51 vs 49/51,差距不見了、只用 Super 快一倍</small></td><td><span class="pill pass">選模型較好</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">245 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>地端相容性</td><td>沒有 GPU:CPU 版 llama.cpp + Llama 3.2 3B 假裝成地端伺服器,只把模型網址指過去</td><td>程式一行都不用改就切得過去;回話、思考開關、tool calling 都通,上下文自動換成地端的 256K<small>抓到 5 個只有切到地端才會出現的問題(第 63–67 個)</small></td><td><span class="pill pass">切換通過</span></td></tr>
+          <tr><td>地端 NIM 本身</td><td>需要 GPU 伺服器</td><td>NIM 容器、顯存、速度、大模型的回答品質</td><td><span class="pill warn">未實測</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>抓到的 103 個問題</h2>
+    <div class="note">依類別分組,編號照發現順序,跟 README 一致。每一條都寫了怎麼發現的</div>
+  </div>
+  <div class="body">
+    <ul class="tally">
+      <li>模型與套件<b>18</b></li>
+      <li>token 與路由<b>9</b></li>
+      <li>agent 行為與工具<b>27</b></li>
+      <li>安全與隱私<b>13</b></li>
+      <li>多人、部署與介面<b>19</b></li>
+      <li>自己訓練的模型與知識庫<b>6</b></li>
+    </ul>
+
+    <div class="group">
+      <h3>模型與套件 <span class="count">18</span></h3>
+      <ol class="findings">
+        <li><span class="n">01</span><div><span class="what">指定的 deepseek-v3、qwen2.5-coder-32b 已經從 catalog 下架</span><span class="how"><span class="tag">探測 API</span></span></div><div class="fix">改用現役版本,Qwen 標為只能地端</div></li>
+        <li><span class="n">02</span><div><span class="what">套件預設輸出上限只有 1024 tokens,寫程式會被截斷</span><span class="how"><span class="tag">讀套件原始碼</span></span></div><div class="fix">每個模型角色明確設定上限</div></li>
+        <li><span class="n">03</span><div><span class="what">套件把推理內容原樣回送伺服器,多輪對話會滾雪球</span><span class="how"><span class="tag">讀套件原始碼</span></span></div><div class="fix">每步清掉上一輪以前的推理,同一輪內保留給工具呼叫用</div></li>
+        <li><span class="n">04</span><div><span class="what">Ultra 收到 force_nonempty_content 會把推理混進回答</span><span class="how"><span class="tag">冒煙測試</span> <span class="tag">對照實驗</span></span></div><div class="fix">Ultra 不送這個參數,另外清除孤立的 &lt;/think&gt;</div></li>
+        <li><span class="n">05</span><div><span class="what">DeepSeek 連回一句「收到」都要 20 秒</span><span class="how"><span class="tag">冒煙測試</span></span></div><div class="fix">日常改用 Super,DeepSeek 留給難題</div></li>
+        <li><span class="n">21</span><div><span class="what">串流時套件只把工具呼叫放在片段裡,送回伺服器時跟下一步的工具結果對不上</span><span class="how"><span class="tag">讀套件原始碼</span></span></div><div class="fix">串流結束後補回完整的工具呼叫;真模型連續 3 步工具呼叫正常</div></li>
+        <li><span class="n">32</span><div><span class="what">模型清單上的看圖模型,有的實際呼叫是 404,有的把檔名講錯或逾時</span><span class="how"><span class="tag">逐一實測</span></span></div><div class="fix">選實測全對的 Nemotron 3 Nano Omni,備援 Llama 3.2 11B Vision</div></li>
+        <li><span class="n">33</span><div><span class="what">免費層的 Nano Omni 約一半回 503,一次就放棄的話常常看不到圖</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">先重試 2 次再換備援;都失敗就告訴主模型有一張圖沒看到</div></li>
+        <li><span class="n">35</span><div><span class="what">清單上的 embedding 模型大多 404;Nemotron 3 Embed 經過套件呼叫回 502,直接打 API 正常</span><span class="how"><span class="tag">逐一實測</span></span></div><div class="fix">直接打 /v1/embeddings,忙線時重試</div></li>
+        <li><span class="n">42</span><div><span class="what">想找比 DeepSeek 快的難題模型:GLM-5.3 Flash 冒煙測試快,實際修 bug 卻要 122 秒,還會逾時</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">不換;結果記在 models.yaml,下次不用重測</div></li>
+        <li><span class="n">51</span><div><span class="what">使用者問問題,畫面上什麼都沒有:模型回了空白(答案只寫在思考裡),參數也擋不住</span><span class="how"><span class="tag">讀使用者的對話紀錄</span></span></div><div class="fix">空白就提醒一次、請它寫出來;實測遇到一次,提醒後就寫出來了</div></li>
+        <li><span class="n">59</span><div><span class="what">主模型 Nemotron 3 Super 在 catalog 上回 404(清單上還在),備援默默換成 DeepSeek:看起來正常、其實慢 3–4 倍,一整天沒人發現</span><span class="how"><span class="tag">端到端評測</span></span></div><div class="fix">換成 Nemotron 3.5 Super VL;備援接手時畫面提醒、評測記實際回答的模型</div></li>
+        <li><span class="n">60</span><div><span class="what">新的 3.5 Super VL 呼叫工具時把修改清單寫成字串,常常連 JSON 都不合法(18 次有 8 次),每次白花一步,有時乾脆放棄</span><span class="how"><span class="tag">端到端評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">讀開頭那段完整的清單(壞掉的 23 個救回 13 個);改成中文錯誤加範例反而更糟,所以只做安全的讀回</div></li>
+        <li><span class="n">62</span><div><span class="what">新的 Super 在免費平台上時好時壞:常回 500、偶爾卡住 180 秒,14% 的步數被換成 DeepSeek</span><span class="how"><span class="tag">對話紀錄</span> <span class="tag">直接呼叫</span></span></div><div class="fix">遇到忙線同一顆先自動重試 2 次再換備援(連續 20 次成功 9 → 14 次);逾時 180 → 90 秒</div></li>
+        <li><span class="n">78</span><div><span class="what">修改清單後面連說明一起塞進同一個字串,只讀清單就少了必填的說明,工具一直回錯誤,重送 6 次把 15 步用完</span><span class="how"><span class="tag">難題評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">整段補上開頭剛好是合法 JSON 才把說明拿回來,一樣不猜;全部評測紀錄能用的呼叫從 49 次變 75 次</div></li>
+        <li><span class="n">79</span><div><span class="what">畫圖的模型在平台上壞掉(一顆等 60–70 秒回錯誤、一顆等到逾時),使用者等了 3 分多鐘還是沒有圖</span><span class="how"><span class="tag">使用者回報</span> <span class="tag">直接打 API</span></span></div><div class="fix">試了 19 個模型 ID,找到新上架、3–4 秒的 FLUX.2 klein 改成先畫;每顆最多等 60 秒,從問到畫好 10.6 秒</div></li>
+        <li><span class="n">80</span><div><span class="what">DeepSeek 邊產生邊顯示時,NVIDIA 把工具呼叫的開頭標記漏進文字:畫面冒出一行 &lt;｜DSML｜ calls&gt;,還存進對話、每一步再送回伺服器</span><span class="how"><span class="tag">實測</span> <span class="tag">探針記錄原文</span></span></div><div class="fix">邊顯示邊過濾(標記被切成兩段送來,可能是開頭的那截先留著再判斷),存進對話前也拿掉;再跑兩次,畫面和紀錄都是 0</div></li>
+        <li><span class="n">85</span><div><span class="what">平台上的改圖模型(Kontext、klein)只收網頁的範例圖,自己的圖不管直接附還是先上傳都被拒</span><span class="how"><span class="tag">使用者要求</span> <span class="tag">直接打 API</span></span></div><div class="fix">記下每張圖的描述和種子,改圖用同一個種子重畫:描述不變就一模一樣,加一隻獨角獸其他幾乎不動</div></li>
+      </ol>
+    </div>
+
+    <div class="group">
+      <h3>token 與路由 <span class="count">9</span></h3>
+      <ol class="findings">
+        <li><span class="n">09</span><div><span class="what">檔案都附上了,模型還分段重讀,每步重送 18 萬 tokens</span><span class="how"><span class="tag">長文本實測</span></span></div><div class="fix">整檔模式不給工具,一次回答</div></li>
+        <li><span class="n">10</span><div><span class="what">token 估算低估約 20%(估 15.3 萬,實際 18.3 萬)</span><span class="how"><span class="tag">長文本實測</span></span></div><div class="fix">用實測重新校準,執行中再依實際用量修正</div></li>
+        <li><span class="n">11</span><div><span class="what">配額只在開始時檢查,跑到一半可以遠超額度</span><span class="how"><span class="tag">長文本實測</span></span></div><div class="fix">每一步送出前都檢查</div></li>
+        <li><span class="n">12</span><div><span class="what">工具定義(約 700 tokens)沒算進估算,被誤判成估算偏低,中型任務會提早升級到 Ultra</span><span class="how"><span class="tag">實測紀錄</span></span></div><div class="fix">工具定義算進估算,不拿來放大倍率</div></li>
+        <li><span class="n">15</span><div><span class="what">上下文長度用的是 catalog 的值(Ultra 1M),地端預設只有 256K,切到地端要送出才被拒</span><span class="how"><span class="tag">程式碼審查</span></span></div><div class="fix">角色可以另寫地端的上下文長度,切到地端時自動套用</div></li>
+        <li><span class="n">26</span><div><span class="what">難度分類器把最常見的「單一測試失敗」判成難題,真的開啟會把一般請求丟給慢約 10 倍的 DeepSeek</span><span class="how"><span class="tag">分類器實測</span></span></div><div class="fix">改判斷標準:跨多個檔案又沒有頭緒才算難題;同 14 題重跑全部符合</div></li>
+        <li><span class="n">29</span><div><span class="what">影子模式也同步等分類器,每題多等約 1 秒,答案卻不會變</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">影子模式改在背景判斷,不擋這一輪的回答</div></li>
+        <li><span class="n">61</span><div><span class="what">打開依難度選模型時,沒加引號的 on 被設定檔讀成 True,程式以為沒打開、永遠不會換模型</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">設定加引號;讀設定時把 True / False 當成 on / off</div></li>
+        <li><span class="n">67</span><div><span class="what">路由紀錄沒記是哪個後端答的:地端測試(CPU 上的 3B)那一輪跟正式紀錄混在一起,報表和訓練會當成真實資料</span><span class="how"><span class="tag">地端相容性測試</span></span></div><div class="fix">每一行記下 catalog / nim,測試那一行已從紀錄刪掉;報表和訓練預設只算現在用的後端</div></li>
+      </ol>
+    </div>
+
+    <div class="group">
+      <h3>agent 行為與工具 <span class="count">27</span></h3>
+      <ol class="findings">
+        <li><span class="n">06</span><div><span class="what">agent 沒辦法驗證自己的修正,最後自己編了測試結果</span><span class="how"><span class="tag">端到端實測</span></span></div><div class="fix">提修正時在複本上套用並真的跑測試,回傳實際結果</div></li>
+        <li><span class="n">13</span><div><span class="what">模型回的工具參數不是合法 JSON 時,被當成最終答案、回傳空字串</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">讀套件原始碼</span></span></div><div class="fix">把錯誤回給模型,讓它修正重送</div></li>
+        <li><span class="n">14</span><div><span class="what">模型手寫 unified diff 常格式錯,每次被退回多花 2–3 步</span><span class="how"><span class="tag">改 bug 實測</span></span></div><div class="fix">改成給「舊字串 → 新字串」,diff 由工具產生;同一題 8 步變 4 步</div></li>
+        <li><span class="n">17</span><div><span class="what">「修 bug + 新增測試檔」時,模型以為 patch 會疊加,多繞好幾步</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">工具回傳時提醒每個 patch 單獨驗證;11 步變 7 步</div></li>
+        <li><span class="n">20</span><div><span class="what">模型不知道今天幾號,摘要會議紀錄時把「下週三」算錯</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">系統提示帶台北時間的日期與星期</div></li>
+        <li><span class="n">22</span><div><span class="what">照計畫一步步改時,每個 patch 各自對原檔驗證,模型一直讀到舊內容、原地打轉</span><span class="how"><span class="tag">計畫模式實測</span></span></div><div class="fix">改成累積的草稿,讀檔、搜尋、沙箱都看草稿版本</div></li>
+        <li><span class="n">23</span><div><span class="what">執行計畫時 15 步裡約 6 步只在更新進度,做到一半就停</span><span class="how"><span class="tag">計畫模式實測</span></span></div><div class="fix">進度更新要跟下一個動作一起送,計畫限 3–6 步;重跑 12 步全部完成</div></li>
+        <li><span class="n">34</span><div><span class="what">看圖說明偶爾把同一段重複好幾次,一張圖 22 秒、3,800 tokens</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">提示改成三段、寫完就停,重複段落只留一次;每張變 3–9 秒、約 700 tokens</div></li>
+        <li><span class="n">40</span><div><span class="what">讀掃描的表格時把繁體字抄成簡體(預算表 → 预算表)</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">提示加上「保留原本的字」,重跑兩次都正確</div></li>
+        <li><span class="n">44</span><div><span class="what">加了子 agent 分工的工具,但模型不會自己用:沒提示 0/2,系統提示加說明也 0/2</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">改成使用者決定:輸入框的「分工」開關,2/2 都分工</div></li>
+        <li><span class="n">45</span><div><span class="what">分工後主 agent 收到報告,又把檔案全部重讀一遍,20.9 萬 tokens,比不分工還多</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">提示改成「報告涵蓋的不要重讀」;再測 2/2 沒重讀,4.5–5.4 萬 tokens</div></li>
+        <li><span class="n">47</span><div><span class="what">連接器掛掉時,錯誤原因有時比「連線結束」晚讀到,使用者只看到「結束了」</span><span class="how"><span class="tag">離線測試</span></span></div><div class="fix">先等行程結束、錯誤訊息讀完再回報,附上最後一行</div></li>
+        <li><span class="n">49</span><div><span class="what">無頭 Edge 的啟動行程交出工作就結束,被誤判成失敗,真正的瀏覽器卻留在背景(留下 14 個)</span><span class="how"><span class="tag">離線測試</span></span></div><div class="fix">只等 DevTools 的 port 出現;關閉改請瀏覽器自己關,測試後檢查沒有殘留</div></li>
+        <li><span class="n">52</span><div><span class="what">做不到的事一直硬試:請它「打開」存好的檔案,試了 10 步、25.5 萬 tokens</span><span class="how"><span class="tag">讀使用者的對話紀錄</span></span></div><div class="fix">做不到就直說並告訴使用者怎麼做;存好的文件直接給「下載」按鈕</div></li>
+        <li><span class="n">53</span><div><span class="what">回答太長、每題結尾都客套:只打「沒反應」也回 3,878 字</span><span class="how"><span class="tag">使用者反映</span></span></div><div class="fix">回答長度配合問題、缺資訊先問、不客套;重問變 346 字。指定長度時照做</div></li>
+        <li><span class="n">54</span><div><span class="what">分工工具的參數被包成字串,檢查擋了兩次才成功</span><span class="how"><span class="tag">讀使用者的對話紀錄</span></span></div><div class="fix">工具也收字串</div></li>
+        <li><span class="n">55</span><div><span class="what">按停止之後再問同一題,模型照抄對話裡那句「使用者按了停止」</span><span class="how"><span class="tag">網頁實測</span></span></div><div class="fix">停下來的那一輪從對話拿掉,下一題前面告訴模型;重測正常</div></li>
+        <li><span class="n">56</span><div><span class="what">讀了 15 步檔案還沒回答,做到上限只剩一句「已達上限」,22.8 萬 tokens 白花</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">最後一步不給工具,先回答查到的、說明還缺什麼</div></li>
+        <li><span class="n">69</span><div><span class="what">語音對話照一般問題回答:又長又有表格,還可能交給慢的 DeepSeek,第一次等了 3 分鐘</span><span class="how"><span class="tag">網頁實測</span> <span class="tag">使用者回饋</span></span></div><div class="fix">做成全螢幕語音模式;問題接「口語、一到三句」的提示、關思考、不問分類器,從說完到開口 3.1 秒</div></li>
+        <li><span class="n">70</span><div><span class="what">語音模式只說「要短」,程式模式問 calc.py 的 bug 時一個檔都沒讀,就說找不到 calc.py</span><span class="how"><span class="tag">語音模式實測</span></span></div><div class="fix">提示講明照常用工具查、只有唸出來的回答要短;重跑 3/3 先讀檔再回答</div></li>
+        <li><span class="n">72</span><div><span class="what">JUSTIN 在沙箱裡開點餐系統撞到唯讀、連不到網路,卻說是使用者的資料夾或網路有問題,叫人關防毒</span><span class="how"><span class="tag">對話紀錄</span></span></div><div class="fix">沙箱的錯誤後面註明「這是沙箱的限制,不是你電腦的問題」,一直開著的程式請使用者自己在終端機跑</div></li>
+        <li><span class="n">77</span><div><span class="what">修 bug 只修題目點名的那個測試,漏了函式說明寫的規則和邊界,還說自己改了沒改的東西</span><span class="how"><span class="tag">端到端評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">提示加檢查清單,改了程式沒補測試再由程式提醒一次;8 題 × 2 次從 13/16 到 16/16,tokens 多 26%</div></li>
+        <li><span class="n">81</span><div><span class="what">修改對不上原文時只回「找不到、請重讀」:模型把 ]]} 連續 4 次看成 )},重讀、印出原始內容都沒發現,15 步用完</span><span class="how"><span class="tag">完整評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">指出最像的那一行、差在哪幾個字,符號逐字唸出來;27 次重播,下一次修改對得上 12 → 17、tokens 少 31%</div></li>
+        <li><span class="n">82</span><div><span class="what">同一段對話畫圖失敗過,兩天後再問,模型沒試就說「暫時失敗」:把「不要重送失敗的呼叫」套到之前的輪</span><span class="how"><span class="tag">使用者回報</span> <span class="tag">讀那段對話</span></span></div><div class="fix">規則寫明只限同一輪;用那段對話重問,照抄失敗 3/20 → 0/20</div></li>
+        <li><span class="n">84</span><div><span class="what">語音把「公主」聽成「高主」,JUSTIN 猜成女明星、說不能畫真人,使用者以為它不能畫人</span><span class="how"><span class="tag">使用者回報</span> <span class="tag">讀那段對話</span></span></div><div class="fix">不改:畫人本來就可以(12/12);同一刻重問 10 次都先問清楚;加「可能聽錯字」的提示也猜不到公主(0/10)</div></li>
+        <li><span class="n">86</span><div><span class="what">模型被提醒過還是回空白,這一輪就結束了,畫面上只有開頭一句和工具列,看起來像卡住</span><span class="how"><span class="tag">使用者回報</span> <span class="tag">讀那段對話</span></span></div><div class="fix">還是空白就在畫面上說明、建議再問或換模型;對話紀錄留空白,免得之後照抄</div></li>
+        <li><span class="n">87</span><div><span class="what">改名之後,舊對話裡問它叫什麼,它照抄以前的名字(還翻成「就廷」)</span><span class="how"><span class="tag">使用者截圖</span> <span class="tag">模擬重現</span></span></div><div class="fix">系統提示寫明改過名、一律用英文字母寫 JUSTIN;模擬的舊對話照抄 10/10 → 1/10</div></li>
+      </ol>
+    </div>
+
+    <div class="group">
+      <h3>安全與隱私 <span class="count">13</span></h3>
+      <ol class="findings">
+        <li><span class="n">08</span><div><span class="what">讀檔工具擋不住 .env,金鑰可能被送出去</span><span class="how"><span class="tag">接真實專案前檢查</span></span></div><div class="fix">封鎖 .env、金鑰、憑證與 .git</div></li>
+        <li><span class="n">16</span><div><span class="what">搜尋工具會跟著捷徑連結(symlink / junction)讀到工作區外的檔案</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">本機重現</span></span></div><div class="fix">依實際位置檢查,工作區外與機密檔一律略過</div></li>
+        <li><span class="n">18</span><div><span class="what">沙箱直接掛載整個工作區,.env 在沙箱裡讀得到</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">沙箱一律掛排除機密檔的複本,判斷跟讀檔工具同一套</div></li>
+        <li><span class="n">27</span><div><span class="what">從 GitHub 加專案時,git clone 會自動用電腦上存的登入,私人 repo 會被抓下來送到外部 API</span><span class="how"><span class="tag">假伺服器 + 假 helper 實測</span></span></div><div class="fix">clone 時清掉登入輔助程式、關掉提示;同一個實驗兩個 helper 都沒被叫到</div></li>
+        <li><span class="n">28</span><div><span class="what">下載的 repo 自帶的規則檔會直接進系統提示,別人寫的內容被當成團隊規則</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">下載專案的規則改存在 repo 外面,repo 裡那份只當一般檔案</div></li>
+        <li><span class="n">38</span><div><span class="what">網頁可以藏給 AI 的指令(例如要它把 .env 傳出去),只靠系統提示不夠保險</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">網頁和搜尋結果先過安全模型,不安全就整段不交給模型</div></li>
+        <li><span class="n">43</span><div><span class="what">「不要把公司程式碼送到試用平台」只寫在文件裡,趕時間把資料夾拖進來就送出去了</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">設定檔標明哪個後端能放公司資料;試用平台上公司資料夾一律擋(加專案、知識庫、拖進來、以前加過的),其他資料夾第一次要先確認不是公司資料,畫面一直顯示提醒</div></li>
+        <li><span class="n">46</span><div><span class="what">MCP 連接器是第三方程式,照預設啟動會繼承環境變數,NVIDIA 金鑰會一起交給它</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">啟動時拿掉 .env 的變數和像金鑰的;用會印出環境變數的假連接器驗證</div></li>
+        <li><span class="n">48</span><div><span class="what">網頁預覽的網址帶著 JUSTIN 的 token,沙箱裡的程式讀得到、可以整頁導出去帶走</span><span class="how"><span class="tag">實測時審查</span></span></div><div class="fix">預覽改用這個網頁專用的鑰匙(token 的 HMAC,反推不回、只能開那一頁)</div></li>
+        <li><span class="n">57</span><div><span class="what">終端機照預設會帶著 NVIDIA 金鑰,打 env 就印出來,再一鍵就送給模型</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">拿掉 .env 的變數和像金鑰的;終端機只有這台電腦能用</div></li>
+        <li><span class="n">63</span><div><span class="what">地端模式把 NVIDIA 金鑰送給地端伺服器:設定是不用金鑰,套件卻自己讀環境變數,當 Bearer 送出去</span><span class="how"><span class="tag">地端相容性測試</span> <span class="tag">只記錄標頭的假伺服器</span></span></div><div class="fix">沒有金鑰的後端清掉套件自己讀到的金鑰和標頭裡的佔位;重測沒有 Authorization 標頭</div></li>
+        <li><span class="n">66</span><div><span class="what">3B 小模型修 bug 時,自己編了兩條「使用者偏好」寫進跨對話記憶;檔案裡藏的指令也能這樣留到之後每段對話</span><span class="how"><span class="tag">地端相容性測試</span></span></div><div class="fix">寫進記憶前先問使用者(排程任務一律不記);像密碼金鑰的直接擋,不用問</div></li>
+        <li><span class="n">76</span><div><span class="what">切到地端之後,語音模式照樣把聲音和回答送到微軟的雲端,「公司資料不出公司」破功</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">每個後端設定能不能用雲端語音,地端預設關:不顯示語音按鈕、只用本機的聲音</div></li>
+      </ol>
+    </div>
+
+    <div class="group">
+      <h3>多人、部署與介面 <span class="count">19</span></h3>
+      <ol class="findings">
+        <li><span class="n">07</span><div><span class="what">.env 裡設定的工作目錄被忽略</span><span class="how"><span class="tag">端到端實測</span></span></div><div class="fix">讀完 .env 之後再設定工具</div></li>
+        <li><span class="n">19</span><div><span class="what">沙箱逾時只停掉 docker 指令,容器在背景繼續跑;Windows 上中文輸出變亂碼</span><span class="how"><span class="tag">程式碼審查</span> <span class="tag">本機實測</span></span></div><div class="fix">容器加名字、逾時就強制停止;輸出一律用 UTF-8 解碼</div></li>
+        <li><span class="n">24</span><div><span class="what">草稿和 patch 紀錄是整個程式共用的,多人同時用會看到別人的草稿</span><span class="how"><span class="tag">審查</span></span></div><div class="fix">改成每人一個工作台;測試確認兩人互相看不到</div></li>
+        <li><span class="n">25</span><div><span class="what">容器時區是 UTC,patch 檔名的時間差 8 小時;唯讀掛載的 repo 被 git 拒絕</span><span class="how"><span class="tag">Docker 實測</span></span></div><div class="fix">映像設台北時區,git 加上 safe.directory</div></li>
+        <li><span class="n">37</span><div><span class="what">只有一支手機,設定頁卻寫「已配對 2 支」</span><span class="how"><span class="tag">使用時發現</span></span></div><div class="fix">配對紀錄多記裝置類型和時間,設定頁逐支列出、可以個別取消</div></li>
+        <li><span class="n">41</span><div><span class="what">想加語音輸入,但中文錯字太多;手機用區網 http 連線,瀏覽器也不給麥克風</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">不加;說明頁改成建議用系統內建的語音輸入</div></li>
+        <li><span class="n">50</span><div><span class="what">多人模式的 Docker 映像只複製最上層的程式,少了自己訓練的小模型(ml/),服務一啟動就壞</span><span class="how"><span class="tag">審查</span> <span class="tag">Docker 實測</span></span></div><div class="fix">另外複製 ml/ 和圖示;重建後服務起得來,登入檢查和圖示都正常</div></li>
+        <li><span class="n">58</span><div><span class="what">終端機的錯誤看不懂:一大段 XML、多出「位於 線路…」、夾著顏色控制碼</span><span class="how"><span class="tag">網頁實測</span></span></div><div class="fix">錯誤併進一般輸出只留訊息、濾掉顏色碼;重測和一般終端機一樣</div></li>
+        <li><span class="n">64</span><div><span class="what">地端沒部署看圖模型時,每次附圖白等 38 秒:找不到主機也被當忙線,兩層重試加上備援一共試 18 次</span><span class="how"><span class="tag">地端相容性測試</span> <span class="tag">離線測試數連線次數</span></span></div><div class="fix">連不到不重試、直接換備援,拿掉重複的那層重試:18 次 → 2 次</div></li>
+        <li><span class="n">65</span><div><span class="what">冒煙測試把後端寫死成 catalog,換成地端時最需要它卻不能用;模型名稱剛好等於欄寬,報表黏在一起</span><span class="how"><span class="tag">地端相容性測試</span></span></div><div class="fix">加 --backend nim,只有需要金鑰的後端才檢查金鑰;欄寬放大</div></li>
+        <li><span class="n">68</span><div><span class="what">做語音對話(像 ChatGPT 的語音模式)時:表格轉成唸的文字吃掉換行,清單的「-」被唸出來;剛打開就按,聲音清單還沒載入,誤報沒有中文語音</span><span class="how"><span class="tag">網頁實測</span></span></div><div class="fix">聽寫用瀏覽器的辨識(先問、同意才開),唸用電腦內建的聲音;只在同一行轉換、補停頓;聲音清單等 1.5 秒再判斷</div></li>
+        <li><span class="n">71</span><div><span class="what">VS Code 外掛面板拿不到麥克風卻顯示語音按鈕;英文句子黏在一起唸;沒有日文語音時叫人裝中文語音</span><span class="how"><span class="tag">語音模式實測</span></span></div><div class="fix">不准用麥克風的地方不顯示按鈕;英文句子加空格;說明照回答語言寫</div></li>
+        <li><span class="n">73</span><div><span class="what">終端機面板跑一直開著的 Python 程式,畫面一個字都沒有,看起來像沒反應</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">設 PYTHONUNBUFFERED=1,啟動畫面馬上出現</div></li>
+        <li><span class="n">74</span><div><span class="what">斷句用的全形標點存檔時被換成半形,模型寫的「?!」斷不了句,還多唸一個停頓</span><span class="how"><span class="tag">語音模式實測</span></span></div><div class="fix">全形標點改用跳脫字元寫,怎麼存都不會變</div></li>
+        <li><span class="n">75</span><div><span class="what">微軟的自然語音是線上的,連不上時整則回答沒聲音</span><span class="how"><span class="tag">Edge 實測</span></span></div><div class="fix">出錯就改用本機聲音把剩下的唸完,之後都用本機的</div></li>
+        <li><span class="n">88</span><div><span class="what">桌面版跑測試時跳出黑色的 Docker 命令列視窗,蓋住畫面(錄示範影片時抓到)</span><span class="how"><span class="tag">示範影片</span></span></div><div class="fix">叫 docker、git 一律不開視窗;離線測試掃過程式,之後漏加也會被抓到</div></li>
+        <li><span class="n">89</span><div><span class="what">預設改成男聲「雲哲」,語音模式唸的卻還是女聲曉臻(錄示範影片時抓到)</span><span class="how"><span class="tag">示範影片</span></span></div><div class="fix">Edge 的聲音名字是中文,挑男聲的規則只認英文名;補上中文名字,在 Edge 裡確認第一個挑到雲哲</div></li>
+        <li><span class="n">90</span><div><span class="what">給它一個歌單網址,只讀到網址、一首歌都沒有:內容是 JavaScript 載入的網頁</span><span class="how"><span class="tag">使用者回報</span></span></div><div class="fix">字太少時改讀網頁附帶的資料,只挑像人寫的文字,並註明可能不完整;不執行網頁的程式</div></li>
+        <li><span class="n">91</span><div><span class="what">安全模型還在模型清單上,卻每次都回 404:檢查失敗設計成不擋,所以網頁內容默默地沒檢查到</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">換成實測 10/10 的 Safety Guard 8B,再加 Llama Guard 4 當備援;以前安全模型沒有備援</div></li>
+      </ol>
+    </div>
+
+    <div class="group">
+      <h3>自己訓練的模型與知識庫 <span class="count">6</span></h3>
+      <ol class="findings">
+        <li><span class="n">30</span><div><span class="what">課程範例的線性回歸用「要預測的那批資料」自己標準化,一次只預測一筆時結果是錯的</span><span class="how"><span class="tag">讀程式碼</span></span></div><div class="fix">改用訓練時記下的平均和標準差;測試確認一筆和整批結果一樣</div></li>
+        <li><span class="n">31</span><div><span class="what">手寫 ID3 決策樹的準確率 0.66,比全部猜「一般」的 0.68 還差</span><span class="how"><span class="tag">決策樹實驗</span></span></div><div class="fix">補上兩個特徵、用交叉驗證挑深度;深度 5 準確率 0.89</div></li>
+        <li><span class="n">36</span><div><span class="what">以為向量加關鍵字的混合排名會更好,實測第 1 名命中從 10/12 掉到 7–8/12</span><span class="how"><span class="tag">知識庫實驗</span></span></div><div class="fix">平常只用向量,算不了向量才退回關鍵字</div></li>
+        <li><span class="n">39</span><div><span class="what">掃描的 PDF 沒有文字層讀不到;Nemotron Parse 在 catalog 的 API 格式又不相容</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">沒有文字的頁交給看圖模型讀,一頁約 4 秒,讀過的快取</div></li>
+        <li><span class="n">83</span><div><span class="what">自己訓練的模型放到真實使用上沒有用:決策樹對真實問題每題都猜「一般」,4 題難題全漏;預估 tokens 和秒數的回歸還輸給猜平均</span><span class="how"><span class="tag">真實使用紀錄</span></span></div><div class="fix">選模型繼續問 Super;回歸一存下來畫面就顯示錯十幾倍的預估,改成比猜平均準才存;之後的紀錄當沒看過的測試資料再評</div></li>
+        <li><span class="n">92</span><div><span class="what">訓練報告的圖表中文全變方塊:挑字型時拿到只有罕用字的 MingLiU-ExtB(系統字型清單沒有固定順序),每呼叫一次字型名稱還再疊一次</span><span class="how"><span class="tag">測試警告</span></span></div><div class="fix">照偏好順序挑、跳過 -ExtB、不重複疊;用假的字型清單測</div></li>
+        <li><span class="n">93</span><div><span class="what">看圖的備援模型從平台下架(410 Gone),主力忙線時圖片就沒人看;冒煙測試還可能把換上的備援跳過不測</span><span class="how"><span class="tag">冒煙測試</span></span></div><div class="fix">同一張繁中截圖試過清單上能看圖的模型,換成 18/18 的 Super VL;冒煙測試改成連「看不看圖」一起比對</div></li>
+        <li><span class="n">94</span><div><span class="what">模型壞掉都是碰巧發現的:兩週內三個模型在清單上卻不能用,有兩次是備援默默接手、根本看不出來</span><span class="how"><span class="tag">回顧</span></span></div><div class="fix">每天自動把每個模型(主力、備援分開)打一下,有問題就在畫面上提醒;第一次跑就抓到畫圖備援逾時和 DeepSeek 變慢</div></li>
+        <li><span class="n">95</span><div><span class="what">請它寫遊戲,只回一句「已為你建立 HTML 遊戲」就結束、其實沒有檔案:思考用掉大半,寫到一半撞到輸出上限</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">被截斷就不思考、上限加倍重寫一次,還是太長就直說;重問一次 26 秒寫好、打開就能玩</div></li>
+        <li><span class="n">96</span><div><span class="what">請它改遊戲,回「已更新並存成」還列出改了什麼,檔案卻還是舊的:新版只寫在思考裡,根本沒呼叫存檔</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">回答說存好了、這一輪卻沒有存檔的工具呼叫,就提醒一次請它真的存</div></li>
+        <li><span class="n">97</span><div><span class="what">改遊戲時整個重寫、漏掉建立磚塊的程式,新版一打開就壞,它自己不知道:存了網頁從來不打開看</span><span class="how"><span class="tag">實測</span></span></div><div class="fix">存了網頁就在無頭瀏覽器打開、點一下、按 Enter,有程式錯誤就叫它修好再存</div></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>兩個標本</h2>
+    <div class="note">模型的原始輸出,一字未改</div>
+  </div>
+  <div class="body">
+    <div class="specimens">
+      <div class="specimen">
+        <p class="cap">問題 06 · 自己編的測試結果</p>
+        <h3>修正前,agent 的最後回答</h3>
+<pre class="bad">$ pytest tests/test_calc.py::test_add
+.
+1 passed in <mark>0.0x</mark> s</pre>
+        <p>它根本沒跑。「0.0x」是它自己填的秒數。工具設計讓它無法驗證修正,它就用編的。</p>
+        <h3>修正後,沙箱回傳的真實輸出</h3>
+<pre class="good">exit code 0
+..                                       [100%]
+2 passed in 0.04s</pre>
+      </div>
+      <div class="specimen">
+        <p class="cap">問題 04 · 推理混進回答</p>
+        <h3>送了 force_nonempty_content</h3>
+<pre class="bad">回答 = 'The user wants a two-character response: "收到" (received/understood).<mark>&lt;/think&gt;</mark>收到'</pre>
+        <p>題目是「只回答兩個字:收到」。推理跑進回答欄位,而且開頭的 &lt;think&gt; 被伺服器吃掉,只剩結尾標籤。同一個參數送給 Super 就沒事。</p>
+        <h3>拿掉之後</h3>
+<pre class="good">回答 = '收到'</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>為什麼長文本選 Ultra</h2>
+    <div class="note">顯存會不會爆,看的是每個 token 佔多少 KV cache</div>
+  </div>
+  <div class="body">
+    <div class="bars" role="img" aria-label="每 token 的 KV cache:Qwen2.5-Coder-32B 256 KiB,DeepSeek V3 約 69 KiB,Nemotron 3 Ultra 12 KiB">
+      <div class="bar-row">
+        <div class="name">Qwen2.5-Coder-32B<small>一般 dense 架構</small></div>
+        <div class="track"><div class="fill" style="width:100%"></div></div>
+        <div class="val">256 KiB / token · 128K 對話約 32 GiB</div>
+      </div>
+      <div class="bar-row">
+        <div class="name">DeepSeek V3<small>MLA 壓縮注意力</small></div>
+        <div class="track"><div class="fill" style="width:26.95%"></div></div>
+        <div class="val">約 69 KiB / token · 約 8.6 GiB</div>
+      </div>
+      <div class="bar-row">
+        <div class="name">Nemotron 3 Ultra<small>108 層只有 12 層 attention</small></div>
+        <div class="track"><div class="fill" style="width:4.69%"></div></div>
+        <div class="val">12 KiB / token · 約 1.5 GiB(1M 約 11 GiB)</div>
+      </div>
+    </div>
+    <p>參數最少的 Qwen Coder 反而最容易在長對話把顯存吃光;Ultra 是 Mamba 混合架構,大部分層不存 KV cache,這是它能開到 1M 上下文的原因。數字由各模型公開的 config 換算(BF16)。</p>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>自己訓練的難度模型</h2>
+    <div class="note">交叉驗證準確率,73 題由 Super 標註的範例問題</div>
+  </div>
+  <div class="body">
+    <div class="bars" role="img" aria-label="交叉驗證準確率:全部猜一般 0.68,手寫 ID3 初版 0.66,補特徵並把深度定為 5 之後 0.89">
+      <div class="bar-row">
+        <div class="name">全部猜「一般」<small>對照組</small></div>
+        <div class="track"><div class="fill base" style="width:68%"></div></div>
+        <div class="val">0.68</div>
+      </div>
+      <div class="bar-row">
+        <div class="name">手寫 ID3 初版<small>比對照組還差</small></div>
+        <div class="track"><div class="fill bad" style="width:66%"></div></div>
+        <div class="val">0.66</div>
+      </div>
+      <div class="bar-row">
+        <div class="name">補特徵 + 深度 5<small>深度 1–6 用交叉驗證挑</small></div>
+        <div class="track"><div class="fill" style="width:89%"></div></div>
+        <div class="val">0.89 · F1 0.81</div>
+      </div>
+    </div>
+    <p>照課程教材手寫 ID3 決策樹,第一版連「全部猜一般」都贏不了。照分類器自己的判斷標準補上「間歇發生」「沒有頭緒或上次修正沒用」兩個特徵,再加深度限制,準確率到 0.89。另外用線性回歸預估每一輪的 tokens 和秒數,也跟 scikit-learn 的決策樹、邏輯回歸、隨機森林、神經網路比較過。執行時只讀訓練好的 JSON,用純 Python 算,不載入 scikit-learn。範例題是 Super 標的,真實準確度要看實際使用的紀錄 —— 10/31 真實使用累積到 32 輪再評:決策樹對真實問題每題都猜「一般」,Super 判成難題的 4 題一題都沒抓到;第一次訓練得起來的回歸,預估 tokens 和秒數都比直接猜平均差。範例題是自己寫的修 bug 問題,真實的有問天氣、畫圖、語音打招呼,差很多。所以選模型還是問 Super。回歸模型一存下來,JUSTIN 每一輪就在畫面上顯示「約 18.8 萬 tokens」(實際 1.5 萬),所以訓練程式改成比猜平均準才存;決策樹只寫進紀錄,等資料多了再評。</p>
+  </div>
+</section>
+
+<section>
+  <div class="label">
+    <h2>還沒做的</h2>
+    <div class="note">知道邊界在哪</div>
+  </div>
+  <div class="body">
+    <ul class="plain">
+      <li><strong>地端 NIM 沒有實際部署。</strong>需要 GPU 伺服器;Ultra 550B 要 8 張 B200 / H200 等級,建議第一階段先用 Super 120B(FP8 約 2 張 H100)。我先用 CPU 上的小模型假裝成地端伺服器,驗證了切換不用改程式,也抓到 5 個問題;NIM 容器、顯存和速度還沒驗證。</li>
+      <li>第一階段只部署 Super 時,安全檢查連不到會不擋網頁內容(只提醒模型沒檢查到),地端要上網就要一起部署 Content Safety。</li>
+      <li>語音模式的實測都用模擬的語音辨識(開發用的瀏覽器不給麥克風),真的麥克風和微軟的自然語音還沒親耳驗過;地端要用語音,得先核准一家雲端語音服務,或另外部署地端的語音模型。</li>
+      <li>多人部署只在本機 Docker 測過,還沒在公司 SSO 和 GPU 主機上跑;多台伺服器要設 sticky session。</li>
+      <li>沒有獨立的工作佇列:整份文件這種 8 分鐘的任務會佔住一個執行名額,同時執行上限要依 GPU 數量調整。</li>
+      <li>依難度選模型 10/25 打開,但分類器跟出題時標的難度一致率只有 6/13–23/34,真實使用的準確度還要看紀錄。</li>
+      <li>PoC 期間不能送公司真實程式碼到 build.nvidia.com:試用條款允許 NVIDIA 收集輸入輸出改進模型。這次測試用的是我自己的專案和虛構的示範文件。</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <span><strong>HSUAN</strong></span>
+  <span>2026-10-06 初版 · 2026-11-05 更新</span>
+  <span>實測環境:NVIDIA API Catalog 免費層、Windows 10、Docker 29.7</span>
+</footer>
+
+</div>
