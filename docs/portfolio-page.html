@@ -340,7 +340,7 @@ flowchart LR
       <div class="cap-item"><dt>終端機與操作瀏覽器 <span class="file">terminal.py · browser.py</span></dt><dd>在專案資料夾跑指令、不帶金鑰;用無頭 Edge 測自己開發中的網站,只開 localhost 這類開發位址</dd></div>
       <div class="cap-item"><dt>MCP 連接器與分工 <span class="file">mcp_client.py</span></dt><dd>接外部 MCP server 的工具,每次使用先問;打開「分工」讓子助理同時查不同模組</dd></div>
       <div class="cap-item"><dt>跨對話記憶與排程 <span class="file">memory.py · scheduler.py</span></dt><dd>說「記住…」就記一句話,存在自己的電腦;每天幾點自動開對話去做,改程式只留草稿;對話模式的排程可以勾「允許上網」自己去讀網頁</dd></div>
-      <div class="cap-item"><dt>深度研究與畫圖 <span class="file">imagegen.py</span></dt><dd>把問題拆成子問題同時上網查,寫附出處的報告;用 FLUX 畫圖、改圖(同一個種子重畫),直接顯示在對話裡</dd></div>
+      <div class="cap-item"><dt>深度研究與畫圖 <span class="file">imagegen.py</span></dt><dd>把問題拆成子問題同時上網查,寫附出處的報告;用 FLUX 畫圖、改圖(同一個種子重畫)、把附的照片重畫成動漫、3D 等風格(看圖模型先描述照片),直接顯示在對話裡</dd></div>
       <div class="cap-item wide"><dt>語音模式 <span class="file">webui.html</span></dt><dd>像 ChatGPT 手機版:全螢幕一顆球,用說的問、邊寫邊唸,戴耳機可以直接開口插話;回答改成口語的一到三句。辨識用瀏覽器的語音服務、聲音用微軟的自然語音,這兩個都在雲端,所以切到地端時預設關掉</dd></div>
     </dl>
   </div>
@@ -376,7 +376,7 @@ flowchart LR
           <tr><td>語音模式</td><td>對話模式 6 題(含追問、會想用表格或程式碼的題目)、程式模式問 calc.py 的 bug 3 次;麥克風那段用模擬的語音辨識</td><td class="num">對話模式每題 2.4–4.6 秒、沒有表格和條列<small>程式模式 3/3 先讀檔再回答、3.5 秒開口;戴耳機時一開口就停下來換你說</small></td><td><span class="pill warn">麥克風用模擬</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
           <tr><td>端到端評測</td><td>17 題自己寫的修 bug 題,驗收含 JUSTIN 看不到的隱藏測試;10/25–26 主模型換成 3.5 Super VL 後,每種設定跑兩次;10/30 加了補測試提醒和參數修正,兩種設定各再跑兩次;11/5 用最新版各再跑三次</td><td class="num">依難度選模型 83/85(98%)· 平均約 55k tokens<small>只用 Super 74/85(87%)· 約 70k;一般題平手(39/40),差別都在難題(44/45 vs 35/45)。兩回都是同一版程式比:10/30 32/34 vs 29/34、11/5 51/51 vs 45/51;代價是慢約一倍(秒數中位數 93 vs 43)。11/12 最新版再跑三次:50/51,沒過的那次已修;難題改交給 Ultra 快了 3 倍但只有 46/51(常做到步數上限);同一天只用 Super 48/51、做到上限才換 DeepSeek 45/51,跟 11/5 合起來依難度選模型 101/102 vs 只用 Super 93/102;11/13 加了新的保險後再比:48/51 vs 49/51,差距不見了、只用 Super 快一倍(改成平常交給 Super)。試過「改完一律對照規格」:同一台同一天 46/51 vs 48/51、tokens 多 17%,不採用;「分工」45/51,修 bug 不建議。11/16 修完真實專案試用抓到的五個問題後再跑三次:49/51,秒數中位數 49</small></td><td><span class="pill pass">選模型較好</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">252 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">254 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端相容性</td><td>沒有 GPU:CPU 版 llama.cpp + Llama 3.2 3B 假裝成地端伺服器,只把模型網址指過去</td><td>程式一行都不用改就切得過去;回話、思考開關、tool calling 都通,上下文自動換成地端的 256K<small>抓到 5 個只有切到地端才會出現的問題(第 63–67 個)</small></td><td><span class="pill pass">切換通過</span></td></tr>
           <tr><td>地端 NIM 本身</td><td>需要 GPU 伺服器</td><td>NIM 容器、顯存、速度、大模型的回答品質</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
@@ -387,12 +387,12 @@ flowchart LR
 
 <section>
   <div class="label">
-    <h2>抓到的 110 個問題</h2>
+    <h2>抓到的 114 個問題</h2>
     <div class="note">依類別分組,編號照發現順序,跟 README 一致。每一條都寫了怎麼發現的</div>
   </div>
   <div class="body">
     <ul class="tally">
-      <li>模型與套件<b>18</b></li>
+      <li>模型與套件<b>20</b></li>
       <li>token 與路由<b>9</b></li>
       <li>agent 行為與工具<b>27</b></li>
       <li>安全與隱私<b>13</b></li>
@@ -401,7 +401,7 @@ flowchart LR
     </ul>
 
     <div class="group">
-      <h3>模型與套件 <span class="count">18</span></h3>
+      <h3>模型與套件 <span class="count">20</span></h3>
       <ol class="findings">
         <li><span class="n">01</span><div><span class="what">指定的 deepseek-v3、qwen2.5-coder-32b 已經從 catalog 下架</span><span class="how"><span class="tag">探測 API</span></span></div><div class="fix">改用現役版本,Qwen 標為只能地端</div></li>
         <li><span class="n">02</span><div><span class="what">套件預設輸出上限只有 1024 tokens,寫程式會被截斷</span><span class="how"><span class="tag">讀套件原始碼</span></span></div><div class="fix">每個模型角色明確設定上限</div></li>
@@ -420,6 +420,8 @@ flowchart LR
         <li><span class="n">78</span><div><span class="what">修改清單後面連說明一起塞進同一個字串,只讀清單就少了必填的說明,工具一直回錯誤,重送 6 次把 15 步用完</span><span class="how"><span class="tag">難題評測</span> <span class="tag">對話紀錄</span></span></div><div class="fix">整段補上開頭剛好是合法 JSON 才把說明拿回來,一樣不猜;全部評測紀錄能用的呼叫從 49 次變 75 次</div></li>
         <li><span class="n">79</span><div><span class="what">畫圖的模型在平台上壞掉(一顆等 60–70 秒回錯誤、一顆等到逾時),使用者等了 3 分多鐘還是沒有圖</span><span class="how"><span class="tag">使用者回報</span> <span class="tag">直接打 API</span></span></div><div class="fix">試了 19 個模型 ID,找到新上架、3–4 秒的 FLUX.2 klein 改成先畫;每顆最多等 60 秒,從問到畫好 10.6 秒</div></li>
         <li><span class="n">80</span><div><span class="what">DeepSeek 邊產生邊顯示時,NVIDIA 把工具呼叫的開頭標記漏進文字:畫面冒出一行 &lt;｜DSML｜ calls&gt;,還存進對話、每一步再送回伺服器</span><span class="how"><span class="tag">實測</span> <span class="tag">探針記錄原文</span></span></div><div class="fix">邊顯示邊過濾(標記被切成兩段送來,可能是開頭的那截先留著再判斷),存進對話前也拿掉;再跑兩次,畫面和紀錄都是 0</div></li>
+        <li><span class="n">112</span><div><span class="what">畫圖的備援 FLUX.1-dev 被平台改成不收隨機種子,主力失敗時備援一定跟著失敗,其實沒有備援</span><span class="how"><span class="tag">照片重畫試用</span> <span class="tag">直接打 API</span></span></div><div class="fix">設定檔標明這顆不送種子</div></li>
+        <li><span class="n">113</span><div><span class="what">「做一張 3D 卡通頭像」6 次全被內容過濾擋,模型以為是照片有真人臉</span><span class="how"><span class="tag">照片重畫試用</span> <span class="tag">一次拿掉一段找原因</span></span></div><div class="fix">是「avatar」這個字(兩顆模型都擋),送出前換成意思一樣的字;其他誤擋只留描述的前三句自動再試一次</div></li>
         <li><span class="n">85</span><div><span class="what">平台上的改圖模型(Kontext、klein)只收網頁的範例圖,自己的圖不管直接附還是先上傳都被拒</span><span class="how"><span class="tag">使用者要求</span> <span class="tag">直接打 API</span></span></div><div class="fix">記下每張圖的描述和種子,改圖用同一個種子重畫:描述不變就一模一樣,加一隻獨角獸其他幾乎不動</div></li>
       </ol>
     </div>
@@ -616,7 +618,7 @@ flowchart LR
         <div class="val">0.89 · F1 0.81</div>
       </div>
     </div>
-    <p>照課程教材手寫 ID3 決策樹,第一版連「全部猜一般」都贏不了。照分類器自己的判斷標準補上「間歇發生」「沒有頭緒或上次修正沒用」兩個特徵,再加深度限制,準確率到 0.89。另外用線性回歸預估每一輪的 tokens 和秒數,也跟 scikit-learn 的決策樹、邏輯回歸、隨機森林、神經網路比較過。執行時只讀訓練好的 JSON,用純 Python 算,不載入 scikit-learn。範例題是 Super 標的,真實準確度要看實際使用的紀錄 —— 10/31 真實使用累積到 32 輪再評:決策樹對真實問題每題都猜「一般」,Super 判成難題的 4 題一題都沒抓到;第一次訓練得起來的回歸,預估 tokens 和秒數都比直接猜平均差。範例題是自己寫的修 bug 問題,真實的有問天氣、畫圖、語音打招呼,差很多。所以選模型還是問 Super。回歸模型一存下來,JUSTIN 每一輪就在畫面上顯示「約 18.8 萬 tokens」(實際 1.5 萬),所以訓練程式改成比猜平均準才存;決策樹只寫進紀錄,等資料多了再評。</p>
+    <p>照課程教材手寫 ID3 決策樹,第一版連「全部猜一般」都贏不了。照分類器自己的判斷標準補上「間歇發生」「沒有頭緒或上次修正沒用」兩個特徵,再加深度限制,準確率到 0.89。另外用線性回歸預估每一輪的 tokens 和秒數,也跟 scikit-learn 的決策樹、邏輯回歸、隨機森林、神經網路比較過。執行時只讀訓練好的 JSON,用純 Python 算,不載入 scikit-learn。範例題是 Super 標的,真實準確度要看實際使用的紀錄 —— 10/31 真實使用累積到 32 輪再評:決策樹對真實問題每題都猜「一般」,Super 判成難題的 4 題一題都沒抓到;第一次訓練得起來的回歸,預估 tokens 和秒數都比直接猜平均差。範例題是自己寫的修 bug 問題,真實的有問天氣、畫圖、語音打招呼,差很多。所以選模型還是問 Super。回歸模型一存下來,JUSTIN 每一輪就在畫面上顯示「約 18.8 萬 tokens」(實際 1.5 萬),所以訓練程式改成比猜平均準才存;決策樹只寫進紀錄,等資料多了再評。11/16 累積到 108 輪,回歸第一次比猜平均準三成、開始在畫面上顯示預估。同一天加了一個深度學習的實驗:決策樹只看字數、關鍵字這些數字,看不懂字面,所以把問題原文交給 NVIDIA 已經訓練好的 embedding 模型轉成 2048 維向量,再訓練兩層的神經網路(遷移學習)。同一份資料、同一組交叉驗證切法比,AUC 從 0.73 到 0.90,真實問題裡的難題從抓到 6/12 變 7–8/12;資料只有 136 筆,執行時還是交給 Super 判斷。</p>
   </div>
 </section>
 
