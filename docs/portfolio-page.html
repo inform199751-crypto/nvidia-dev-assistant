@@ -335,7 +335,7 @@ flowchart LR
       <div class="cap-item"><dt>多人部署 <span class="file">deploy/</span></dt><dd>Docker Compose:小助理 + Redis 共用額度 + oauth2-proxy 登入,同時執行上限其他人排隊</dd></div>
       <div class="cap-item"><dt>知識庫</dt><dd>公司文件依標題切段、算向量(Nemotron 3 Embed),照意思找、再用 Nemotron 3.5 Rerank 重新排序,附出處;每天看一次資料夾,有檔案改過才更新</dd></div>
       <div class="cap-item"><dt>看圖與掃描 PDF</dt><dd>Nemotron Nano Omni 先把圖片和掃描頁轉成文字,再交給主模型回答</dd></div>
-      <div class="cap-item"><dt>上網與安全把關</dt><dd>預設關閉、每次先問;網頁內容先過安全模型(Safety Guard 8B),擋藏在頁面裡的提示注入</dd></div>
+      <div class="cap-item"><dt>上網與安全把關</dt><dd>預設關閉、每次先問;網頁內容先過安全模型(Safety Guard 8B;安全模型全掛時主腦兼任,24 句實測全對),擋藏在頁面裡的提示注入</dd></div>
       <div class="cap-item"><dt>模型健康檢查與自己找模型 <span class="file">health.py · scout.py</span></dt><dd>每天把每個模型(含備援)各打一下,壞了在畫面上方提醒;壞掉的會自己從平台清單找替代的候選、實際測過列出來,按了才換,設定的備援全掛時臨時接手。11/19 平台下架 DeepSeek 等模型,就是這樣抓到、換成 Mistral Large 4(難題評測 9/9)</dd></div>
       <div class="cap-item"><dt>自己訓練的難度模型 <span class="file">ml/</span></dt><dd>ID3 決策樹判斷難易、線性回歸預估 tokens 和秒數;執行時讀 JSON,純 Python</dd></div>
       <div class="cap-item"><dt>終端機與操作瀏覽器 <span class="file">terminal.py · browser.py</span></dt><dd>在專案資料夾跑指令、不帶金鑰;用無頭 Edge 測自己開發中的網站,只開 localhost 這類開發位址</dd></div>
@@ -379,7 +379,7 @@ flowchart LR
           <tr><td>語音模式</td><td>對話模式 6 題(含追問、會想用表格或程式碼的題目)、程式模式問 calc.py 的 bug 3 次;麥克風那段用模擬的語音辨識</td><td class="num">對話模式每題 2.4–4.6 秒、沒有表格和條列<small>程式模式 3/3 先讀檔再回答、3.5 秒開口;戴耳機時一開口就停下來換你說</small></td><td><span class="pill warn">麥克風用模擬</span></td></tr>
           <tr><td>多人部署</td><td>本機 Docker:兩個身分同時問</td><td>Redis 額度正確、唯讀工作區照樣能提 patch</td><td><span class="pill warn">只在本機</span></td></tr>
           <tr><td>端到端評測</td><td>17 題自己寫的修 bug 題,驗收含 JUSTIN 看不到的隱藏測試;10/25–26 主模型換成 3.5 Super VL 後,每種設定跑兩次;10/30 加了補測試提醒和參數修正,兩種設定各再跑兩次;11/5 用最新版各再跑三次</td><td class="num">依難度選模型 83/85(98%)· 平均約 55k tokens<small>只用 Super 74/85(87%)· 約 70k;一般題平手(39/40),差別都在難題(44/45 vs 35/45)。兩回都是同一版程式比:10/30 32/34 vs 29/34、11/5 51/51 vs 45/51;代價是慢約一倍(秒數中位數 93 vs 43)。11/12 最新版再跑三次:50/51,沒過的那次已修;難題改交給 Ultra 快了 3 倍但只有 46/51(常做到步數上限);同一天只用 Super 48/51、做到上限才換 DeepSeek 45/51,跟 11/5 合起來依難度選模型 101/102 vs 只用 Super 93/102;11/13 加了新的保險後再比:48/51 vs 49/51,差距不見了、只用 Super 快一倍(改成平常交給 Super)。試過「改完一律對照規格」:同一台同一天 46/51 vs 48/51、tokens 多 17%,不採用;「分工」45/51,修 bug 不建議。11/16 修完真實專案試用抓到的五個問題後再跑三次:49/51,秒數中位數 49</small></td><td><span class="pill pass">選模型較好</span></td></tr>
-          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">263 個</td><td><span class="pill pass">全過</span></td></tr>
+          <tr><td>離線測試</td><td>假模型,不需金鑰</td><td class="num">264 個</td><td><span class="pill pass">全過</span></td></tr>
           <tr><td>地端相容性</td><td>沒有 GPU:CPU 版 llama.cpp + Llama 3.2 3B 假裝成地端伺服器,只把模型網址指過去</td><td>程式一行都不用改就切得過去;回話、思考開關、tool calling 都通,上下文自動換成地端的 256K<small>抓到 5 個只有切到地端才會出現的問題(第 63–67 個)</small></td><td><span class="pill pass">切換通過</span></td></tr>
           <tr><td>地端 NIM 本身</td><td>需要 GPU 伺服器</td><td>NIM 容器、顯存、速度、大模型的回答品質</td><td><span class="pill warn">未實測</span></td></tr>
         </tbody>
