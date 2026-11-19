@@ -13,6 +13,8 @@
 在桌面版錄的,用試用平台上的真模型。下面是會自己播放的預覽(沒有聲音),完整畫質點「mp4」下載。
 除了第二段等模型回答的 16 秒改成 4 倍速,其他都是實際速度,只剪掉頭尾。
 
+**作品集網頁**(影片直接播放、語音那段有聲音):<https://inform199751-crypto.github.io/nvidia-dev-assistant/>
+
 <table>
 <tr>
 <td width="50%"><img src="docs/demo/1-fix-bug.gif" alt="修 bug 示範"><br><b>修 bug</b>(21 秒,<a href="docs/demo/1-fix-bug.mp4">mp4</a>):問 test_add 為什麼失敗,它讀程式、在 Docker 沙箱跑測試、修好並補回歸測試;按「套用到專案」才真的改檔案</td>
